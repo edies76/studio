@@ -135,7 +135,8 @@ export default function DocuCraftClient() {
   
     const handleClickOutside = (event: MouseEvent) => {
         const editorDiv = editorRef.current;
-        if (editorDiv && !editorDiv.contains(event.target as Node)) {
+        const toolbar = document.getElementById('ai-toolbar');
+        if (editorDiv && !editorDiv.contains(event.target as Node) && toolbar && !toolbar.contains(event.target as Node)) {
             setShowAiToolbar(false);
             setSelection(null);
         }
@@ -157,7 +158,7 @@ export default function DocuCraftClient() {
     loadingMessage: string
   ) => {
     setIsLoading(true);
-    toast({
+    const { id, dismiss } = toast({
       description: (
         <div className="flex items-center gap-2">
           <Loader2 className="animate-spin" />
@@ -169,13 +170,15 @@ export default function DocuCraftClient() {
     try {
       const result = await action();
       successCallback(result);
+      dismiss();
       toast({
         title: "Success",
         description: "Your document has been updated.",
-        duration: 5000,
+        duration: 3000,
       });
     } catch (error) {
       console.error(error);
+      dismiss();
       toast({
         variant: "destructive",
         title: "Error",
@@ -220,8 +223,11 @@ export default function DocuCraftClient() {
             const enhancedNode = document.createElement('span');
             enhancedNode.innerHTML = result.enhancedDocumentContent;
             activeSelection.insertNode(enhancedNode);
+            // After inserting, we need to update the main state
             setDocumentContent(editorRef.current?.innerHTML || "");
         } else {
+            // This case might not be ideal if there's no selection,
+            // but as a fallback, we replace the whole content.
             setDocumentContent(result.enhancedDocumentContent);
         }
       },
@@ -249,9 +255,12 @@ export default function DocuCraftClient() {
       // Force white background and black text for PDF
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px';
+      contentToExport.style.fontFamily = 'Times-Roman, serif'
       
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
-        (el as HTMLElement).style.color = 'black';
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.color = 'black';
+        htmlEl.style.fontFamily = 'Times-Roman, serif'
       });
       
       // We need to append to body for jspdf to correctly render it.
@@ -390,6 +399,7 @@ export default function DocuCraftClient() {
         <main className="flex-1 flex flex-col overflow-hidden relative">
           {showAiToolbar && (
             <div
+              id="ai-toolbar"
               className="absolute z-10 bg-gray-800 rounded-md shadow-lg p-1 flex gap-1"
               style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
               onMouseDown={(e) => e.preventDefault()} // Prevent editor from losing focus
@@ -405,7 +415,7 @@ export default function DocuCraftClient() {
             onChange={setDocumentContent}
             disabled={isLoading}
             className={cn(
-              "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1a1a1a]",
+              "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
               "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
               { "opacity-60": isLoading }
             )}
