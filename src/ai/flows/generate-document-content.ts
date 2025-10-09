@@ -34,7 +34,7 @@ const prompt = ai.definePrompt({
   
   The output MUST be a single, valid HTML string.
   
-  If mathematical formulas are requested or relevant to the topic, they MUST be formatted using LaTeX syntax wrapped in \\( ... \\) for inline formulas and \\[ ... \\] for block formulas. For example: \\( E = mc^2 \\).
+  If mathematical formulas are requested or relevant to the topic, they MUST be formatted using standard LaTeX syntax wrapped in \\( ... \\) for inline formulas and \\[ ... \\] for block formulas. For example: \\( E = mc^2 \\). Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not use non-standard commands or unicode characters directly in formulas.
 
   Topic: {{{topic}}}
 

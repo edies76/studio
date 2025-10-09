@@ -404,7 +404,7 @@ export default function DocuCraftClient() {
             onChange={setDocumentContent}
             disabled={isLoading}
             className={cn(
-              "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
+              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
               "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
               { "opacity-60": isLoading }
             )}
