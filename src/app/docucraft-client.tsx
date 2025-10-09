@@ -68,15 +68,6 @@ const RichTextEditor = ({ value, onChange, className, disabled, editorRef }: { v
   )
 };
 
-
-const latexToOm = (latex: string): string => {
-  let omml = latex;
-  omml = omml.replace(/\\frac{([^}]+)}{([^}]+)}/g, `<m:f><m:num><m:r><m:t>$1</m:t></m:r></m:num><m:den><m:r><m:t>$2</m:t></m:r></m:den></m:f>`);
-  omml = omml.replace(/([a-zA-Z0-9]+)\^{([^}]+)}/g, `<m:sSup><m:e><m:r><m:t>$1</m:t></m:r></m:e><m:sup><m:r><m:t>$2</m:t></m:r></m:sup></m:sSup>`);
-  omml = omml.replace(/([a-zA-Z0-9]+)_{([^}]+)}/g, `<m:sSub><m:e><m:r><m:t>$1</m:t></m:r></m:e><m:sub><m:r><m:t>$2</m:t></m:r></m:sub></m:sSub>`);
-  return `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/office/2006/math"><m:oMath><m:r><m:t>${omml}</m:t></m:r></m:oMath></m:oMathPara>`;
-};
-
 export default function DocuCraftClient() {
   const [topic, setTopic] = useState("An essay about the future of space exploration");
   const [styleGuide, setStyleGuide] = useState<"APA" | "IEEE">("APA");
@@ -260,7 +251,7 @@ export default function DocuCraftClient() {
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         const htmlEl = el as HTMLElement;
         htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Times-Roman, serif'
+        htmlEl.style.fontFamily = 'Lora, serif'
       });
       
       // We need to append to body for jspdf to correctly render it.
@@ -293,8 +284,6 @@ export default function DocuCraftClient() {
   const handleExportWord = () => {
     if (!editorRef.current) return;
     let content = editorRef.current.innerHTML;
-    content = content.replace(/\\\((.*?)\\\)/g, (match, latex) => latexToOm(latex));
-    content = content.replace(/\\\[(.*?)\\\]/g, (match, latex) => latexToOm(latex));
 
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
@@ -352,7 +341,7 @@ export default function DocuCraftClient() {
       
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: AI Controls */}
-        <aside className="w-1/4 max-w-[400px] min-w-[300px] flex flex-col p-6 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
+        <aside className="w-1/3 max-w-[450px] min-w-[350px] flex flex-col p-6 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
           <h2 className="text-lg font-semibold mb-4 text-white flex items-center gap-2"><Bot size={20}/> AI Tools</h2>
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
