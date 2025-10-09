@@ -30,6 +30,15 @@ import {
   Wand2,
   ChevronDown,
   GripVertical,
+  Bold,
+  Italic,
+  Code,
+  Heading1,
+  Heading2,
+  List,
+  ListOrdered,
+  Link,
+  Quote
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -54,18 +63,20 @@ const latexToOm = (latex: string): string => {
   return `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/office/2006/math"><m:oMath><m:r><m:t>${omml}</m:t></m:r></m:oMath></m:oMathPara>`;
 };
 
+const ToolbarButton = ({ onClick, children }: { onClick: (e: React.MouseEvent<HTMLButtonElement>) => void, children: React.ReactNode }) => (
+    <Button variant="ghost" size="icon" onClick={onClick} onMouseDown={e => e.preventDefault()} className="w-8 h-8">
+        {children}
+    </Button>
+);
 
 export default function DocuCraftClient() {
   const [topic, setTopic] = useState("An essay about the future of space exploration");
   const [styleGuide, setStyleGuide] = useState<"APA" | "IEEE">("APA");
   const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [sidebarWidth, setSidebarWidth] = useState(33); // Initial width in percentage
 
   const { toast } = useToast();
-  const previewRef = useRef<HTMLDivElement>(null);
-  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
@@ -73,40 +84,19 @@ export default function DocuCraftClient() {
   }, []);
 
   useEffect(() => {
-    if (previewRef.current && window.MathJax) {
+    if (editorRef.current && window.MathJax) {
       window.MathJax.startup.promise.then(() => {
-        window.MathJax.typesetPromise([previewRef.current!]).catch((err) =>
+        window.MathJax.typesetPromise([editorRef.current!]).catch((err) =>
           console.error("MathJax typesetting failed:", err)
         );
       });
     }
   }, [documentContent]);
-  
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing || !editorContainerRef.current) return;
-      const totalWidth = editorContainerRef.current.offsetWidth;
-      const newSidebarWidth = (e.clientX / totalWidth) * 100;
-      if (newSidebarWidth > 20 && newSidebarWidth < 80) { // limits
-        setSidebarWidth(newSidebarWidth);
-      }
-    };
 
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
-
-    if (isResizing) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-    }
-
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isResizing]);
-
+  const applyFormat = (command: string, value: string | undefined = undefined) => {
+    document.execCommand(command, false, value);
+    editorRef.current?.focus();
+  };
 
   const handleAiAction = async (
     action: () => Promise<any>,
@@ -148,40 +138,55 @@ export default function DocuCraftClient() {
       () => generateDocumentContent({ topic, includeFormulas: true }),
       (result) => {
         setDocumentContent(result.content);
+        if(editorRef.current) editorRef.current.innerHTML = result.content;
       },
       "Generating content..."
     );
   };
 
   const handleFormat = () => {
-    const currentContent = documentContent;
+    const currentContent = editorRef.current?.innerHTML || documentContent;
     handleAiAction(
       () => autoFormatDocument({ documentContent: currentContent, styleGuide }),
       (result) => {
         setDocumentContent(result.formattedDocument);
+        if(editorRef.current) editorRef.current.innerHTML = result.formattedDocument;
       },
       `Applying ${styleGuide} format...`
     );
   };
   
   const handleEnhance = () => {
-    const selection = window.getSelection()?.toString() || '';
-    const feedback = "Make this more engaging and professional.";
-    let contentToEnhance = documentContent;
-    
-    if (selection.trim().length > 0) {
-       contentToEnhance = selection;
+    const selection = window.getSelection();
+    let contentToEnhance = editorRef.current?.innerHTML || documentContent;
+    let isSelection = false;
+
+    if (selection && selection.toString().trim().length > 0) {
+       contentToEnhance = selection.toString();
+       isSelection = true;
     }
+
+    const feedback = "Make this more engaging and professional.";
 
     handleAiAction(
       () => enhanceDocument({ documentContent: contentToEnhance, feedback }),
       (result) => {
-        if (selection.trim().length > 0) {
-            const enhancedContent = result.enhancedDocumentContent;
-            const newContent = documentContent.replace(contentToEnhance, enhancedContent);
-            setDocumentContent(newContent);
+        const enhancedContent = result.enhancedDocumentContent;
+        if (isSelection && editorRef.current) {
+            const range = selection!.getRangeAt(0);
+            range.deleteContents();
+            const div = document.createElement('div');
+            div.innerHTML = enhancedContent;
+            const frag = document.createDocumentFragment();
+            let node, lastNode;
+            while ((node = div.firstChild)) {
+                lastNode = frag.appendChild(node);
+            }
+            range.insertNode(frag);
+            setDocumentContent(editorRef.current.innerHTML);
         } else {
-            setDocumentContent(result.enhancedDocumentContent);
+            setDocumentContent(enhancedContent);
+            if(editorRef.current) editorRef.current.innerHTML = enhancedContent;
         }
       },
       "Enhancing document..."
@@ -189,69 +194,75 @@ export default function DocuCraftClient() {
   };
 
   const handleExportPdf = async () => {
-    if (!previewRef.current) return;
+    if (!editorRef.current) return;
     setIsLoading(true);
     toast({ description: "Exporting PDF..." });
 
     try {
-      if (window.MathJax) {
-        await window.MathJax.startup.promise;
-        await window.MathJax.typesetPromise();
-      }
+        if (window.MathJax) {
+            await window.MathJax.startup.promise;
+            await window.MathJax.typesetPromise([editorRef.current]);
+        }
 
-      const pdf = new jsPDF({
-        orientation: "p",
-        unit: "pt",
-        format: "a4",
-      });
+        const pdf = new jsPDF({
+            orientation: "p",
+            unit: "pt",
+            format: "a4",
+        });
 
-      const styles = `
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap');
-          body { 
-            font-family: 'Inter', sans-serif; 
-            color: #111; 
-            background-color: white; 
-            padding: 20px;
-          }
-          h1, h2, h3, h4, h5, h6 { 
-            font-family: 'Lora', serif; 
-            color: #000; 
-          }
-          .MathJax {
-            color: #000 !important;
-          }
-        </style>
-      `;
+        const styles = `
+            <style>
+              body { 
+                font-family: 'Inter', sans-serif; 
+                color: #111; 
+                background-color: white;
+              }
+              h1, h2, h3, h4, h5, h6 { 
+                font-family: 'Lora', serif; 
+                color: #000; 
+              }
+            </style>
+        `;
+        
+        const contentToExport = `
+          <html>
+            <head>
+              <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap" rel="stylesheet" />
+              ${styles}
+            </head>
+            <body>
+              ${editorRef.current.innerHTML}
+            </body>
+          </html>
+        `;
 
-      const content = previewRef.current.innerHTML;
+        await pdf.html(contentToExport, {
+            callback: function (doc) {
+                doc.save("document.pdf");
+            },
+            x: 35,
+            y: 35,
+            width: 525,
+            windowWidth: 1000,
+            autoPaging: 'text'
+        });
 
-      await pdf.html(styles + content, {
-        callback: function (doc) {
-          doc.save("document.pdf");
-        },
-        x: 10,
-        y: 10,
-        width: 190,
-        windowWidth: 800,
-        autoPaging: 'text'
-      });
-
-      toast({ title: "Success", description: "PDF exported successfully." });
+        toast({ title: "Success", description: "PDF exported successfully." });
     } catch (error) {
-      console.error("Error exporting PDF:", error);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Could not export PDF. Please try again.",
-      });
+        console.error("Error exporting PDF:", error);
+        toast({
+            variant: "destructive",
+            title: "Error",
+            description: "Could not export PDF. Please try again.",
+        });
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
     }
-  };
+};
+
   
   const handleExportWord = () => {
-    let content = documentContent;
+    let content = editorRef.current?.innerHTML || documentContent;
     content = content.replace(/\\\((.*?)\\\)/g, (match, latex) => latexToOm(latex));
     content = content.replace(/\\\[(.*?)\\\]/g, (match, latex) => latexToOm(latex));
 
@@ -311,7 +322,7 @@ export default function DocuCraftClient() {
       
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: AI Controls */}
-        <aside className="w-1/3 max-w-[500px] min-w-[300px] flex flex-col p-6 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
+        <aside className="w-1/4 max-w-[400px] min-w-[300px] flex flex-col p-6 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
           <h2 className="text-lg font-semibold mb-4 text-white">AI Tools</h2>
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
@@ -357,47 +368,37 @@ export default function DocuCraftClient() {
           </div>
         </aside>
 
-        {/* Editor and Preview */}
-        <div ref={editorContainerRef} className="flex-1 flex overflow-hidden">
-            {/* Editor Panel */}
-            <div className="flex flex-col overflow-hidden" style={{ width: `${sidebarWidth}%` }}>
-                 <h3 className="text-sm font-semibold p-3 bg-gray-800 border-b border-gray-700">Editor</h3>
-                 <Textarea
-                    value={documentContent}
-                    onChange={(e) => setDocumentContent(e.target.value)}
-                    className="flex-1 w-full h-full p-4 bg-gray-900 border-0 rounded-none focus:ring-0 text-base resize-none"
-                    placeholder="Edit the raw HTML content here..."
-                  />
+        {/* Editor Panel */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800 space-x-1">
+                <ToolbarButton onClick={() => applyFormat('bold')}><Bold /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('italic')}><Italic /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('formatBlock', '<h1>')}><Heading1 /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('formatBlock', '<h2>')}><Heading2 /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('insertUnorderedList')}><List /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('insertOrderedList')}><ListOrdered /></ToolbarButton>
+                <ToolbarButton onClick={() => applyFormat('formatBlock', '<blockquote>')}><Quote/></ToolbarButton>
+                <ToolbarButton onClick={() => {
+                    const url = prompt('Enter a URL:');
+                    if (url) applyFormat('createLink', url);
+                }}><Link /></ToolbarButton>
+                 <ToolbarButton onClick={() => applyFormat('formatBlock', '<pre>')}><Code /></ToolbarButton>
             </div>
-            
-             {/* Resizer */}
-            <div 
-              className="w-2 cursor-col-resize bg-gray-700 hover:bg-blue-500 flex items-center justify-center"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                setIsResizing(true);
-              }}
-            >
-                <GripVertical className="w-4 h-4 text-gray-400 pointer-events-none" />
-            </div>
-
-            {/* Preview Panel */}
-            <div className="flex-1 flex flex-col overflow-hidden" style={{ width: `${100 - sidebarWidth}%` }}>
-                 <h3 className="text-sm font-semibold p-3 bg-gray-800 border-b border-gray-700">Preview</h3>
-                <main className="flex-1 p-8 md:p-12 overflow-y-auto bg-gray-900">
-                   <div
-                      ref={previewRef}
-                      dangerouslySetInnerHTML={{ __html: documentContent }}
-                      className={cn(
-                        "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none",
-                        "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
-                        { "opacity-60": isLoading }
-                      )}
-                    />
-                </main>
-            </div>
+            <div
+                ref={editorRef}
+                contentEditable={!isLoading}
+                onInput={(e) => setDocumentContent(e.currentTarget.innerHTML)}
+                dangerouslySetInnerHTML={{ __html: documentContent }}
+                className={cn(
+                    "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto",
+                    "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
+                    { "opacity-60 bg-gray-800": isLoading }
+                )}
+            />
         </div>
       </div>
     </div>
   );
 }
+
+    
