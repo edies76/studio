@@ -52,14 +52,16 @@ export default function Home() {
   const [feedback, setFeedback] = useState(
     "Make the introduction more engaging and add a concluding paragraph that summarizes the key points."
   );
-  const [documentContent, setDocumentContent] = useState(
-    "<h2>Welcome to DocuCraft AI</h2><p>Your intelligent document creation assistant. Enter a topic and let our AI writer generate the initial draft. Then, use the format and enhance tools to perfect your document.</p><p>For example, you can include mathematical formulas like this: \\( E = mc^2 \\). The editor will render them beautifully.</p>"
-  );
+  const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.MathJax) {
+    setDocumentContent("<h2>Welcome to DocuCraft AI</h2><p>Your intelligent document creation assistant. Enter a topic and let our AI writer generate the initial draft. Then, use the format and enhance tools to perfect your document.</p><p>For example, you can include mathematical formulas like this: \\( E = mc^2 \\). The editor will render them beautifully.</p>");
+  }, []);
+
+  useEffect(() => {
+    if (documentContent && typeof window !== "undefined" && window.MathJax) {
       window.MathJax.typesetPromise();
     }
   }, [documentContent]);
@@ -70,21 +72,21 @@ export default function Home() {
     loadingMessage: string
   ) => {
     setIsLoading(true);
-    const_toast_ref_current_var = toast({
+    const toastRef = toast({
       title: "Processing...",
       description: loadingMessage,
     });
     try {
       const result = await action();
       successCallback(result);
-      const_toast_ref_current_var.dismiss();
+      toastRef.dismiss();
       toast({
         title: "Success",
         description: "Your document has been updated.",
       });
     } catch (error) {
       console.error(error);
-      const_toast_ref_current_var.dismiss();
+      toastRef.dismiss();
       toast({
         variant: "destructive",
         title: "Error",
