@@ -29,15 +29,8 @@ import {
   Loader2,
   Wand2,
   ChevronDown,
-  Bold,
-  Italic,
-  Code,
-  Heading1,
-  Heading2,
-  List,
-  ListOrdered,
-  Link,
-  Quote
+  Split,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -62,20 +55,19 @@ const latexToOm = (latex: string): string => {
   return `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/office/2006/math"><m:oMath><m:r><m:t>${omml}</m:t></m:r></m:oMath></m:oMathPara>`;
 };
 
-const ToolbarButton = ({ onClick, children }: { onClick: (e: React.MouseEvent<HTMLButtonElement>) => void, children: React.ReactNode }) => (
-    <Button variant="ghost" size="icon" onClick={onClick} onMouseDown={e => e.preventDefault()} className="w-8 h-8">
-        {children}
-    </Button>
-);
 
 export default function DocuCraftClient() {
   const [topic, setTopic] = useState("An essay about the future of space exploration");
   const [styleGuide, setStyleGuide] = useState<"APA" | "IEEE">("APA");
   const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(50); // Initial width as a percentage
 
   const { toast } = useToast();
-  const editorRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const resizeHandleRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
@@ -84,10 +76,10 @@ export default function DocuCraftClient() {
 
   useEffect(() => {
     const typesetMath = async () => {
-      if (editorRef.current && window.MathJax) {
+      if (previewRef.current && window.MathJax) {
         try {
           await window.MathJax.startup.promise;
-          await window.MathJax.typesetPromise([editorRef.current]);
+          await window.MathJax.typesetPromise([previewRef.current]);
         } catch (err) {
           console.error("MathJax typesetting failed:", err);
         }
@@ -96,21 +88,15 @@ export default function DocuCraftClient() {
     typesetMath();
   }, [documentContent]);
 
-  const applyFormat = (command: string, value: string | undefined = undefined) => {
-    document.execCommand(command, false, value);
-    editorRef.current?.focus();
-    setDocumentContent(editorRef.current?.innerHTML || '');
-  };
-
   const handleAiAction = async (
     action: () => Promise<any>,
     successCallback: (result: any) => void,
     loadingMessage: string
   ) => {
     setIsLoading(true);
-    const { dismiss, update } = toast({
+    toast({
       description: (
-        <div className="flex items-center gap-2 text-white">
+        <div className="flex items-center gap-2">
           <Loader2 className="animate-spin" />
           <span>{loadingMessage}</span>
         </div>
@@ -120,16 +106,14 @@ export default function DocuCraftClient() {
     try {
       const result = await action();
       successCallback(result);
-      update({
-        id: 'ai-action-toast',
+      toast({
         title: "Success",
         description: "Your document has been updated.",
         duration: 5000,
       });
     } catch (error) {
       console.error(error);
-      update({
-        id: 'ai-action-toast',
+      toast({
         variant: "destructive",
         title: "Error",
         description:
@@ -152,9 +136,8 @@ export default function DocuCraftClient() {
   };
 
   const handleFormat = () => {
-    const currentContent = editorRef.current?.innerHTML || documentContent;
     handleAiAction(
-      () => autoFormatDocument({ documentContent: currentContent, styleGuide }),
+      () => autoFormatDocument({ documentContent, styleGuide }),
       (result) => {
         setDocumentContent(result.formattedDocument);
       },
@@ -163,111 +146,72 @@ export default function DocuCraftClient() {
   };
   
   const handleEnhance = () => {
-    const selection = window.getSelection();
-    let contentToEnhance = editorRef.current?.innerHTML || documentContent;
-    let isSelection = false;
-
-    if (selection && selection.toString().trim().length > 0) {
-       contentToEnhance = selection.toString();
-       isSelection = true;
-    }
-
     const feedback = "Make this more engaging and professional.";
-
     handleAiAction(
-      () => enhanceDocument({ documentContent: contentToEnhance, feedback }),
+      () => enhanceDocument({ documentContent, feedback }),
       (result) => {
-        const enhancedContent = result.enhancedDocumentContent;
-        if (isSelection && editorRef.current) {
-            const range = selection!.getRangeAt(0);
-            range.deleteContents();
-            const div = document.createElement('div');
-            div.innerHTML = enhancedContent;
-            const frag = document.createDocumentFragment();
-            let node, lastNode;
-            while ((node = div.firstChild)) {
-                lastNode = frag.appendChild(node);
-            }
-            range.insertNode(frag);
-            setDocumentContent(editorRef.current.innerHTML);
-        } else {
-            setDocumentContent(enhancedContent);
-        }
+        setDocumentContent(result.enhancedDocumentContent);
       },
       "Enhancing document..."
     );
   };
 
   const handleExportPdf = async () => {
-    if (!editorRef.current) return;
+    if (!previewRef.current) return;
     setIsLoading(true);
     toast({ description: "Exporting PDF..." });
-
+  
     try {
-        await window.MathJax.startup.promise;
-        await window.MathJax.typesetPromise([editorRef.current]);
-        
-        const pdf = new jsPDF({
-            orientation: "p",
-            unit: "pt",
-            format: "a4",
-        });
-        
-        const styles = `
-            <style>
-              body { 
-                font-family: 'Inter', sans-serif; 
-                color: #111;
-                background-color: white;
-              }
-              h1, h2, h3, h4, h5, h6 { 
-                font-family: 'Lora', serif; 
-                color: #000;
-              }
-              .mjx-chtml {
-                color: #000 !important;
-              }
-            </style>
-        `;
-        
-        const contentToExport = `
-          <html>
-            <head>
-              ${styles}
-            </head>
-            <body>
-              ${editorRef.current.innerHTML}
-            </body>
-          </html>
-        `;
-
-        await pdf.html(contentToExport, {
-            callback: function (doc) {
-                doc.save("document.pdf");
-            },
-            x: 35,
-            y: 35,
-            width: 525,
-            windowWidth: 1000,
-            autoPaging: 'text'
-        });
-
-        toast({ title: "Success", description: "PDF exported successfully." });
+      // Ensure MathJax has rendered everything
+      await window.MathJax.startup.promise;
+      await window.MathJax.typesetPromise([previewRef.current]);
+  
+      const pdf = new jsPDF({
+        orientation: "p",
+        unit: "pt",
+        format: "a4",
+      });
+  
+      // Create a temporary clone to style for PDF export
+      const contentToExport = previewRef.current.cloneNode(true) as HTMLElement;
+      
+      // Apply styles for PDF generation
+      contentToExport.style.backgroundColor = 'white';
+      contentToExport.style.padding = '35px';
+      
+      const textElements = contentToExport.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, span, div');
+      textElements.forEach(el => {
+        (el as HTMLElement).style.color = 'black';
+      });
+  
+      document.body.appendChild(contentToExport);
+  
+      await pdf.html(contentToExport, {
+        callback: function (doc) {
+          doc.save("document.pdf");
+        },
+        width: 525,
+        windowWidth: 1000,
+        autoPaging: 'text'
+      });
+  
+      document.body.removeChild(contentToExport);
+  
+      toast({ title: "Success", description: "PDF exported successfully." });
     } catch (error) {
-        console.error("Error exporting PDF:", error);
-        toast({
-            variant: "destructive",
-            title: "Error",
-            description: "Could not export PDF. Please try again.",
-        });
+      console.error("Error exporting PDF:", error);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not export PDF. Please try again.",
+      });
     } finally {
-        setIsLoading(false);
+      setIsLoading(false);
     }
-};
-
+  };
   
   const handleExportWord = () => {
-    let content = editorRef.current?.innerHTML || documentContent;
+    let content = documentContent;
     content = content.replace(/\\\((.*?)\\\)/g, (match, latex) => latexToOm(latex));
     content = content.replace(/\\\[(.*?)\\\]/g, (match, latex) => latexToOm(latex));
 
@@ -286,6 +230,27 @@ export default function DocuCraftClient() {
     fileDownload.download = 'document.doc';
     fileDownload.click();
     document.body.removeChild(fileDownload);
+  };
+  
+  const startResizing = (mouseDownEvent: React.MouseEvent) => {
+    setIsResizing(true);
+    
+    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
+      const containerWidth = mouseDownEvent.currentTarget.parentElement!.getBoundingClientRect().width;
+      const newWidth = (mouseMoveEvent.clientX / containerWidth) * 100;
+      if (newWidth > 10 && newWidth < 90) { // Constrain resize
+        setPanelWidth(newWidth);
+      }
+    };
+
+    const onMouseUp = () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      setIsResizing(false);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
   };
 
 
@@ -328,7 +293,7 @@ export default function DocuCraftClient() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: AI Controls */}
         <aside className="w-1/4 max-w-[400px] min-w-[300px] flex flex-col p-6 bg-gray-800/50 border-r border-gray-700 overflow-y-auto">
-          <h2 className="text-lg font-semibold mb-4 text-white">AI Tools</h2>
+          <h2 className="text-lg font-semibold mb-4 text-white flex items-center gap-2"><Bot size={20}/> AI Tools</h2>
           <div className="flex flex-col gap-6">
             <div className="flex flex-col gap-2">
               <label htmlFor="topic" className="text-sm font-medium text-gray-400">Topic</label>
@@ -361,45 +326,58 @@ export default function DocuCraftClient() {
 
             <div className="flex flex-col gap-2">
                 <Button onClick={handleGenerate} disabled={isLoading} className="w-full justify-start">
-                  <Bot className="mr-2"/> Generate Content
+                  <Sparkles className="mr-2"/> Generate Content
                 </Button>
                 <Button onClick={handleFormat} disabled={isLoading} variant="outline" className="w-full justify-start">
                    <BookCheck className="mr-2"/> Format Document
                 </Button>
                 <Button onClick={handleEnhance} disabled={isLoading} variant="outline" className="w-full justify-start">
-                  <Sparkles className="mr-2"/> Enhance
+                  <Wand2 className="mr-2"/> Enhance
                 </Button>
             </div>
           </div>
         </aside>
 
-        {/* Editor Panel */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-            <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800 space-x-1">
-                <ToolbarButton onClick={() => applyFormat('bold')}><Bold /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('italic')}><Italic /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('formatBlock', '<h1>')}><Heading1 /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('formatBlock', '<h2>')}><Heading2 /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('insertUnorderedList')}><List /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('insertOrderedList')}><ListOrdered /></ToolbarButton>
-                <ToolbarButton onClick={() => applyFormat('formatBlock', '<blockquote>')}><Quote/></ToolbarButton>
-                <ToolbarButton onClick={() => {
-                    const url = prompt('Enter a URL:');
-                    if (url) applyFormat('createLink', url);
-                }}><Link /></ToolbarButton>
-                 <ToolbarButton onClick={() => applyFormat('formatBlock', '<pre>')}><Code /></ToolbarButton>
+        {/* Editor & Preview Panels */}
+        <div className="flex-1 flex flex-row overflow-hidden">
+            {/* Editor Panel */}
+            <div className="flex flex-col" style={{ width: `${panelWidth}%` }}>
+              <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800">
+                <h2 className="text-md font-semibold text-gray-300">Editor (HTML)</h2>
+              </div>
+              <Textarea
+                value={documentContent}
+                onChange={(e) => setDocumentContent(e.target.value)}
+                className="w-full h-full bg-gray-900 border-0 rounded-none resize-none focus:ring-0 text-base p-4 md:p-6"
+                placeholder="Type your HTML here..."
+                disabled={isLoading}
+              />
             </div>
-            <div
-                ref={editorRef}
-                contentEditable={!isLoading}
-                onInput={(e) => setDocumentContent(e.currentTarget.innerHTML)}
-                dangerouslySetInnerHTML={{ __html: documentContent }}
-                className={cn(
-                    "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto",
-                    "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
-                    { "opacity-60 bg-gray-800": isLoading }
-                )}
-            />
+
+            {/* Resizer */}
+            <div 
+              ref={resizeHandleRef}
+              className="w-2 cursor-col-resize bg-gray-700 hover:bg-blue-500 transition-colors flex items-center justify-center"
+              onMouseDown={startResizing}
+            >
+              <GripVertical className={cn("h-6 w-1 text-gray-500", isResizing && "text-white")} />
+            </div>
+
+            {/* Preview Panel */}
+            <div className="flex flex-col flex-1" style={{ width: `${100 - panelWidth}%` }}>
+              <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800">
+                  <h2 className="text-md font-semibold text-gray-300">Preview</h2>
+              </div>
+              <div
+                  ref={previewRef}
+                  dangerouslySetInnerHTML={{ __html: documentContent }}
+                  className={cn(
+                      "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1a1a1a]",
+                      "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
+                      { "opacity-60": isLoading }
+                  )}
+              />
+            </div>
         </div>
       </div>
     </div>
