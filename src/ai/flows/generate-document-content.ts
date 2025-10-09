@@ -30,13 +30,14 @@ const prompt = ai.definePrompt({
   name: 'generateDocumentContentPrompt',
   input: {schema: GenerateDocumentContentInputSchema},
   output: {schema: GenerateDocumentContentOutputSchema},
-  prompt: `You are a document content generator. Your goal is to generate well-written content for a document based on the provided topic. 
+  prompt: `You are a document content generator. Your goal is to generate clean, well-written content based on the provided topic. 
   
   The output MUST be a single, valid HTML string.
-  
-  For any non-mathematical text that should be formatted as code or a literal, use <code>...</code> tags. For example: <code>P(x)</code>.
 
-  If mathematical formulas are requested or relevant to the topic, they MUST be formatted using standard LaTeX syntax wrapped in \\( ... \\) for inline formulas and \\[ ... \\] for block formulas. For example: \\( E = mc^2 \\). Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not use non-standard commands or unicode characters directly in formulas.
+  - For text that should be presented as inline code or a literal (like variable names or simple notations), wrap it in <code>...</code> tags. For example: <code>P(x)</code>. Do not use any other form of markdown or pseudo-code.
+  - For complex mathematical formulas, you MUST use standard LaTeX syntax. Wrap inline formulas in \\( ... \\) and block formulas in \\[ ... \\]. For example: \\( E = mc^2 \\).
+  - Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not invent commands or use unicode characters directly in formulas.
+  - The entire response should be formatted as a single block of HTML content, ready to be displayed on a web page.
 
   Topic: {{{topic}}}
 
@@ -54,5 +55,3 @@ const generateDocumentContentFlow = ai.defineFlow(
     return output!;
   }
 );
-
-    

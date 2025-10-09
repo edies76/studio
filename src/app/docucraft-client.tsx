@@ -144,7 +144,7 @@ export default function DocuCraftClient() {
   
   const cleanAiOutput = (html: string): string => {
     // This regex looks for ´text´ and replaces it with <code>text</code>
-    return html.replace(/´([^´]+)´/g, '<code>$1</code>');
+    return html.replace(/`([^`]+)`/g, '<code>$1</code>');
   };
 
 
@@ -258,12 +258,12 @@ export default function DocuCraftClient() {
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px'; // Standard A4 padding
       contentToExport.style.width = '525pt'; // A4 width in points
-      contentToExport.style.fontFamily = 'Times-Roman, serif'; // Use a standard PDF font
+      contentToExport.style.fontFamily = 'Inter, sans-serif';
       
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         const htmlEl = el as HTMLElement;
         htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Lora, serif';
+        htmlEl.style.fontFamily = 'Inter, sans-serif';
       });
       
       await pdf.html(contentToExport, {
@@ -318,7 +318,7 @@ export default function DocuCraftClient() {
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Lora', serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>`;
+        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>`;
     const footer = "</body></html>";
     const sourceHTML = header+content+footer;
 
@@ -337,7 +337,7 @@ export default function DocuCraftClient() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <Wand2 className="w-7 h-7 text-blue-500" />
-          <h1 className="text-2xl font-serif font-bold text-white">
+          <h1 className="text-3xl font-['Great_Vibes'] text-white">
             bamba
           </h1>
         </div>
@@ -433,8 +433,8 @@ export default function DocuCraftClient() {
             onChange={setDocumentContent}
             disabled={isLoading}
             className={cn(
-              "prose dark:prose-invert prose-lg max-w-3xl mx-auto w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-              "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
+              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
+              "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white font-sans",
               { "opacity-60": isLoading }
             )}
           />
@@ -443,5 +443,3 @@ export default function DocuCraftClient() {
     </div>
   );
 }
-
-    

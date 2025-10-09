@@ -61,12 +61,26 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Custom Scrollbar for Webkit browsers */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--secondary));
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
 }
 
 @layer components {
   .prose code {
-    @apply bg-gray-800 text-blue-400 rounded-md px-1.5 py-0.5 font-mono text-sm;
+    @apply text-blue-400 rounded-md px-1 font-mono text-sm break-words;
+    background-color: transparent;
   }
 }
-
-    
