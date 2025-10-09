@@ -5,7 +5,7 @@
  *
  * - generateDocumentContent - A function that generates document content.
  * - GenerateDocumentContentInput - The input type for the generateDocumentContent function.
- * - GenerateDocumentContentOutput - The return type for the generateDocumentContent function.
+ * - GenerateDocumentContentOutput - The return type for the generateDocumentcontent function.
  */
 
 import {ai} from '@/ai/genkit';
