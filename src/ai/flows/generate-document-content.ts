@@ -30,13 +30,13 @@ const prompt = ai.definePrompt({
   name: 'generateDocumentContentPrompt',
   input: {schema: GenerateDocumentContentInputSchema},
   output: {schema: GenerateDocumentContentOutputSchema},
-  prompt: `You are a document content generator. Your goal is to generate well-written content for a document based on the provided topic.
+  prompt: `You are a document content generator. Your goal is to generate well-written content for a document based on the provided topic. The output should be in HTML format.
 
   Topic: {{{topic}}}
 
   Include mathematical formulas if requested.
 
-  Content:`, //The content should be in HTML.
+  Content:`,
 });
 
 const generateDocumentContentFlow = ai.defineFlow(
