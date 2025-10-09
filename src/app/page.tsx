@@ -45,34 +45,49 @@ declare global {
   }
 }
 
+// Function to convert LaTeX to OMML for Word
+const latexToOm equação = (latex: string): string => {
+  // This is a simplified converter. A real implementation might need a more robust library.
+  // For now, we'll handle basic fractions and superscripts/subscripts.
+  let omml = latex;
+  // Basic fraction \frac{a}{b} -> <m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f>
+  omml = omml.replace(/\\frac{([^}]+)}{([^}]+)}/g, `<m:f><m:num><m:r><m:t>$1</m:t></m:r></m:num><m:den><m:r><m:t>$2</m:t></m:r></m:den></m:f>`);
+  // Superscript x^y -> <m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>y</m:t></m:r></m:sup></m:sSup>
+  omml = omml.replace(/([a-zA-Z0-9]+)\^{([^}]+)}/g, `<m:sSup><m:e><m:r><m:t>$1</m:t></m:r></m:e><m:sup><m:r><m:t>$2</m:t></m:r></m:sup></m:sSup>`);
+  // Subscript x_y -> <m:sSub><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sub><m:r><m:t>y</m:t></m:r></m:sub></m:sSub>
+  omml = omml.replace(/([a-zA-Z0-9]+)_{([^}]+)}/g, `<m:sSub><m:e><m:r><m:t>$1</m:t></m:r></m:e><m:sub><m:r><m:t>$2</m:t></m:r></m:sub></m:sSub>`);
+
+  return `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/office/2006/math"><m:oMath><m:r><m:t>${omml}</m:t></m:r></m:oMath></m:oMathPara>`;
+};
+
+
 export default function Home() {
   const [topic, setTopic] = useState("An essay about the future of space exploration");
   const [styleGuide, setStyleGuide] = useState<"APA" | "IEEE">("APA");
   const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isEditing, setIsEditing] = useState(true);
+  const [editedContent, setEditedContent] = useState("");
+
   const { toast } = useToast();
-  const editorRef = useRef<HTMLDivElement>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setDocumentContent(`<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`);
+    const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
+    setDocumentContent(initialContent);
+    setEditedContent(initialContent);
   }, []);
 
   useEffect(() => {
-    const typesetMath = async () => {
-      if (documentContent && typeof window !== 'undefined' && window.MathJax) {
-        try {
-          // Wait for MathJax to be fully ready
-          await window.MathJax.startup.promise;
-          // Typeset the content
-          await window.MathJax.typesetPromise();
-        } catch (e) {
-          console.error("MathJax typesetting failed:", e);
-        }
-      }
-    };
-    typesetMath();
+    if (documentContent && window.MathJax) {
+      window.MathJax.startup.promise.then(() => {
+        window.MathJax.typesetPromise([previewRef.current]).catch((err) =>
+          console.error("MathJax typesetting failed:", err)
+        );
+      });
+    }
   }, [documentContent]);
-  
+
   const handleAiAction = async (
     action: () => Promise<any>,
     successCallback: (result: any) => void,
@@ -112,64 +127,71 @@ export default function Home() {
   const handleGenerate = () => {
     handleAiAction(
       () => generateDocumentContent({ topic, includeFormulas: true }),
-      (result) => setDocumentContent(result.content),
+      (result) => {
+        setDocumentContent(result.content);
+        setEditedContent(result.content);
+      },
       "Generating content..."
     );
   };
 
   const handleFormat = () => {
-    const currentContent = editorRef.current?.innerHTML || documentContent;
+    const currentContent = isEditing ? editedContent : documentContent;
     handleAiAction(
       () => autoFormatDocument({ documentContent: currentContent, styleGuide }),
-      (result) => setDocumentContent(result.formattedDocument),
+      (result) => {
+        setDocumentContent(result.formattedDocument);
+        setEditedContent(result.formattedDocument);
+      },
       `Applying ${styleGuide} format...`
     );
   };
-
+  
   const handleEnhance = () => {
-     const selection = window.getSelection()?.toString().trim();
-     const currentContent = editorRef.current?.innerHTML || documentContent;
-     const feedback = selection && selection.length > 5 ? `Improve the following selected text: "${selection}"` : "Make the entire document more engaging and professional.";
-    
+    // For now, enhance operates on the whole document.
+    // Selection-based enhancement will be added with a proper rich-text editor.
+    const currentContent = isEditing ? editedContent : documentContent;
+    const feedback = "Make the entire document more engaging and professional.";
     handleAiAction(
       () => enhanceDocument({ documentContent: currentContent, feedback }),
-      (result) => setDocumentContent(result.enhancedDocumentContent),
+      (result) => {
+        setDocumentContent(result.enhancedDocumentContent);
+        setEditedContent(result.enhancedDocumentContent);
+      },
       "Enhancing document..."
     );
   };
 
+
   const handleExportPdf = async () => {
-    if (!editorRef.current) return;
+    if (!previewRef.current) return;
     
     setIsLoading(true);
     const { id: toastId } = toast({ description: "Exporting PDF..." });
 
     try {
-        // Ensure MathJax has finished rendering before capturing
         if (window.MathJax) {
             await window.MathJax.startup.promise;
             await window.MathJax.typesetPromise();
         }
 
-        const content = editorRef.current;
+        const content = previewRef.current;
         const canvas = await html2canvas(content, {
             scale: 2, 
-            backgroundColor: '#111827', // Match dark theme background
+            backgroundColor: '#0a0a0a', // Match dark theme background
             useCORS: true,
-            onclone: (document) => {
-              // On clone, we need to ensure fonts are loaded and styles are applied
-              // This helps html2canvas render the content more accurately
-              const head = document.head;
-              if(head) {
-                const style = document.createElement('style');
-                style.innerHTML = `
-                  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap');
-                  body { font-family: 'Inter', sans-serif; }
-                  h1, h2, h3, h4, h5, h6 { font-family: 'Lora', serif; }
-                `;
-                head.appendChild(style);
+             onclone: (document) => {
+                const head = document.head;
+                if(head) {
+                  const style = document.createElement('style');
+                  style.innerHTML = `
+                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap');
+                    body { font-family: 'Inter', sans-serif; color: #e5e5e5 }
+                    h1, h2, h3, h4, h5, h6 { font-family: 'Lora', serif; color: white; }
+                  `;
+                  head.appendChild(style);
+                }
               }
-            }
         });
 
         const pdf = new jsPDF({
@@ -197,15 +219,20 @@ export default function Home() {
   };
   
   const handleExportWord = () => {
-    const currentContent = editorRef.current?.innerHTML;
-    if (!currentContent) return;
+    let content = documentContent;
+
+    // Convert LaTeX formulas to OMML
+    content = content.replace(/\\\((.*?)\\\)/g, (match, latex) => latexToOm(latex));
+    content = content.replace(/\\\[(.*?)\\\]/g, (match, latex) => latexToOm(latex));
+
 
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
+        "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
         "<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Lora', serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>";
     const footer = "</body></html>";
-    const sourceHTML = header+currentContent+footer;
+    const sourceHTML = header+content+footer;
 
     const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
     const fileDownload = document.createElement("a");
@@ -218,11 +245,11 @@ export default function Home() {
 
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0">
+    <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
+      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <Wand2 className="w-7 h-7 text-blue-500" />
-          <h1 className="text-2xl font-serif font-bold text-gray-800 dark:text-white">
+          <h1 className="text-2xl font-serif font-bold text-white">
             DocuGen AI
           </h1>
         </div>
@@ -252,65 +279,82 @@ export default function Home() {
           />
         </div>
       </header>
-
-      <main className="flex-1 flex justify-center p-4 sm:p-6 md:p-8 overflow-y-auto">
-        <div className="w-full max-w-4xl flex flex-col">
-          {/* AI Toolbar */}
-          <div className="sticky top-0 z-10 mb-6 bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm p-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md flex flex-wrap items-center gap-4 justify-between">
-            <div className="flex-grow min-w-[200px]">
+      
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Panel: AI Controls */}
+        <aside className="w-1/3 flex flex-col p-6 bg-gray-900 border-r border-gray-800 overflow-y-auto">
+          <h2 className="text-lg font-semibold mb-4 text-white">AI Tools</h2>
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-2">
+              <label htmlFor="topic" className="text-sm font-medium text-gray-400">Topic</label>
               <Textarea
                   id="topic"
-                  placeholder="Enter a topic to generate content..."
+                  placeholder="e.g., The history of artificial intelligence"
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
-                  className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-blue-500 focus:border-blue-500"
-                  rows={1}
-                />
+                  className="bg-gray-800 border-gray-600 focus:ring-blue-500 focus:border-blue-500"
+                  rows={3}
+              />
             </div>
-            <div className="flex items-center gap-2">
-              <Select
+
+             <div className="flex flex-col gap-2">
+                <label htmlFor="style-guide" className="text-sm font-medium text-gray-400">Style Guide</label>
+                <Select
                   value={styleGuide}
-                  onValueChange={(value: "APA" | "IEEE") =>
-                    setStyleGuide(value)
-                  }
+                  onValueChange={(value: "APA" | "IEEE") => setStyleGuide(value)}
                   disabled={isLoading}
                 >
-                  <SelectTrigger id="style-guide" className="w-[120px] bg-white dark:bg-gray-800">
+                  <SelectTrigger id="style-guide" className="bg-gray-800 border-gray-600">
                     <SelectValue placeholder="Style" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="APA">APA</SelectItem>
                     <SelectItem value="IEEE">IEEE</SelectItem>
                   </SelectContent>
-              </Select>
-              <Button onClick={handleGenerate} disabled={isLoading} variant="outline" title="Generate Content">
-                <Bot />
-              </Button>
-              <Button onClick={handleFormat} disabled={isLoading} variant="outline" title="Format Document">
-                 <BookCheck />
-              </Button>
-              <Button onClick={handleEnhance} disabled={isLoading} variant="outline" title="Enhance with AI">
-                <Sparkles />
-              </Button>
+                </Select>
+            </div>
+
+            <div className="flex flex-col gap-2">
+                <Button onClick={handleGenerate} disabled={isLoading} className="w-full justify-start">
+                  <Bot className="mr-2"/> Generate Content
+                </Button>
+                <Button onClick={handleFormat} disabled={isLoading} variant="outline" className="w-full justify-start">
+                   <BookCheck className="mr-2"/> Format Document
+                </Button>
+                <Button onClick={handleEnhance} disabled={isLoading} variant="outline" className="w-full justify-start">
+                  <Sparkles className="mr-2"/> Enhance Document
+                </Button>
+            </div>
+             <div className="flex flex-col gap-2 mt-4">
+              <label className="text-sm font-medium text-gray-400">Edit Document</label>
+               <Textarea
+                value={editedContent}
+                onChange={(e) => setEditedContent(e.target.value)}
+                onBlur={() => {
+                  setDocumentContent(editedContent);
+                  setIsEditing(false);
+                }}
+                onFocus={() => setIsEditing(true)}
+                className="bg-gray-800 border-gray-600 focus:ring-blue-500 focus:border-blue-500 h-64"
+                placeholder="Edit the generated content here..."
+              />
             </div>
           </div>
-          
-          {/* Editor */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 md:p-12 flex-1">
-             <div
-                ref={editorRef}
-                contentEditable={!isLoading}
-                onInput={(e) => setDocumentContent(e.currentTarget.innerHTML)}
-                dangerouslySetInnerHTML={{ __html: documentContent }}
-                className={cn(
-                  "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none",
-                  "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
-                  { "opacity-60 cursor-not-allowed": isLoading }
-                )}
-              />
-          </div>
-        </div>
-      </main>
+        </aside>
+
+        {/* Right Panel: Document Preview */}
+        <main className="flex-1 p-8 md:p-12 overflow-y-auto">
+           <div
+              ref={previewRef}
+              dangerouslySetInnerHTML={{ __html: documentContent }}
+              className={cn(
+                "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none",
+                "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
+                { "opacity-60": isLoading }
+              )}
+            />
+        </main>
+      </div>
     </div>
   );
 }
