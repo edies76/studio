@@ -22,13 +22,12 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import {
-  FileDown,
+  FileText,
   Bot,
   Sparkles,
   BookCheck,
   Loader2,
   Wand2,
-  FileText,
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,6 +38,9 @@ declare global {
   interface Window {
     MathJax: {
       typesetPromise: () => Promise<void>;
+      startup: {
+        promise: Promise<void>;
+      };
     };
   }
 }
@@ -56,9 +58,19 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (documentContent && typeof window !== "undefined" && window.MathJax) {
-      window.MathJax.typesetPromise();
-    }
+    const typesetMath = async () => {
+      if (documentContent && typeof window !== 'undefined' && window.MathJax) {
+        try {
+          // Wait for MathJax to be fully ready
+          await window.MathJax.startup.promise;
+          // Typeset the content
+          await window.MathJax.typesetPromise();
+        } catch (e) {
+          console.error("MathJax typesetting failed:", e);
+        }
+      }
+    };
+    typesetMath();
   }, [documentContent]);
   
   const handleAiAction = async (
@@ -67,16 +79,15 @@ export default function Home() {
     loadingMessage: string
   ) => {
     setIsLoading(true);
-    const toastId = toast({
-      title: "Processing...",
+    const { id: toastId } = toast({
       description: (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 text-white">
           <Loader2 className="animate-spin" />
           <span>{loadingMessage}</span>
         </div>
       ),
       duration: 120000,
-    }).id;
+    });
     try {
       const result = await action();
       successCallback(result);
@@ -107,19 +118,21 @@ export default function Home() {
   };
 
   const handleFormat = () => {
+    const currentContent = editorRef.current?.innerHTML || documentContent;
     handleAiAction(
-      () => autoFormatDocument({ documentContent, styleGuide }),
+      () => autoFormatDocument({ documentContent: currentContent, styleGuide }),
       (result) => setDocumentContent(result.formattedDocument),
       `Applying ${styleGuide} format...`
     );
   };
 
   const handleEnhance = () => {
-     const selection = window.getSelection()?.toString();
-     const feedback = selection && selection.length > 5 ? `Improve the following selected text: "${selection}"` : "Make the entire document more engaging.";
+     const selection = window.getSelection()?.toString().trim();
+     const currentContent = editorRef.current?.innerHTML || documentContent;
+     const feedback = selection && selection.length > 5 ? `Improve the following selected text: "${selection}"` : "Make the entire document more engaging and professional.";
     
     handleAiAction(
-      () => enhanceDocument({ documentContent, feedback }),
+      () => enhanceDocument({ documentContent: currentContent, feedback }),
       (result) => setDocumentContent(result.enhancedDocumentContent),
       "Enhancing document..."
     );
@@ -129,47 +142,70 @@ export default function Home() {
     if (!editorRef.current) return;
     
     setIsLoading(true);
-    toast({ title: "Exporting PDF...", description: "Please wait..." });
+    const { id: toastId } = toast({ description: "Exporting PDF..." });
 
     try {
-      const content = editorRef.current;
-      const canvas = await html2canvas(content, {
-          scale: 2,
-          backgroundColor: null, 
-          useCORS: true,
-      });
+        // Ensure MathJax has finished rendering before capturing
+        if (window.MathJax) {
+            await window.MathJax.startup.promise;
+            await window.MathJax.typesetPromise();
+        }
 
-      const pdf = new jsPDF({
-          orientation: 'p',
-          unit: 'px',
-          format: [canvas.width, canvas.height]
-      });
+        const content = editorRef.current;
+        const canvas = await html2canvas(content, {
+            scale: 2, 
+            backgroundColor: '#111827', // Match dark theme background
+            useCORS: true,
+            onclone: (document) => {
+              // On clone, we need to ensure fonts are loaded and styles are applied
+              // This helps html2canvas render the content more accurately
+              const head = document.head;
+              if(head) {
+                const style = document.createElement('style');
+                style.innerHTML = `
+                  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap');
+                  body { font-family: 'Inter', sans-serif; }
+                  h1, h2, h3, h4, h5, h6 { font-family: 'Lora', serif; }
+                `;
+                head.appendChild(style);
+              }
+            }
+        });
+
+        const pdf = new jsPDF({
+            orientation: 'p',
+            unit: 'px',
+            format: [canvas.width, canvas.height]
+        });
       
-      const imgData = canvas.toDataURL('image/png');
-      pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
-      pdf.save("document.pdf");
+        const imgData = canvas.toDataURL('image/png');
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save("document.pdf");
+        toast({ title: "Success", description: "PDF exported successfully." });
       
     } catch (error) {
-      console.error("Error exporting PDF:", error);
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: "Could not export PDF. Please try again.",
-      });
+        console.error("Error exporting PDF:", error);
+        toast({
+            variant: "destructive",
+            title: "Error",
+            description: "Could not export PDF. Please try again.",
+        });
     } finally {
-      setIsLoading(false);
+        setIsLoading(false);
+        toast({id: toastId, open: false});
     }
   };
   
   const handleExportWord = () => {
-    if (!documentContent) return;
+    const currentContent = editorRef.current?.innerHTML;
+    if (!currentContent) return;
 
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        "<head><meta charset='utf-8'><title>Export HTML to Word</title></head><body>";
+        "<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Lora', serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>";
     const footer = "</body></html>";
-    const sourceHTML = header+documentContent+footer;
+    const sourceHTML = header+currentContent+footer;
 
     const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
     const fileDownload = document.createElement("a");
@@ -183,9 +219,9 @@ export default function Home() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 font-sans">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800">
+      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
-          <Wand2 className="w-7 h-7 text-blue-600" />
+          <Wand2 className="w-7 h-7 text-blue-500" />
           <h1 className="text-2xl font-serif font-bold text-gray-800 dark:text-white">
             DocuGen AI
           </h1>
@@ -218,16 +254,16 @@ export default function Home() {
       </header>
 
       <main className="flex-1 flex justify-center p-4 sm:p-6 md:p-8 overflow-y-auto">
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-4xl flex flex-col">
           {/* AI Toolbar */}
-          <div className="sticky top-0 z-10 mb-6 bg-gray-50/80 dark:bg-gray-900/80 backdrop-blur-sm p-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md flex flex-wrap items-center gap-4 justify-between">
+          <div className="sticky top-0 z-10 mb-6 bg-gray-50/80 dark:bg-gray-800/80 backdrop-blur-sm p-4 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md flex flex-wrap items-center gap-4 justify-between">
             <div className="flex-grow min-w-[200px]">
               <Textarea
                   id="topic"
                   placeholder="Enter a topic to generate content..."
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
-                  className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                  className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-blue-500 focus:border-blue-500"
                   rows={1}
                 />
             </div>
@@ -260,7 +296,7 @@ export default function Home() {
           </div>
           
           {/* Editor */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 md:p-12 min-h-[calc(100vh-250px)]">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg p-8 md:p-12 flex-1">
              <div
                 ref={editorRef}
                 contentEditable={!isLoading}
@@ -268,7 +304,7 @@ export default function Home() {
                 dangerouslySetInnerHTML={{ __html: documentContent }}
                 className={cn(
                   "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none",
-                  "prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl",
+                  "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
                   { "opacity-60 cursor-not-allowed": isLoading }
                 )}
               />

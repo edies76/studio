@@ -18,7 +18,7 @@ const GenerateDocumentContentInputSchema = z.object({
 export type GenerateDocumentContentInput = z.infer<typeof GenerateDocumentContentInputSchema>;
 
 const GenerateDocumentContentOutputSchema = z.object({
-  content: z.string().describe('The generated document content, including mathematical formulas if requested.'),
+  content: z.string().describe('The generated document content, including mathematical formulas if requested, formatted as a single HTML string.'),
 });
 export type GenerateDocumentContentOutput = z.infer<typeof GenerateDocumentContentOutputSchema>;
 
@@ -30,11 +30,13 @@ const prompt = ai.definePrompt({
   name: 'generateDocumentContentPrompt',
   input: {schema: GenerateDocumentContentInputSchema},
   output: {schema: GenerateDocumentContentOutputSchema},
-  prompt: `You are a document content generator. Your goal is to generate well-written content for a document based on the provided topic. The output should be in HTML format.
+  prompt: `You are a document content generator. Your goal is to generate well-written content for a document based on the provided topic. 
+  
+  The output MUST be a single, valid HTML string.
+  
+  If mathematical formulas are requested or relevant to the topic, they MUST be formatted using LaTeX syntax wrapped in \\( ... \\) for inline formulas and \\[ ... \\] for block formulas. For example: \\( E = mc^2 \\).
 
   Topic: {{{topic}}}
-
-  Include mathematical formulas if requested.
 
   Content:`,
 });
