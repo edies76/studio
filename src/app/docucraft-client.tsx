@@ -29,7 +29,6 @@ import {
   Loader2,
   Wand2,
   ChevronDown,
-  Split,
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -46,7 +45,32 @@ declare global {
   }
 }
 
-// Function to convert LaTeX to OMML for Word
+// Dummy Rich Text Editor Component (simulating a real one)
+const RichTextEditor = ({ value, onChange, className, disabled }: { value: string, onChange: (value: string) => void, className?: string, disabled?: boolean }) => {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== value) {
+      editorRef.current.innerHTML = value;
+    }
+  }, [value]);
+
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
+    onChange(e.currentTarget.innerHTML);
+  };
+  
+  return (
+    <div
+      ref={editorRef}
+      contentEditable={!disabled}
+      onInput={handleInput}
+      className={className}
+      suppressContentEditableWarning={true}
+    />
+  )
+};
+
+
 const latexToOm = (latex: string): string => {
   let omml = latex;
   omml = omml.replace(/\\frac{([^}]+)}{([^}]+)}/g, `<m:f><m:num><m:r><m:t>$1</m:t></m:r></m:num><m:den><m:r><m:t>$2</m:t></m:r></m:den></m:f>`);
@@ -55,19 +79,18 @@ const latexToOm = (latex: string): string => {
   return `<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/office/2006/math"><m:oMath><m:r><m:t>${omml}</m:t></m:r></m:oMath></m:oMathPara>`;
 };
 
-
 export default function DocuCraftClient() {
   const [topic, setTopic] = useState("An essay about the future of space exploration");
   const [styleGuide, setStyleGuide] = useState<"APA" | "IEEE">("APA");
   const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [panelWidth, setPanelWidth] = useState(50); // Initial width as a percentage
 
   const { toast } = useToast();
-  const previewRef = useRef<HTMLDivElement>(null);
-  const resizeHandleRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
 
+  const [selection, setSelection] = useState<Range | null>(null);
+  const [showAiToolbar, setShowAiToolbar] = useState(false);
+  const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
     const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
@@ -76,10 +99,11 @@ export default function DocuCraftClient() {
 
   useEffect(() => {
     const typesetMath = async () => {
-      if (previewRef.current && window.MathJax) {
+      // Use the ref from the editor itself
+      if (editorRef.current && window.MathJax) {
         try {
           await window.MathJax.startup.promise;
-          await window.MathJax.typesetPromise([previewRef.current]);
+          await window.MathJax.typesetPromise([editorRef.current]);
         } catch (err) {
           console.error("MathJax typesetting failed:", err);
         }
@@ -87,6 +111,38 @@ export default function DocuCraftClient() {
     };
     typesetMath();
   }, [documentContent]);
+
+  useEffect(() => {
+    const handleMouseUp = () => {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (!range.collapsed) {
+          setSelection(range);
+          const rect = range.getBoundingClientRect();
+          setToolbarPosition({
+            top: window.scrollY + rect.bottom + 5,
+            left: window.scrollX + rect.left + (rect.width / 2) - 30,
+          });
+          setShowAiToolbar(true);
+        } else {
+          setShowAiToolbar(false);
+        }
+      }
+    };
+
+    const editorDiv = editorRef.current;
+    if (editorDiv) {
+      editorDiv.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      if (editorDiv) {
+        editorDiv.removeEventListener("mouseup", handleMouseUp);
+      }
+    };
+  }, [editorRef.current]);
+
 
   const handleAiAction = async (
     action: () => Promise<any>,
@@ -122,15 +178,14 @@ export default function DocuCraftClient() {
       });
     } finally {
       setIsLoading(false);
+      setShowAiToolbar(false);
     }
   };
 
   const handleGenerate = () => {
     handleAiAction(
       () => generateDocumentContent({ topic, includeFormulas: true }),
-      (result) => {
-        setDocumentContent(result.content);
-      },
+      (result) => setDocumentContent(result.content),
       "Generating content..."
     );
   };
@@ -138,44 +193,46 @@ export default function DocuCraftClient() {
   const handleFormat = () => {
     handleAiAction(
       () => autoFormatDocument({ documentContent, styleGuide }),
-      (result) => {
-        setDocumentContent(result.formattedDocument);
-      },
+      (result) => setDocumentContent(result.formattedDocument),
       `Applying ${styleGuide} format...`
     );
   };
   
   const handleEnhance = () => {
-    const feedback = "Make this more engaging and professional.";
+    const selectionText = selection ? selection.toString() : documentContent;
+    const feedback = `Make this more engaging and professional: "${selectionText}"`;
+    
     handleAiAction(
-      () => enhanceDocument({ documentContent, feedback }),
+      () => enhanceDocument({ documentContent: selectionText, feedback }),
       (result) => {
-        setDocumentContent(result.enhancedDocumentContent);
+        if (selection && !selection.collapsed) {
+            selection.deleteContents();
+            selection.insertNode(document.createTextNode(result.enhancedDocumentContent));
+            setDocumentContent(editorRef.current?.innerHTML || "");
+        } else {
+            setDocumentContent(result.enhancedDocumentContent);
+        }
       },
-      "Enhancing document..."
+      "Enhancing selection..."
     );
   };
 
   const handleExportPdf = async () => {
-    if (!previewRef.current) return;
+    if (!editorRef.current) return;
     setIsLoading(true);
     toast({ description: "Exporting PDF..." });
   
     try {
-      // Ensure MathJax has rendered everything
       await window.MathJax.startup.promise;
-      await window.MathJax.typesetPromise([previewRef.current]);
+      await window.MathJax.typesetPromise([editorRef.current]);
   
       const pdf = new jsPDF({
         orientation: "p",
         unit: "pt",
         format: "a4",
       });
-  
-      // Create a temporary clone to style for PDF export
-      const contentToExport = previewRef.current.cloneNode(true) as HTMLElement;
       
-      // Apply styles for PDF generation
+      const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px';
       
@@ -183,7 +240,8 @@ export default function DocuCraftClient() {
       textElements.forEach(el => {
         (el as HTMLElement).style.color = 'black';
       });
-  
+      
+      // We need to append to body for jspdf to correctly render it.
       document.body.appendChild(contentToExport);
   
       await pdf.html(contentToExport, {
@@ -211,7 +269,8 @@ export default function DocuCraftClient() {
   };
   
   const handleExportWord = () => {
-    let content = documentContent;
+    if (!editorRef.current) return;
+    let content = editorRef.current.innerHTML;
     content = content.replace(/\\\((.*?)\\\)/g, (match, latex) => latexToOm(latex));
     content = content.replace(/\\\[(.*?)\\\]/g, (match, latex) => latexToOm(latex));
 
@@ -219,7 +278,7 @@ export default function DocuCraftClient() {
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        "<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Lora', serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>";
+        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Lora', serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>`;
     const footer = "</body></html>";
     const sourceHTML = header+content+footer;
 
@@ -232,27 +291,6 @@ export default function DocuCraftClient() {
     document.body.removeChild(fileDownload);
   };
   
-  const startResizing = (mouseDownEvent: React.MouseEvent) => {
-    setIsResizing(true);
-    
-    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
-      const containerWidth = mouseDownEvent.currentTarget.parentElement!.getBoundingClientRect().width;
-      const newWidth = (mouseMoveEvent.clientX / containerWidth) * 100;
-      if (newWidth > 10 && newWidth < 90) { // Constrain resize
-        setPanelWidth(newWidth);
-      }
-    };
-
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      setIsResizing(false);
-    };
-
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-  };
-
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
@@ -338,47 +376,30 @@ export default function DocuCraftClient() {
           </div>
         </aside>
 
-        {/* Editor & Preview Panels */}
-        <div className="flex-1 flex flex-row overflow-hidden">
-            {/* Editor Panel */}
-            <div className="flex flex-col" style={{ width: `${panelWidth}%` }}>
-              <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800">
-                <h2 className="text-md font-semibold text-gray-300">Editor (HTML)</h2>
-              </div>
-              <Textarea
-                value={documentContent}
-                onChange={(e) => setDocumentContent(e.target.value)}
-                className="w-full h-full bg-gray-900 border-0 rounded-none resize-none focus:ring-0 text-base p-4 md:p-6"
-                placeholder="Type your HTML here..."
-                disabled={isLoading}
-              />
-            </div>
-
-            {/* Resizer */}
-            <div 
-              ref={resizeHandleRef}
-              className="w-2 cursor-col-resize bg-gray-700 hover:bg-blue-500 transition-colors flex items-center justify-center"
-              onMouseDown={startResizing}
+        {/* Editor Panel */}
+        <main className="flex-1 flex flex-col overflow-hidden">
+          {showAiToolbar && (
+            <div
+              className="absolute z-10 bg-gray-800 rounded-md shadow-lg p-1 flex gap-1"
+              style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
+              onMouseDown={(e) => e.preventDefault()} // Prevent editor from losing focus
             >
-              <GripVertical className={cn("h-6 w-1 text-gray-500", isResizing && "text-white")} />
+              <Button variant="ghost" size="icon" onClick={handleEnhance} className="h-8 w-8">
+                <Sparkles className="h-4 w-4" />
+              </Button>
             </div>
-
-            {/* Preview Panel */}
-            <div className="flex flex-col flex-1" style={{ width: `${100 - panelWidth}%` }}>
-              <div className="flex items-center p-2 border-b border-gray-700 bg-gray-800">
-                  <h2 className="text-md font-semibold text-gray-300">Preview</h2>
-              </div>
-              <div
-                  ref={previewRef}
-                  dangerouslySetInnerHTML={{ __html: documentContent }}
-                  className={cn(
-                      "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1a1a1a]",
-                      "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
-                      { "opacity-60": isLoading }
-                  )}
-              />
-            </div>
-        </div>
+          )}
+          <RichTextEditor
+            value={documentContent}
+            onChange={setDocumentContent}
+            disabled={isLoading}
+            className={cn(
+              "prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1a1a1a]",
+              "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white",
+              { "opacity-60": isLoading }
+            )}
+          />
+        </main>
       </div>
     </div>
   );
