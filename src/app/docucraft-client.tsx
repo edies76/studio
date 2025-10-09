@@ -29,7 +29,6 @@ import {
   Loader2,
   Wand2,
   ChevronDown,
-  GripVertical,
   Bold,
   Italic,
   Code,
@@ -84,18 +83,23 @@ export default function DocuCraftClient() {
   }, []);
 
   useEffect(() => {
-    if (editorRef.current && window.MathJax) {
-      window.MathJax.startup.promise.then(() => {
-        window.MathJax.typesetPromise([editorRef.current!]).catch((err) =>
-          console.error("MathJax typesetting failed:", err)
-        );
-      });
-    }
+    const typesetMath = async () => {
+      if (editorRef.current && window.MathJax) {
+        try {
+          await window.MathJax.startup.promise;
+          await window.MathJax.typesetPromise([editorRef.current]);
+        } catch (err) {
+          console.error("MathJax typesetting failed:", err);
+        }
+      }
+    };
+    typesetMath();
   }, [documentContent]);
 
   const applyFormat = (command: string, value: string | undefined = undefined) => {
     document.execCommand(command, false, value);
     editorRef.current?.focus();
+    setDocumentContent(editorRef.current?.innerHTML || '');
   };
 
   const handleAiAction = async (
@@ -104,7 +108,7 @@ export default function DocuCraftClient() {
     loadingMessage: string
   ) => {
     setIsLoading(true);
-    toast({
+    const { dismiss, update } = toast({
       description: (
         <div className="flex items-center gap-2 text-white">
           <Loader2 className="animate-spin" />
@@ -116,17 +120,21 @@ export default function DocuCraftClient() {
     try {
       const result = await action();
       successCallback(result);
-      toast({
+      update({
+        id: 'ai-action-toast',
         title: "Success",
         description: "Your document has been updated.",
+        duration: 5000,
       });
     } catch (error) {
       console.error(error);
-      toast({
+      update({
+        id: 'ai-action-toast',
         variant: "destructive",
         title: "Error",
         description:
           "An error occurred while processing your request. Please try again.",
+        duration: 5000,
       });
     } finally {
       setIsLoading(false);
@@ -138,7 +146,6 @@ export default function DocuCraftClient() {
       () => generateDocumentContent({ topic, includeFormulas: true }),
       (result) => {
         setDocumentContent(result.content);
-        if(editorRef.current) editorRef.current.innerHTML = result.content;
       },
       "Generating content..."
     );
@@ -150,7 +157,6 @@ export default function DocuCraftClient() {
       () => autoFormatDocument({ documentContent: currentContent, styleGuide }),
       (result) => {
         setDocumentContent(result.formattedDocument);
-        if(editorRef.current) editorRef.current.innerHTML = result.formattedDocument;
       },
       `Applying ${styleGuide} format...`
     );
@@ -186,7 +192,6 @@ export default function DocuCraftClient() {
             setDocumentContent(editorRef.current.innerHTML);
         } else {
             setDocumentContent(enhancedContent);
-            if(editorRef.current) editorRef.current.innerHTML = enhancedContent;
         }
       },
       "Enhancing document..."
@@ -199,27 +204,28 @@ export default function DocuCraftClient() {
     toast({ description: "Exporting PDF..." });
 
     try {
-        if (window.MathJax) {
-            await window.MathJax.startup.promise;
-            await window.MathJax.typesetPromise([editorRef.current]);
-        }
-
+        await window.MathJax.startup.promise;
+        await window.MathJax.typesetPromise([editorRef.current]);
+        
         const pdf = new jsPDF({
             orientation: "p",
             unit: "pt",
             format: "a4",
         });
-
+        
         const styles = `
             <style>
               body { 
                 font-family: 'Inter', sans-serif; 
-                color: #111; 
+                color: #111;
                 background-color: white;
               }
               h1, h2, h3, h4, h5, h6 { 
                 font-family: 'Lora', serif; 
-                color: #000; 
+                color: #000;
+              }
+              .mjx-chtml {
+                color: #000 !important;
               }
             </style>
         `;
@@ -227,7 +233,6 @@ export default function DocuCraftClient() {
         const contentToExport = `
           <html>
             <head>
-              <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Lora:wght@400;700&display=swap" rel="stylesheet" />
               ${styles}
             </head>
             <body>
@@ -290,7 +295,7 @@ export default function DocuCraftClient() {
         <div className="flex items-center gap-3">
           <Wand2 className="w-7 h-7 text-blue-500" />
           <h1 className="text-2xl font-serif font-bold text-white">
-            DocuCraft AI
+            bamba
           </h1>
         </div>
         <div className="flex items-center gap-4">
@@ -400,5 +405,3 @@ export default function DocuCraftClient() {
     </div>
   );
 }
-
-    
