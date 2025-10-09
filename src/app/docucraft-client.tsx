@@ -33,6 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
 
+
 declare global {
   interface Window {
     MathJax: {
@@ -44,7 +45,6 @@ declare global {
   }
 }
 
-// Dummy Rich Text Editor Component (simulating a real one)
 const RichTextEditor = ({ value, onChange, className, disabled, editorRef }: { value: string, onChange: (value: string) => void, className?: string, disabled?: boolean, editorRef: React.RefObject<HTMLDivElement> }) => {
   
   useEffect(() => {
@@ -141,6 +141,11 @@ export default function DocuCraftClient() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+  
+  const cleanAiOutput = (html: string): string => {
+    // This regex looks for ´text´ and replaces it with <code>text</code>
+    return html.replace(/´([^´]+)´/g, '<code>$1</code>');
+  };
 
 
   const handleAiAction = async (
@@ -186,7 +191,7 @@ export default function DocuCraftClient() {
   const handleGenerate = () => {
     handleAiAction(
       () => generateDocumentContent({ topic, includeFormulas: true }),
-      (result) => setDocumentContent(result.content),
+      (result) => setDocumentContent(cleanAiOutput(result.content)),
       "Generating content..."
     );
   };
@@ -194,7 +199,7 @@ export default function DocuCraftClient() {
   const handleFormat = () => {
     handleAiAction(
       () => autoFormatDocument({ documentContent, styleGuide }),
-      (result) => setDocumentContent(result.formattedDocument),
+      (result) => setDocumentContent(cleanAiOutput(result.formattedDocument)),
       `Applying ${styleGuide} format...`
     );
   };
@@ -209,17 +214,18 @@ export default function DocuCraftClient() {
     handleAiAction(
       () => enhanceDocument({ documentContent: selectionText, feedback }),
       (result) => {
+        const cleanedResult = cleanAiOutput(result.enhancedDocumentContent);
         if (!activeSelection.collapsed) {
             activeSelection.deleteContents();
             const enhancedNode = document.createElement('span');
-            enhancedNode.innerHTML = result.enhancedDocumentContent;
+            enhancedNode.innerHTML = cleanedResult;
             activeSelection.insertNode(enhancedNode);
             // After inserting, we need to update the main state
             setDocumentContent(editorRef.current?.innerHTML || "");
         } else {
             // This case might not be ideal if there's no selection,
             // but as a fallback, we replace the whole content.
-            setDocumentContent(result.enhancedDocumentContent);
+            setDocumentContent(cleanedResult);
         }
       },
       "Enhancing selection..."
@@ -229,9 +235,10 @@ export default function DocuCraftClient() {
   const handleExportPdf = async () => {
     if (!editorRef.current) return;
     setIsLoading(true);
-    toast({ description: "Exporting PDF..." });
+    const { id, dismiss } = toast({ description: "Exporting PDF..." });
   
     try {
+      // Ensure MathJax has rendered everything
       await window.MathJax.startup.promise;
       await window.MathJax.typesetPromise([editorRef.current]);
   
@@ -240,37 +247,40 @@ export default function DocuCraftClient() {
         unit: "pt",
         format: "a4",
       });
-      
+  
+      // Clone the editor content to manipulate styles for PDF export
       const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
       
-      // Force white background and black text for PDF
+      // We need to append it to the body to ensure styles are computed
+      document.body.appendChild(contentToExport);
+  
+      // Force a white background and black text for the PDF
       contentToExport.style.backgroundColor = 'white';
-      contentToExport.style.padding = '35px';
-      contentToExport.style.fontFamily = 'Times-Roman, serif'
+      contentToExport.style.padding = '35px'; // Standard A4 padding
+      contentToExport.style.width = '525pt'; // A4 width in points
+      contentToExport.style.fontFamily = 'Times-Roman, serif'; // Use a standard PDF font
       
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         const htmlEl = el as HTMLElement;
         htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Lora, serif'
+        htmlEl.style.fontFamily = 'Lora, serif';
       });
       
-      // We need to append to body for jspdf to correctly render it.
-      document.body.appendChild(contentToExport);
-  
       await pdf.html(contentToExport, {
         callback: function (doc) {
           doc.save("document.pdf");
+          document.body.removeChild(contentToExport); // Clean up the cloned element
+          dismiss();
+          toast({ title: "Success", description: "PDF exported successfully." });
         },
-        width: 525,
-        windowWidth: contentToExport.offsetWidth,
+        width: 525, // A4 width
+        windowWidth: contentToExport.scrollWidth,
         autoPaging: 'text'
       });
   
-      document.body.removeChild(contentToExport);
-  
-      toast({ title: "Success", description: "PDF exported successfully." });
     } catch (error) {
       console.error("Error exporting PDF:", error);
+      dismiss();
       toast({
         variant: "destructive",
         title: "Error",
