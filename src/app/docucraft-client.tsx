@@ -29,7 +29,6 @@ import {
   Loader2,
   Wand2,
   ChevronDown,
-  GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -46,14 +45,13 @@ declare global {
 }
 
 // Dummy Rich Text Editor Component (simulating a real one)
-const RichTextEditor = ({ value, onChange, className, disabled }: { value: string, onChange: (value: string) => void, className?: string, disabled?: boolean }) => {
-  const editorRef = useRef<HTMLDivElement>(null);
-
+const RichTextEditor = ({ value, onChange, className, disabled, editorRef }: { value: string, onChange: (value: string) => void, className?: string, disabled?: boolean, editorRef: React.RefObject<HTMLDivElement> }) => {
+  
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== value) {
       editorRef.current.innerHTML = value;
     }
-  }, [value]);
+  }, [value, editorRef]);
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     onChange(e.currentTarget.innerHTML);
@@ -99,7 +97,6 @@ export default function DocuCraftClient() {
 
   useEffect(() => {
     const typesetMath = async () => {
-      // Use the ref from the editor itself
       if (editorRef.current && window.MathJax) {
         try {
           await window.MathJax.startup.promise;
@@ -109,7 +106,9 @@ export default function DocuCraftClient() {
         }
       }
     };
-    typesetMath();
+    if (documentContent) {
+        typesetMath();
+    }
   }, [documentContent]);
 
   useEffect(() => {
@@ -117,31 +116,39 @@ export default function DocuCraftClient() {
       const sel = window.getSelection();
       if (sel && sel.rangeCount > 0) {
         const range = sel.getRangeAt(0);
-        if (!range.collapsed) {
-          setSelection(range);
+        const editorDiv = editorRef.current;
+        
+        if (editorDiv && editorDiv.contains(range.commonAncestorContainer) && !range.collapsed) {
+          setSelection(range.cloneRange());
           const rect = range.getBoundingClientRect();
           setToolbarPosition({
-            top: window.scrollY + rect.bottom + 5,
+            top: window.scrollY + rect.top - 40, // Position toolbar above selection
             left: window.scrollX + rect.left + (rect.width / 2) - 30,
           });
           setShowAiToolbar(true);
         } else {
           setShowAiToolbar(false);
+          setSelection(null);
         }
       }
     };
-
-    const editorDiv = editorRef.current;
-    if (editorDiv) {
-      editorDiv.addEventListener("mouseup", handleMouseUp);
+  
+    const handleClickOutside = (event: MouseEvent) => {
+        const editorDiv = editorRef.current;
+        if (editorDiv && !editorDiv.contains(event.target as Node)) {
+            setShowAiToolbar(false);
+            setSelection(null);
+        }
     }
 
+    document.addEventListener("mouseup", handleMouseUp);
+    document.addEventListener("mousedown", handleClickOutside);
+
     return () => {
-      if (editorDiv) {
-        editorDiv.removeEventListener("mouseup", handleMouseUp);
-      }
+      document.removeEventListener("mouseup", handleMouseUp);
+      document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [editorRef.current]);
+  }, []);
 
 
   const handleAiAction = async (
@@ -199,15 +206,20 @@ export default function DocuCraftClient() {
   };
   
   const handleEnhance = () => {
-    const selectionText = selection ? selection.toString() : documentContent;
+    const activeSelection = selection || (window.getSelection()?.rangeCount || 0 > 0 ? window.getSelection()!.getRangeAt(0) : null);
+    if (!activeSelection) return;
+
+    const selectionText = activeSelection.toString();
     const feedback = `Make this more engaging and professional: "${selectionText}"`;
     
     handleAiAction(
       () => enhanceDocument({ documentContent: selectionText, feedback }),
       (result) => {
-        if (selection && !selection.collapsed) {
-            selection.deleteContents();
-            selection.insertNode(document.createTextNode(result.enhancedDocumentContent));
+        if (!activeSelection.collapsed) {
+            activeSelection.deleteContents();
+            const enhancedNode = document.createElement('span');
+            enhancedNode.innerHTML = result.enhancedDocumentContent;
+            activeSelection.insertNode(enhancedNode);
             setDocumentContent(editorRef.current?.innerHTML || "");
         } else {
             setDocumentContent(result.enhancedDocumentContent);
@@ -233,11 +245,12 @@ export default function DocuCraftClient() {
       });
       
       const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
+      
+      // Force white background and black text for PDF
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px';
       
-      const textElements = contentToExport.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, span, div');
-      textElements.forEach(el => {
+      Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         (el as HTMLElement).style.color = 'black';
       });
       
@@ -249,7 +262,7 @@ export default function DocuCraftClient() {
           doc.save("document.pdf");
         },
         width: 525,
-        windowWidth: 1000,
+        windowWidth: contentToExport.offsetWidth,
         autoPaging: 'text'
       });
   
@@ -369,27 +382,25 @@ export default function DocuCraftClient() {
                 <Button onClick={handleFormat} disabled={isLoading} variant="outline" className="w-full justify-start">
                    <BookCheck className="mr-2"/> Format Document
                 </Button>
-                <Button onClick={handleEnhance} disabled={isLoading} variant="outline" className="w-full justify-start">
-                  <Wand2 className="mr-2"/> Enhance
-                </Button>
             </div>
           </div>
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="flex-1 flex flex-col overflow-hidden relative">
           {showAiToolbar && (
             <div
               className="absolute z-10 bg-gray-800 rounded-md shadow-lg p-1 flex gap-1"
               style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
               onMouseDown={(e) => e.preventDefault()} // Prevent editor from losing focus
             >
-              <Button variant="ghost" size="icon" onClick={handleEnhance} className="h-8 w-8">
+              <Button variant="ghost" size="icon" onClick={handleEnhance} title="Enhance Selection" className="h-8 w-8">
                 <Sparkles className="h-4 w-4" />
               </Button>
             </div>
           )}
           <RichTextEditor
+            editorRef={editorRef}
             value={documentContent}
             onChange={setDocumentContent}
             disabled={isLoading}
