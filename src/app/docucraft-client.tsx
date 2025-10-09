@@ -295,6 +295,25 @@ export default function DocuCraftClient() {
     if (!editorRef.current) return;
     let content = editorRef.current.innerHTML;
 
+    // Convert MathJax formulas to OMML for Word
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = content;
+    const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
+    mathJaxElements.forEach((mjx) => {
+        const mathml = mjx.querySelector('math');
+        if(mathml) {
+            const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
+            const parent = mjx.parentElement;
+            if(parent) {
+                const span = document.createElement('span');
+                span.innerHTML = oMath;
+                parent.replaceChild(span.firstChild!, mjx);
+            }
+        }
+    });
+
+    content = tempDiv.innerHTML;
+
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
@@ -424,3 +443,5 @@ export default function DocuCraftClient() {
     </div>
   );
 }
+
+    
