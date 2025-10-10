@@ -45,7 +45,7 @@ declare global {
   }
 }
 
-const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
+const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools.</p>`;
 
 // MOCK
 const useDocument = (id: string) => {
@@ -303,7 +303,7 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[300px_0.8fr] overflow-hidden">
+      <div className="flex-1 grid md:grid-cols-[400px_1fr] overflow-hidden">
         {/* AI Tools Panel */}
         <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
           <h2 className="text-lg font-semibold flex items-center gap-2">
