@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { generateDocumentContent } from "@/ai/flows/generate-document-content";
 import { autoFormatDocument } from "@/ai/flows/auto-format-document";
 import { enhanceDocument } from "@/ai/flows/enhance-document";
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
@@ -57,11 +58,16 @@ export default function DocuCraftClient() {
   const [activeTool, setActiveTool] = useState<
     "generate" | "format" | "enhance" | null
   >(null);
+
+  const [showToolbar, setShowToolbar] = useState(false);
+  const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
+  const [currentSelection, setCurrentSelection] = useState<Range | null>(null);
+
   const { toast } = useToast();
   
   const editorRef = useRef<HTMLDivElement>(null);
 
-  const typesetMath = () => {
+  const typesetMath = useCallback(() => {
     if (editorRef.current && window.MathJax) {
         window.MathJax.startup.promise.then(() => {
             window.MathJax.typesetPromise([editorRef.current!]).catch((err) => {
@@ -69,23 +75,50 @@ export default function DocuCraftClient() {
             });
         });
     }
-  };
+  }, []);
 
-  const handleContentUpdate = (content: string) => {
-    setDocumentContent(content);
-    if(editorRef.current) {
+  const handleContentUpdate = useCallback((content: string, fromAI = false) => {
+    if (fromAI) {
+      if (editorRef.current) {
         editorRef.current.innerHTML = content;
+      }
+      setDocumentContent(content);
+      typesetMath();
+    } else {
+      setDocumentContent(content);
     }
-    typesetMath();
-  };
+  }, [typesetMath]);
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
         editorRef.current.innerHTML = documentContent;
         typesetMath();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documentContent]);
+  }, [documentContent, typesetMath]);
+
+
+  const handleMouseUp = () => {
+    setTimeout(() => {
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+        const range = selection.getRangeAt(0);
+        const rect = range.getBoundingClientRect();
+        
+        setCurrentSelection(range.cloneRange());
+
+        if (editorRef.current) {
+          const editorRect = editorRef.current.getBoundingClientRect();
+          setToolbarPosition({
+            top: rect.top - editorRect.top - 40, 
+            left: rect.left - editorRect.left + rect.width / 2,
+          });
+          setShowToolbar(true);
+        }
+      } else {
+        setShowToolbar(false);
+      }
+    }, 10);
+  };
 
 
   const handleGenerateContent = async () => {
@@ -99,10 +132,11 @@ export default function DocuCraftClient() {
     }
     setIsLoading(true);
     setActiveTool("generate");
+    setShowToolbar(false);
     const { dismiss } = toast({ description: "Generating content..." });
     try {
-      const result = await generateDocumentContent({ topic });
-      handleContentUpdate(result.content);
+      const result = await generateDocumentContent({ topic, includeFormulas: true });
+      handleContentUpdate(result.content, true);
       toast({ title: "Success", description: "Content generated successfully." });
     } catch (error) {
       console.error(error);
@@ -122,13 +156,14 @@ export default function DocuCraftClient() {
     if (!editorRef.current?.innerHTML) return;
     setIsLoading(true);
     setActiveTool("format");
+    setShowToolbar(false);
     const { dismiss } = toast({ description: "Formatting document..." });
     try {
       const result = await autoFormatDocument({
         documentContent: editorRef.current.innerHTML,
         styleGuide: styleGuide as "APA" | "IEEE",
       });
-      handleContentUpdate(result.formattedDocument);
+      handleContentUpdate(result.formattedDocument, true);
       toast({ title: "Success", description: "Document formatted." });
     } catch (error) {
       console.error(error);
@@ -136,6 +171,56 @@ export default function DocuCraftClient() {
         variant: "destructive",
         title: "Uh oh! Something went wrong.",
         description: "Could not format document.",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveTool(null);
+      dismiss();
+    }
+  };
+
+  const handleEnhanceSelection = async () => {
+    if (!currentSelection || !enhancementFeedback) {
+      toast({
+        variant: "destructive",
+        title: "Selection and Feedback Required",
+        description: "Please select text and provide enhancement feedback.",
+      });
+      return;
+    }
+    setIsLoading(true);
+    setActiveTool("enhance");
+    const { dismiss } = toast({ description: "Enhancing selection..." });
+
+    try {
+      const selectedHtml = currentSelection.cloneContents();
+      const tempDiv = document.createElement("div");
+      tempDiv.appendChild(selectedHtml);
+
+      const result = await enhanceDocument({
+        documentContent: tempDiv.innerHTML,
+        feedback: enhancementFeedback,
+      });
+
+      currentSelection.deleteContents();
+      const newContentFragment = currentSelection.createContextualFragment(result.enhancedDocumentContent);
+      currentSelection.insertNode(newContentFragment);
+      
+      // Update the main document content state
+      if(editorRef.current) {
+        setDocumentContent(editorRef.current.innerHTML);
+      }
+      
+      setShowToolbar(false);
+      typesetMath();
+      toast({ title: "Success", description: "Selection enhanced." });
+
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Uh oh! Something went wrong.",
+        description: "Could not enhance selection.",
       });
     } finally {
       setIsLoading(false);
@@ -246,16 +331,16 @@ export default function DocuCraftClient() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <Wand2 className="w-6 h-6 text-blue-500" />
-          <h1 className="text-2xl font-['Playfair_Display'] font-bold text-white">
+          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
             bamba
           </h1>
         </div>
         <div className="flex items-center gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon">
-                <Download className="w-5 h-5" />
-                <span className="sr-only">Export</span>
+              <Button variant="outline" className="border-gray-700">
+                Export
+                <Download className="w-4 h-4 ml-2" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -272,7 +357,7 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[500px_1fr] overflow-hidden">
+      <div className="flex-1 grid md:grid-cols-[400px_1fr] overflow-hidden">
         {/* AI Tools Panel */}
         <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
           <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -351,12 +436,21 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden p-8">
+        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:px-24 md:py-12">
+           {showToolbar && (
+            <EnhancementToolbar
+              style={toolbarPosition}
+              onEnhance={handleEnhanceSelection}
+              isLoading={isLoading && activeTool === "enhance"}
+            />
+          )}
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => setDocumentContent(e.currentTarget.innerHTML)}
+            onInput={(e) => handleContentUpdate(e.currentTarget.innerHTML, false)}
+            onMouseUp={handleMouseUp}
+            onBlur={() => setShowToolbar(false)}
             className={cn(
               "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
