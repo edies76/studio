@@ -77,22 +77,14 @@ export default function DocuCraftClient() {
     }
   }, []);
 
-  const handleContentUpdate = useCallback((content: string, fromAI = false) => {
-    if (fromAI) {
-      if (editorRef.current) {
-        editorRef.current.innerHTML = content;
-      }
-      setDocumentContent(content);
-      typesetMath();
-    } else {
-      setDocumentContent(content);
-    }
-  }, [typesetMath]);
+  const handleContentUpdate = useCallback((content: string) => {
+    setDocumentContent(content);
+  }, []);
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
-        editorRef.current.innerHTML = documentContent;
-        typesetMath();
+      editorRef.current.innerHTML = documentContent;
+      typesetMath();
     }
   }, [documentContent, typesetMath]);
 
@@ -136,7 +128,7 @@ export default function DocuCraftClient() {
     const { dismiss } = toast({ description: "Generating content..." });
     try {
       const result = await generateDocumentContent({ topic, includeFormulas: true });
-      handleContentUpdate(result.content, true);
+      setDocumentContent(result.content);
       toast({ title: "Success", description: "Content generated successfully." });
     } catch (error) {
       console.error(error);
@@ -163,7 +155,7 @@ export default function DocuCraftClient() {
         documentContent: editorRef.current.innerHTML,
         styleGuide: styleGuide as "APA" | "IEEE",
       });
-      handleContentUpdate(result.formattedDocument, true);
+      setDocumentContent(result.formattedDocument);
       toast({ title: "Success", description: "Document formatted." });
     } catch (error) {
       console.error(error);
@@ -206,7 +198,6 @@ export default function DocuCraftClient() {
       const newContentFragment = currentSelection.createContextualFragment(result.enhancedDocumentContent);
       currentSelection.insertNode(newContentFragment);
       
-      // Update the main document content state
       if(editorRef.current) {
         setDocumentContent(editorRef.current.innerHTML);
       }
@@ -436,7 +427,7 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:px-24 md:py-12">
+        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:px-12 md:py-12">
            {showToolbar && (
             <EnhancementToolbar
               style={toolbarPosition}
@@ -448,7 +439,7 @@ export default function DocuCraftClient() {
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => handleContentUpdate(e.currentTarget.innerHTML, false)}
+            onInput={(e) => handleContentUpdate(e.currentTarget.innerHTML)}
             onMouseUp={handleMouseUp}
             onBlur={() => setShowToolbar(false)}
             className={cn(
