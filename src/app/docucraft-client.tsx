@@ -53,11 +53,16 @@ const useDocument = (id: string) => {
     const [document, setDocument] = useState({ 
         id: '1', 
         name: 'My Document', 
-        content: initialContent,
+        content: '',
     });
     
+    useEffect(() => {
+      // This simulates fetching the document content on the client
+      // to avoid hydration errors.
+      setDocument(prevDoc => ({...prevDoc, content: initialContent}));
+    }, []);
+    
     // In a real scenario, this would use onSnapshot from Firestore
-    // For now, we just return a static object.
     
     return document;
 };
@@ -72,8 +77,10 @@ export default function DocuCraftClient() {
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setDocumentContent(initialContent);
-  }, []);
+    if(doc) {
+      setDocumentContent(doc.content);
+    }
+  }, [doc]);
 
   useEffect(() => {
     const typesetMath = async () => {
@@ -261,7 +268,6 @@ export default function DocuCraftClient() {
                     ref={previewRef}
                     className={cn(
                         "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-                        "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white font-sans",
                         { "opacity-60": isLoading }
                     )}
                     dangerouslySetInnerHTML={{ __html: documentContent }}
@@ -272,3 +278,5 @@ export default function DocuCraftClient() {
     </div>
   );
 }
+
+    
