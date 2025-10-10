@@ -46,12 +46,14 @@ declare global {
   }
 }
 
+const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
+
 // MOCK
 const useDocument = (id: string) => {
     const [document, setDocument] = useState({ 
         id: '1', 
         name: 'My Document', 
-        content: `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`,
+        content: initialContent,
     });
     
     // In a real scenario, this would use onSnapshot from Firestore
@@ -66,7 +68,7 @@ export default function DocuCraftClient() {
   const { toast } = useToast();
   
   const doc = useDocument("doc1"); // Hardcoded doc ID for now
-  const [documentContent, setDocumentContent] = useState(doc.content);
+  const [documentContent, setDocumentContent] = useState(initialContent);
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
