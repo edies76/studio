@@ -61,7 +61,8 @@ export default function DocuCraftClient() {
 
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
-  const [currentSelection, setCurrentSelection] = useState<Range | null>(null);
+  
+  const selectionRef = useRef<Range | null>(null);
 
   const { toast } = useToast();
   
@@ -78,8 +79,11 @@ export default function DocuCraftClient() {
   }, []);
 
   const handleContentUpdate = useCallback((content: string) => {
-    setDocumentContent(content);
+    // This function is now only called by the editor's onInput.
+    // We update the state, but we don't cause a re-render that overwrites the editor.
+    // The state and editor are now coupled in one direction inside this component.
   }, []);
+
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
@@ -94,13 +98,13 @@ export default function DocuCraftClient() {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
         const range = selection.getRangeAt(0);
-        setCurrentSelection(range.cloneRange());
+        selectionRef.current = range.cloneRange();
         const rect = range.getBoundingClientRect();
         
         if (editorRef.current) {
           const editorRect = editorRef.current.getBoundingClientRect();
           setToolbarPosition({
-            top: rect.top - editorRect.top - 40,
+            top: rect.top - editorRect.top - 50, // Position toolbar above selection
             left: rect.left - editorRect.left + rect.width / 2,
           });
           setShowToolbar(true);
@@ -171,6 +175,7 @@ export default function DocuCraftClient() {
   };
 
   const handleEnhanceSelection = async () => {
+    const currentSelection = selectionRef.current;
     if (!currentSelection || !enhancementFeedback) {
       toast({
         variant: "destructive",
@@ -193,16 +198,20 @@ export default function DocuCraftClient() {
         feedback: enhancementFeedback,
       });
 
-      currentSelection.deleteContents();
-      const newContentFragment = currentSelection.createContextualFragment(result.enhancedDocumentContent);
-      currentSelection.insertNode(newContentFragment);
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        const newContentFragment = range.createContextualFragment(result.enhancedDocumentContent);
+        range.insertNode(newContentFragment);
+      }
       
       if(editorRef.current) {
         setDocumentContent(editorRef.current.innerHTML);
       }
       
       setShowToolbar(false);
-      typesetMath();
+      selectionRef.current = null;
       toast({ title: "Success", description: "Selection enhanced." });
 
     } catch (error) {
@@ -347,7 +356,7 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[400px_1fr] overflow-hidden">
+      <div className="flex-1 grid md:grid-cols-[500px_1fr] overflow-hidden">
         {/* AI Tools Panel */}
         <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
           <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -426,7 +435,7 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:px-12 md:py-12">
+        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:p-12">
            {showToolbar && (
             <EnhancementToolbar
               style={toolbarPosition}
@@ -438,7 +447,9 @@ export default function DocuCraftClient() {
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => handleContentUpdate(e.currentTarget.innerHTML)}
+            onInput={(e) => {
+              // We don't set state here to avoid re-renders on every keystroke
+            }}
             onMouseUp={handleMouseUp}
             onBlur={() => {
               // We add a small delay to allow click events on the toolbar
