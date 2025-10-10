@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
+import Image from "next/image";
 
 declare global {
   interface Window {
@@ -51,14 +52,8 @@ const useDocument = (id: string) => {
     const [document, setDocument] = useState({ 
         id: '1', 
         name: 'My Document', 
-        content: '',
+        content: initialContent,
     });
-    
-    useEffect(() => {
-      // This simulates fetching the document content on the client
-      // to avoid hydration errors.
-      setDocument(prevDoc => ({...prevDoc, content: initialContent}));
-    }, []);
     
     // In a real scenario, this would use onSnapshot from Firestore
     
@@ -67,7 +62,9 @@ const useDocument = (id: string) => {
 
 
 export default function DocuCraftClient() {
-  const [documentContent, setDocumentContent] = useState("");
+  const [documentContent, setDocumentContent] = useState(initialContent);
+  const [topic, setTopic] = useState("");
+  const [styleGuide, setStyleGuide] = useState("APA");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<
     "generate" | "format" | "enhance" | null
@@ -77,20 +74,19 @@ export default function DocuCraftClient() {
   const doc = useDocument("doc1"); // Hardcoded doc ID for now
 
   const editorRef = useRef<HTMLDivElement>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if(doc) {
+    if (doc) {
       setDocumentContent(doc.content);
     }
   }, [doc]);
 
   useEffect(() => {
     const typesetMath = async () => {
-      if (previewRef.current && window.MathJax) {
+      if (editorRef.current && window.MathJax) {
         try {
           await window.MathJax.startup.promise;
-          await window.MathJax.typesetPromise([previewRef.current]);
+          await window.MathJax.typesetPromise([editorRef.current]);
         } catch (err) {
           console.error("MathJax typesetting failed:", err);
         }
@@ -105,15 +101,71 @@ export default function DocuCraftClient() {
     // In the future, this will call update_textdoc() Cloud Function
     setDocumentContent(content);
   };
+
+  const handleGenerateContent = async () => {
+    if (!topic) {
+      toast({
+        variant: "destructive",
+        title: "Topic is required",
+        description: "Please enter a topic to generate content.",
+      });
+      return;
+    }
+    setIsLoading(true);
+    setActiveTool("generate");
+    const { id, dismiss } = toast({ description: "Generating content..." });
+    try {
+      const result = await generateDocumentContent({ topic });
+      handleUpdateContent(result.content);
+      toast({ title: "Success", description: "Content generated successfully." });
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Uh oh! Something went wrong.",
+        description: "Could not generate content.",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveTool(null);
+      dismiss();
+    }
+  };
+
+  const handleFormatDocument = async () => {
+    setIsLoading(true);
+    setActiveTool("format");
+    const { id, dismiss } = toast({ description: "Formatting document..." });
+    try {
+      const result = await autoFormatDocument({
+        documentContent,
+        styleGuide: styleGuide as "APA" | "IEEE",
+      });
+      handleUpdateContent(result.formattedDocument);
+      toast({ title: "Success", description: "Document formatted." });
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Uh oh! Something went wrong.",
+        description: "Could not format document.",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveTool(null);
+      dismiss();
+    }
+  };
   
   const handleExportPdf = async () => {
-    if (!previewRef.current) return;
+    if (!editorRef.current) return;
     setIsLoading(true);
     const { id, dismiss } = toast({ description: "Exporting PDF..." });
   
     try {
+      // Ensure MathJax has rendered
       await window.MathJax.startup.promise;
-      await window.MathJax.typesetPromise([previewRef.current]);
+      await window.MathJax.typesetPromise([editorRef.current]);
   
       const pdf = new jsPDF({
         orientation: "p",
@@ -121,14 +173,17 @@ export default function DocuCraftClient() {
         format: "a4",
       });
   
-      const contentToExport = previewRef.current.cloneNode(true) as HTMLElement;
+      // Clone the node to avoid modifying the original
+      const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
       document.body.appendChild(contentToExport);
   
+      // Apply styles for PDF export
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px';
-      contentToExport.style.width = '525pt'; 
+      contentToExport.style.width = '525pt'; // A4 width in points minus margins
       contentToExport.style.fontFamily = 'Inter, sans-serif';
       
+      // Ensure all child elements have black text and correct font
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         const htmlEl = el as HTMLElement;
         htmlEl.style.color = 'black';
@@ -138,6 +193,7 @@ export default function DocuCraftClient() {
       await pdf.html(contentToExport, {
         callback: function (doc) {
           doc.save("document.pdf");
+          // Clean up the cloned node
           document.body.removeChild(contentToExport);
           dismiss();
           toast({ title: "Success", description: "PDF exported successfully." });
@@ -161,18 +217,23 @@ export default function DocuCraftClient() {
   };
   
   const handleExportWord = () => {
-    if (!previewRef.current) return;
-    let content = previewRef.current.innerHTML;
+    if (!editorRef.current) return;
+    // Get the innerHTML of the editor
+    let content = editorRef.current.innerHTML;
 
+    // Convert MathJax elements to Office Math (OMML)
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = content;
     const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
     mathJaxElements.forEach((mjx) => {
         const mathml = mjx.querySelector('math');
         if(mathml) {
+            // This is a simplified conversion, a full one is more complex
             const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
             const parent = mjx.parentElement;
             if(parent) {
+                // Replace the mjx-container with the OMML string
+                // We wrap it in a temporary span to parse it as a node
                 const span = document.createElement('span');
                 span.innerHTML = oMath;
                 parent.replaceChild(span.firstChild!, mjx);
@@ -182,6 +243,7 @@ export default function DocuCraftClient() {
 
     content = tempDiv.innerHTML;
 
+    // Create the Word document source
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
@@ -204,8 +266,8 @@ export default function DocuCraftClient() {
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
-          <Wand2 className="w-7 h-7 text-blue-500" />
-          <h1 className="text-3xl font-['Great_Vibes'] text-white">
+          <Wand2 className="w-6 h-6 text-blue-500" />
+          <h1 className="text-xl font-['Lora'] font-bold text-white">
             bamba
           </h1>
         </div>
@@ -228,10 +290,83 @@ export default function DocuCraftClient() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <Image
+            src="https://picsum.photos/seed/1/32/32"
+            alt="User Avatar"
+            width={32}
+            height={32}
+            className="rounded-full"
+            data-ai-hint="user avatar"
+          />
         </div>
       </header>
-      
-      <div className="flex-1 grid grid-cols-2 overflow-hidden">
+
+      <div className="flex-1 grid md:grid-cols-[300px_1fr] overflow-hidden">
+        {/* AI Tools Panel */}
+        <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Bot className="w-5 h-5" /> AI Tools
+          </h2>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label htmlFor="topic" className="text-sm font-medium">
+                Topic
+              </label>
+              <Textarea
+                id="topic"
+                placeholder="e.g., 'The history of artificial intelligence'"
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                className="bg-gray-800 border-gray-700 h-24"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="style-guide" className="text-sm font-medium">
+                Style Guide
+              </label>
+              <Select
+                value={styleGuide}
+                onValueChange={setStyleGuide}
+              >
+                <SelectTrigger id="style-guide" className="bg-gray-800 border-gray-700">
+                  <SelectValue placeholder="Select style" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="APA">APA</SelectItem>
+                  <SelectItem value="IEEE">IEEE</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 mt-auto">
+            <Button
+              onClick={handleGenerateContent}
+              disabled={isLoading}
+              className="w-full"
+            >
+              {isLoading && activeTool === "generate" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Sparkles className="mr-2" />
+              )}
+              Generate Content
+            </Button>
+            <Button
+              onClick={handleFormatDocument}
+              disabled={isLoading}
+              variant="outline"
+              className="w-full"
+            >
+              {isLoading && activeTool === "format" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <BookCheck className="mr-2" />
+              )}
+              Format Document
+            </Button>
+          </div>
+        </aside>
+
         {/* Editor Panel */}
         <main className="flex-1 flex flex-col overflow-hidden">
           <div
@@ -246,19 +381,6 @@ export default function DocuCraftClient() {
             dangerouslySetInnerHTML={{ __html: documentContent }}
           />
         </main>
-        
-        {/* Preview Panel */}
-        <aside className="flex flex-col border-l border-gray-700 overflow-hidden">
-            <div className="p-2 border-b border-gray-700 text-sm font-medium text-gray-400">Preview</div>
-            <div
-              ref={previewRef}
-              className={cn(
-                "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-                { "opacity-60": isLoading }
-              )}
-              dangerouslySetInnerHTML={{ __html: documentContent }}
-            />
-        </aside>
       </div>
     </div>
   );
