@@ -62,7 +62,7 @@ const useDocument = (id: string) => {
 
 
 export default function DocuCraftClient() {
-  const [documentContent, setDocumentContent] = useState(initialContent);
+  const [documentContent, setDocumentContent] = useState("");
   const [topic, setTopic] = useState("");
   const [styleGuide, setStyleGuide] = useState("APA");
   const [isLoading, setIsLoading] = useState(false);
@@ -80,6 +80,12 @@ export default function DocuCraftClient() {
       setDocumentContent(doc.content);
     }
   }, [doc]);
+
+  useEffect(() => {
+    if(editorRef.current) {
+      editorRef.current.innerHTML = initialContent;
+    }
+  }, []);
 
   useEffect(() => {
     const typesetMath = async () => {
