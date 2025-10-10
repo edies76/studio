@@ -28,7 +28,7 @@ import {
   BookCheck,
   Loader2,
   Wand2,
-  ChevronDown,
+  Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -45,19 +45,22 @@ declare global {
   }
 }
 
-const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p><code>P(x)</code>`;
+const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
 
 // MOCK
 const useDocument = (id: string) => {
-    const [document, setDocument] = useState({ 
-        id: '1', 
-        name: 'My Document', 
-        content: initialContent,
-    });
-    
-    // In a real scenario, this would use onSnapshot from Firestore
-    
-    return document;
+  const [document, setDocument] = useState({
+    id: "1",
+    name: "My Document",
+    content: "",
+  });
+
+  useEffect(() => {
+    // Simulate fetching initial content
+    setDocument((prev) => ({ ...prev, content: initialContent }));
+  }, []);
+
+  return document;
 };
 
 
@@ -82,10 +85,11 @@ export default function DocuCraftClient() {
   }, [doc]);
 
   useEffect(() => {
-    if(editorRef.current) {
-      editorRef.current.innerHTML = initialContent;
+    if (editorRef.current) {
+        editorRef.current.innerHTML = documentContent;
     }
-  }, []);
+  }, [documentContent]);
+
 
   useEffect(() => {
     const typesetMath = async () => {
@@ -273,16 +277,16 @@ export default function DocuCraftClient() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <Wand2 className="w-6 h-6 text-blue-500" />
-          <h1 className="text-xl font-['Lora'] font-bold text-white">
+          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
             bamba
           </h1>
         </div>
         <div className="flex items-center gap-4">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button>
-                Export
-                <ChevronDown className="w-4 h-4 ml-2" />
+              <Button variant="ghost" size="icon">
+                <Download className="w-5 h-5" />
+                <span className="sr-only">Export</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent>
@@ -296,14 +300,6 @@ export default function DocuCraftClient() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Image
-            src="https://picsum.photos/seed/1/32/32"
-            alt="User Avatar"
-            width={32}
-            height={32}
-            className="rounded-full"
-            data-ai-hint="user avatar"
-          />
         </div>
       </header>
 
@@ -374,14 +370,14 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden">
+        <main className="flex-1 flex flex-col overflow-hidden p-8 md:p-12">
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
             onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
             className={cn(
-              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-gray-800/30",
+              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
             )}
             dangerouslySetInnerHTML={{ __html: documentContent }}

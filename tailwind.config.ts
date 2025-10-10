@@ -12,6 +12,7 @@ export default {
       fontFamily: {
         sans: ['Inter', 'sans-serif'],
         serif: ['Lora', 'serif'],
+        cursive: ['Playwrite IT Moderna', 'cursive'],
       },
       colors: {
         background: 'hsl(var(--background))',
@@ -101,6 +102,12 @@ export default {
             '--tw-prose-pre-bg': 'transparent',
             '--tw-prose-th-borders': theme('colors.gray.600'),
             '--tw-prose-td-borders': theme('colors.gray.700'),
+            'code::before': {
+              content: 'none',
+            },
+            'code::after': {
+              content: 'none',
+            },
           },
         },
       }),
@@ -108,5 +115,3 @@ export default {
   },
   plugins: [require('tailwindcss-animate'), require('@tailwindcss/typography')],
 } satisfies Config;
-
-    
