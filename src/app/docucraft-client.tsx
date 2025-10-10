@@ -370,7 +370,7 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden p-8 md:p-12">
+        <main className="flex-1 flex flex-col overflow-hidden p-8 md:px-24 md:py-12">
           <div
             ref={editorRef}
             contentEditable
