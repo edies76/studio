@@ -30,10 +30,13 @@ const prompt = ai.definePrompt({
   name: 'generateDocumentContentPrompt',
   input: {schema: GenerateDocumentContentInputSchema},
   output: {schema: GenerateDocumentContentOutputSchema},
-  prompt: `You are a document content generator. Your goal is to generate clean, well-written content based on the provided topic. 
-  
+  prompt: `You are a document content generator. Your goal is to generate comprehensive, well-structured, and detailed content based on the provided topic.
+
   The output MUST be a single, valid HTML string.
 
+  - Structure the content logically with headings (<h2>, <h3>), paragraphs (<p>), and lists (<ul>, <ol>, <li>).
+  - Provide detailed explanations, examples, and definitions where appropriate.
+  - The generated content should be substantial and informative, not just a brief summary.
   - For text that should be presented as inline code or a literal (like variable names or simple notations), use the <code>...</code> tag. For example: <code>P(x)</code>. Do NOT use markdown backticks (\`\`\`).
   - For complex mathematical formulas, you MUST use standard LaTeX syntax. Wrap inline formulas in \\( ... \\) and block formulas in \\[ ... \\]. For example: \\( E = mc^2 \\).
   - Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not invent commands or use unicode characters directly in formulas.
@@ -41,7 +44,7 @@ const prompt = ai.definePrompt({
 
   Topic: {{{topic}}}
 
-  Content:`,
+  Begin generating the detailed document content now.`,
 });
 
 const generateDocumentContentFlow = ai.defineFlow(

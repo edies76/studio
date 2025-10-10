@@ -31,7 +31,7 @@ import {
   Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { jsPDF } from "jspdf";
+import jsPDF from "jspdf";
 import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
 
 
@@ -156,7 +156,7 @@ export default function DocuCraftClient() {
     const sel = window.getSelection();
     if (sel && sel.rangeCount > 0) {
       const range = sel.getRangeAt(0);
-      if (!range.collapsed) {
+      if (!range.collapsed && editorRef.current?.contains(range.commonAncestorContainer)) {
         setSelection(sel);
         const rect = range.getBoundingClientRect();
         if (editorRef.current) {
@@ -429,7 +429,7 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden p-8 md:px-24 md:py-12">
+        <main className="flex-1 flex flex-col overflow-hidden p-8 md:p-12">
           <div className="relative w-full h-full">
             {toolbarPosition && (
               <EnhancementToolbar
