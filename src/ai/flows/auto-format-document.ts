@@ -40,7 +40,7 @@ const prompt = ai.definePrompt({
 
   Based on the HTML document content and the specified style guide, reformat the document accordingly.
 
-  IMPORTANT: The input is in HTML format. You MUST return a single, valid HTML string. Do not return plain text or markdown. Preserve the existing HTML tags and structure as much as possible, only modifying the content and structure as required by the style guide.
+  IMPORTANT: The input is in HTML format. You MUST return a single, valid HTML string. Do not return plain text or markdown. Do not use backticks. Preserve the existing HTML tags and structure as much as possible, only modifying the content and structure as required by the style guide.
 
   Document Content:
   {{{documentContent}}}

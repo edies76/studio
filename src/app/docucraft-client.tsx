@@ -141,12 +141,6 @@ export default function DocuCraftClient() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
-  
-  const cleanAiOutput = (html: string): string => {
-    // This regex looks for ´text´ and replaces it with <code>text</code>
-    return html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  };
-
 
   const handleAiAction = async (
     action: () => Promise<any>,
@@ -191,7 +185,7 @@ export default function DocuCraftClient() {
   const handleGenerate = () => {
     handleAiAction(
       () => generateDocumentContent({ topic, includeFormulas: true }),
-      (result) => setDocumentContent(cleanAiOutput(result.content)),
+      (result) => setDocumentContent(result.content),
       "Generating content..."
     );
   };
@@ -199,7 +193,7 @@ export default function DocuCraftClient() {
   const handleFormat = () => {
     handleAiAction(
       () => autoFormatDocument({ documentContent, styleGuide }),
-      (result) => setDocumentContent(cleanAiOutput(result.formattedDocument)),
+      (result) => setDocumentContent(result.formattedDocument),
       `Applying ${styleGuide} format...`
     );
   };
@@ -214,7 +208,7 @@ export default function DocuCraftClient() {
     handleAiAction(
       () => enhanceDocument({ documentContent: selectionText, feedback }),
       (result) => {
-        const cleanedResult = cleanAiOutput(result.enhancedDocumentContent);
+        const cleanedResult = result.enhancedDocumentContent;
         if (!activeSelection.collapsed) {
             activeSelection.deleteContents();
             const enhancedNode = document.createElement('span');
@@ -442,4 +436,3 @@ export default function DocuCraftClient() {
       </div>
     </div>
   );
-}
