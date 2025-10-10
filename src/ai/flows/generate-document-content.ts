@@ -34,7 +34,7 @@ const prompt = ai.definePrompt({
   
   The output MUST be a single, valid HTML string.
 
-  - For text that should be presented as inline code or a literal (like variable names or simple notations), use the <code>...</code> tag. For example: <code>P(x)</code>. Do NOT use markdown backticks.
+  - For text that should be presented as inline code or a literal (like variable names or simple notations), use the <code>...</code> tag. For example: <code>P(x)</code>. Do NOT use markdown backticks (\`).
   - For complex mathematical formulas, you MUST use standard LaTeX syntax. Wrap inline formulas in \\( ... \\) and block formulas in \\[ ... \\]. For example: \\( E = mc^2 \\).
   - Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not invent commands or use unicode characters directly in formulas.
   - The entire response should be formatted as a single block of HTML content, ready to be displayed on a web page.

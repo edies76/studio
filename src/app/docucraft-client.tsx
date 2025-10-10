@@ -68,10 +68,11 @@ export default function DocuCraftClient() {
   const { toast } = useToast();
   
   const doc = useDocument("doc1"); // Hardcoded doc ID for now
-  const [documentContent, setDocumentContent] = useState(initialContent);
+  const [documentContent, setDocumentContent] = useState("");
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // Set content only on the client-side to avoid hydration mismatch
     setDocumentContent(doc.content);
   }, [doc.content]);
 
@@ -266,7 +267,7 @@ export default function DocuCraftClient() {
                     ref={previewRef}
                     className={cn(
                         "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-                        "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white font-sans prose-code:text-blue-400 prose-code:bg-gray-700/50 prose-code:p-1 prose-code:rounded-sm",
+                        "prose-p:text-gray-300 prose-headings:text-white prose-headings:font-serif prose-h1:text-4xl prose-h2:text-3xl prose-h3:text-2xl prose-a:text-blue-400 prose-strong:text-white font-sans",
                         { "opacity-60": isLoading }
                     )}
                     dangerouslySetInnerHTML={{ __html: documentContent }}
