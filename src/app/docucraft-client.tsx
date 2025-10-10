@@ -46,7 +46,7 @@ declare global {
   }
 }
 
-const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p>`;
+const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools. You can include mathematical formulas like this: \\( F = G \\frac{m_1 m_2}{r^2} \\). The editor will render them beautifully.</p><code>P(x)</code>`;
 
 // MOCK
 const useDocument = (id: string) => {
@@ -72,9 +72,8 @@ export default function DocuCraftClient() {
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Set content only on the client-side to avoid hydration mismatch
-    setDocumentContent(doc.content);
-  }, [doc.content]);
+    setDocumentContent(initialContent);
+  }, []);
 
   useEffect(() => {
     const typesetMath = async () => {
@@ -219,11 +218,6 @@ export default function DocuCraftClient() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <img
-            src="https://picsum.photos/seed/user/32/32"
-            alt="User"
-            className="rounded-full w-8 h-8"
-          />
         </div>
       </header>
       
