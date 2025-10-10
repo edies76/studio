@@ -1,5 +1,5 @@
-import DocuCraftClient from './docucraft-client';
+import BambaClient from './bamba-client';
 
 export default function Home() {
-  return <DocuCraftClient />;
+  return <BambaClient />;
 }

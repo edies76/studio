@@ -4,8 +4,15 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { generateDocumentContent } from "@/ai/flows/generate-document-content";
 import { autoFormatDocument } from "@/ai/flows/auto-format-document";
 import { enhanceDocument } from "@/ai/flows/enhance-document";
+import { generateConceptMap } from "@/ai/flows/generate-concept-map";
 
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,6 +28,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
+import ConceptMapView from "@/components/concept-map-view";
+import type { Node as FlowNode, Edge, OnNodesChange, OnEdgesChange } from '@xyflow/react';
+import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
@@ -30,10 +40,13 @@ import {
   Loader2,
   Wand2,
   Download,
+  Share2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
-
+import html2canvas from 'html2canvas';
+import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel } from 'docx';
+import { saveAs } from 'file-saver';
 
 declare global {
   interface Window {
@@ -49,20 +62,34 @@ declare global {
 const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools.</p>`;
 
 
-export default function DocuCraftClient() {
+export default function BambaClient() {
   const [documentContent, setDocumentContent] = useState(initialContent);
   const [topic, setTopic] = useState("");
   const [styleGuide, setStyleGuide] = useState("APA");
   const [enhancementFeedback, setEnhancementFeedback] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<
-    "generate" | "format" | "enhance" | null
+    "generate" | "format" | "enhance" | "conceptMap" | null
   >(null);
 
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
   
   const selectionRef = useRef<Range | null>(null);
+
+  const [nodes, setNodes] = useState<FlowNode[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [isConceptMapOpen, setIsConceptMapOpen] = useState(false);
+
+  const onNodesChange: OnNodesChange = useCallback(
+    (changes) => setNodes((nds) => applyNodeChanges(changes, nds)),
+    [setNodes]
+  );
+
+  const onEdgesChange: OnEdgesChange = useCallback(
+    (changes) => setEdges((eds) => applyEdgeChanges(changes, eds)),
+    [setEdges]
+  );
 
   const { toast } = useToast();
   
@@ -78,12 +105,10 @@ export default function DocuCraftClient() {
     }
   }, []);
 
-  const handleContentUpdate = useCallback((content: string) => {
-    // This function is now only called by the editor's onInput.
-    // We update the state, but we don't cause a re-render that overwrites the editor.
-    // The state and editor are now coupled in one direction inside this component.
-  }, []);
-
+  const handleEditorInput = () => {
+    // This handler is intentionally left blank to prevent re-renders on every keystroke.
+    // The content is sourced directly from the editor's DOM when needed.
+  };
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
@@ -104,7 +129,7 @@ export default function DocuCraftClient() {
         if (editorRef.current) {
           const editorRect = editorRef.current.getBoundingClientRect();
           setToolbarPosition({
-            top: rect.top - editorRect.top - 50, // Position toolbar above selection
+            top: rect.top - editorRect.top - 50,
             left: rect.left - editorRect.left + rect.width / 2,
           });
           setShowToolbar(true);
@@ -131,7 +156,8 @@ export default function DocuCraftClient() {
     const { dismiss } = toast({ description: "Generating content..." });
     try {
       const result = await generateDocumentContent({ topic, includeFormulas: true });
-      setDocumentContent(result.content);
+      setDocumentContent(result.documentContent);
+      // TODO: Store result.presentationSlides and result.timelineEvents in state
       toast({ title: "Success", description: "Content generated successfully." });
     } catch (error) {
       console.error(error);
@@ -139,6 +165,40 @@ export default function DocuCraftClient() {
         variant: "destructive",
         title: "Uh oh! Something went wrong.",
         description: "Could not generate content.",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveTool(null);
+      dismiss();
+    }
+  };
+
+  const handleGenerateConceptMap = async () => {
+    if (!editorRef.current?.innerHTML) {
+      toast({
+        variant: "destructive",
+        title: "Content is required",
+        description: "Please add content to the editor to generate a map.",
+      });
+      return;
+    }
+    setIsLoading(true);
+    setActiveTool("conceptMap");
+    const { dismiss } = toast({ description: "Generating concept map..." });
+    try {
+      const result = await generateConceptMap({
+        documentContent: editorRef.current.innerHTML,
+      });
+      setNodes(result.nodes as FlowNode[]);
+      setEdges(result.edges as Edge[]);
+      setIsConceptMapOpen(true);
+      toast({ title: "Success", description: "Concept map generated." });
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Uh oh! Something went wrong.",
+        description: "Could not generate the concept map.",
       });
     } finally {
       setIsLoading(false);
@@ -187,17 +247,14 @@ export default function DocuCraftClient() {
     setIsLoading(true);
     setActiveTool("enhance");
     const { dismiss } = toast({ description: "Enhancing selection..." });
-
     try {
       const selectedHtml = currentSelection.cloneContents();
       const tempDiv = document.createElement("div");
       tempDiv.appendChild(selectedHtml);
-
       const result = await enhanceDocument({
         documentContent: tempDiv.innerHTML,
         feedback: enhancementFeedback,
       });
-
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
         const range = selection.getRangeAt(0);
@@ -205,15 +262,12 @@ export default function DocuCraftClient() {
         const newContentFragment = range.createContextualFragment(result.enhancedDocumentContent);
         range.insertNode(newContentFragment);
       }
-      
       if(editorRef.current) {
         setDocumentContent(editorRef.current.innerHTML);
       }
-      
       setShowToolbar(false);
       selectionRef.current = null;
       toast({ title: "Success", description: "Selection enhanced." });
-
     } catch (error) {
       console.error(error);
       toast({
@@ -227,50 +281,58 @@ export default function DocuCraftClient() {
       dismiss();
     }
   };
-  
+
   const handleExportPdf = async () => {
     if (!editorRef.current) return;
     setIsLoading(true);
-    const { dismiss } = toast({ description: "Exporting PDF..." });
-  
+    const { dismiss } = toast({ description: "Preparing document for export..." });
+
     try {
       if (window.MathJax) {
         await window.MathJax.startup.promise;
         await window.MathJax.typesetPromise([editorRef.current]);
       }
-  
+      
+      toast({ description: "Generating high-fidelity PDF..." });
+
+      const editor = editorRef.current;
+      const canvas = await html2canvas(editor, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
-        orientation: "p",
-        unit: "pt",
-        format: "a4",
+        orientation: 'portrait',
+        unit: 'pt',
+        format: 'a4',
       });
-  
-      const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
-      document.body.appendChild(contentToExport);
-  
-      contentToExport.style.backgroundColor = 'white';
-      contentToExport.style.padding = '35px';
-      contentToExport.style.width = '525pt';
-      contentToExport.style.fontFamily = 'Inter, sans-serif';
-      
-      Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
-        const htmlEl = el as HTMLElement;
-        htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Inter, sans-serif';
-      });
-      
-      await pdf.html(contentToExport, {
-        callback: function (doc) {
-          doc.save("document.pdf");
-          document.body.removeChild(contentToExport);
-          dismiss();
-          toast({ title: "Success", description: "PDF exported successfully." });
-        },
-        width: 525,
-        windowWidth: contentToExport.scrollWidth,
-        autoPaging: 'text'
-      });
-  
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+      const ratio = canvasWidth / pdfWidth;
+      const imgHeight = canvasHeight / ratio;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save("document.pdf");
+      dismiss();
+      toast({ title: "Success", description: "PDF exported successfully." });
+
     } catch (error) {
       console.error("Error exporting PDF:", error);
       dismiss();
@@ -283,55 +345,112 @@ export default function DocuCraftClient() {
       setIsLoading(false);
     }
   };
-  
-  const handleExportWord = () => {
+
+  const handleExportWord = async () => {
     if (!editorRef.current) return;
-    let content = editorRef.current.innerHTML;
+    setIsLoading(true);
+    const { dismiss } = toast({ description: "Generating professional .docx file..." });
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = content;
-    const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
-    mathJaxElements.forEach((mjx) => {
-        const mathml = mjx.querySelector('math');
-        if(mathml) {
-            const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
-            const parent = mjx.parentElement;
-            if(parent) {
-                const span = document.createElement('span');
-                span.innerHTML = oMath;
-                if (span.firstChild) {
-                  parent.replaceChild(span.firstChild, mjx);
+    try {
+      if (window.MathJax) {
+        await window.MathJax.startup.promise;
+        await window.MathJax.typesetPromise([editorRef.current]);
+      }
+
+      const editor = editorRef.current.cloneNode(true) as HTMLElement;
+      const docxChildren = [];
+
+      const parseNode = async (node: ChildNode): Promise<any> => {
+        switch (node.nodeName) {
+          case 'H1':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_1 });
+          case 'H2':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_2 });
+          case 'H3':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_3 });
+          case 'P': {
+            const paragraphRuns: (TextRun | ImageRun)[] = [];
+            for (const pChild of Array.from(node.childNodes)) {
+              if (pChild.nodeType === Node.TEXT_NODE) {
+                paragraphRuns.push(new TextRun(pChild.textContent || ''));
+              } else if (pChild.nodeType === Node.ELEMENT_NODE) {
+                const element = pChild as HTMLElement;
+                if (element.tagName === 'MJX-CONTAINER') {
+                  const canvas = await html2canvas(element, { backgroundColor: 'white', scale: 3 });
+                  const imageBuffer = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+                  if (imageBuffer) {
+                    const buffer = await imageBuffer.arrayBuffer();
+                    paragraphRuns.push(new ImageRun({
+                      type: 'png',
+                      data: buffer,
+                      transformation: { width: canvas.width / 3, height: canvas.height / 3 },
+                    }));
+                  }
+                } else {
+                  paragraphRuns.push(new TextRun(element.textContent || ''));
                 }
+              }
             }
+            return new Paragraph({ children: paragraphRuns });
+          }
+          default:
+            return null;
         }
-    });
+      };
 
-    content = tempDiv.innerHTML;
+      for (const child of Array.from(editor.childNodes)) {
+        const docxChild = await parseNode(child);
+        if (docxChild) {
+          docxChildren.push(docxChild);
+        }
+      }
 
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
-        "xmlns:w='urn:schemas-microsoft-com:office:word' "+
-        "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
-        "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair Display', serif;}</style></head><body>`;
-    const footer = "</body></html>";
-    const sourceHTML = header+content+footer;
+      const doc = new Document({
+        sections: [{
+          children: docxChildren,
+        }],
+      });
 
-    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
-    const fileDownload = document.createElement("a");
-    document.body.appendChild(fileDownload);
-    fileDownload.href = source;
-    fileDownload.download = 'document.doc';
-    fileDownload.click();
-    document.body.removeChild(fileDownload);
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, 'Bamba-Document.docx');
+
+      dismiss();
+      toast({ title: "Success", description: "Word document exported successfully." });
+
+    } catch (error) {
+      console.error("Error exporting Word document:", error);
+      dismiss();
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not export Word document.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
-      <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
-        <div className="flex items-center gap-3">
+    <>
+      <Dialog open={isConceptMapOpen} onOpenChange={setIsConceptMapOpen}>
+        <DialogContent className="max-w-4xl h-3/4">
+          <DialogHeader>
+            <DialogTitle>Concept Map</DialogTitle>
+          </DialogHeader>
+          <ConceptMapView
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+          />
+        </DialogContent>
+      </Dialog>
+      <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
+        <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
+          <div className="flex items-center gap-3">
           <Wand2 className="w-6 h-6 text-blue-500" />
           <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
-            bamba
+            Bamba
           </h1>
         </div>
         <div className="flex items-center gap-4">
@@ -431,6 +550,19 @@ export default function DocuCraftClient() {
               )}
               Format Document
             </Button>
+            <Button
+              onClick={handleGenerateConceptMap}
+              disabled={isLoading}
+              variant="outline"
+              className="w-full"
+            >
+              {isLoading && activeTool === "conceptMap" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Share2 className="mr-2" />
+              )}
+              Generate Concept Map
+            </Button>
           </div>
         </aside>
 
@@ -447,9 +579,7 @@ export default function DocuCraftClient() {
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => {
-              // We don't set state here to avoid re-renders on every keystroke
-            }}
+            onInput={handleEditorInput}
             onMouseUp={handleMouseUp}
             onBlur={() => {
               // We add a small delay to allow click events on the toolbar
@@ -465,11 +595,11 @@ export default function DocuCraftClient() {
               "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
             )}
-          />
+          >
+          </div>
         </main>
       </div>
     </div>
+    </>
   );
 }
-
-    
