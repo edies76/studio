@@ -3,24 +3,33 @@
 import { ai } from '@/ai/genkit';
 import { z } from 'genkit';
 
-// The actions should correspond to what's defined in the toolbar
-const EnhancementActionSchema = z.enum([
-  "improve",
-  "summarize",
-  "expand",
-  "tone-academic",
-  "tone-formal",
-  "tone-casual",
+// Define the schema for the action, which can be predefined or a custom prompt
+const EnhancementActionSchema = z.union([
+  z.object({
+    type: z.literal('predefined'),
+    value: z.enum([
+      "improve",
+      "summarize",
+      "expand",
+      "tone-academic",
+      "tone-formal",
+      "tone-casual",
+    ]),
+  }),
+  z.object({
+    type: z.literal('custom'),
+    prompt: z.string(),
+  }),
 ]);
 export type EnhancementAction = z.infer<typeof EnhancementActionSchema>;
 
-// The new input schema uses the action enum instead of generic feedback
+// The input schema now uses this more flexible action schema
 const EnhanceDocumentInputSchema = z.object({
   documentContent: z
     .string()
     .describe('The content of the document to be enhanced.'),
   action: EnhancementActionSchema.describe(
-    'The specific enhancement action to perform.'
+    'The specific enhancement action to perform, either predefined or a custom user prompt.'
   ),
 });
 export type EnhanceDocumentInput = z.infer<typeof EnhanceDocumentInputSchema>;
@@ -33,58 +42,42 @@ const EnhanceDocumentOutputSchema = z.object({
 export type EnhanceDocumentOutput = z.infer<typeof EnhanceDocumentOutputSchema>;
 
 export async function enhanceDocument(input: EnhanceDocumentInput): Promise<EnhanceDocumentOutput> {
-  return enhanceDocumentFlow(input);
+  // We construct the final prompt string here based on the action type
+  let finalPrompt = '';
+  if (input.action.type === 'predefined') {
+    finalPrompt = `Perform the following predefined action on the text: '${input.action.value}'.`;
+  } else {
+    finalPrompt = `Fulfill the following user-written instruction: '${input.action.prompt}'.`;
+  }
+
+  // We pass the constructed prompt and the original document content to the prompt renderer
+  return enhanceDocumentFlow({
+    documentContent: input.documentContent,
+    finalPrompt: finalPrompt,
+  });
 }
 
-// The prompt is now much more intelligent and directive
+// The prompt now takes a dynamically constructed instruction
 const enhanceDocumentPrompt = ai.definePrompt({
   name: 'enhanceDocumentPrompt',
-  input: { schema: EnhanceDocumentInputSchema },
+  input: { schema: z.object({ documentContent: z.string(), finalPrompt: z.string() }) },
   output: { schema: EnhanceDocumentOutputSchema },
-  prompt: `You are an expert writing assistant. You will receive a piece of text and a specific action to perform on it. Your response must be only the modified text, formatted as a valid HTML string.
+  prompt: `You are an expert writing assistant. You will receive a piece of text and a specific instruction to perform on it. Your response must be only the modified text, formatted as a valid HTML string.
 
-  **Action to Perform:** {{{action}}}
+  **Instruction:**
+  {{{finalPrompt}}}
+
   **Original Text:**
   {{{documentContent}}}
 
-  **Instructions based on Action:**
-
-  *   **If the action is 'improve'**:
-      *   Correct any grammatical errors, spelling mistakes, and typos.
-      *   Improve sentence structure for better clarity and flow.
-      *   Refine word choices to be more precise and impactful, without changing the core meaning.
-
-  *   **If the action is 'summarize'**:
-      *   Condense the text to its most essential points.
-      *   Remove redundant information and focus on the main ideas.
-      *   The summary should be significantly shorter than the original text but retain its key message.
-
-  *   **If the action is 'expand'**:
-      *   Elaborate on the existing points with more detail, examples, or explanations.
-      *   Add relevant information to make the text more comprehensive.
-      *   The expanded text should be longer and more detailed than the original.
-
-  *   **If the action is 'tone-academic'**:
-      *   Rewrite the text using a formal, scholarly tone.
-      *   Use precise terminology and avoid colloquialisms or overly casual language.
-      *   Structure the arguments logically and objectively.
-
-  *   **If the action is 'tone-formal'**:
-      *   Rewrite the text in a professional and respectful tone suitable for business or formal communication.
-      *   Avoid slang, contractions, and overly personal language.
-
-  *   **If the action is 'tone-casual'**:
-      *   Rewrite the text in a more relaxed, conversational, and approachable tone.
-      *   You can use contractions and more common vocabulary.
-
-  Now, apply the '{{{action}}}' action to the provided text and return only the resulting HTML content.
+  Now, apply the instruction to the provided text and return only the resulting HTML content.
   `,
 });
 
 const enhanceDocumentFlow = ai.defineFlow(
   {
     name: 'enhanceDocumentFlow',
-    inputSchema: EnhanceDocumentInputSchema,
+    inputSchema: z.object({ documentContent: z.string(), finalPrompt: z.string() }),
     outputSchema: EnhanceDocumentOutputSchema,
   },
   async input => {

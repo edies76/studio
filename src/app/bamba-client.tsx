@@ -567,6 +567,7 @@ export default function BambaClient() {
             suppressContentEditableWarning
             onInput={handleEditorInput}
             onMouseUp={handleMouseUp}
+            onSelect={handleMouseUp} // Also trigger on text selection for robustness
             onBlur={() => {
               // We add a small delay to allow click events on the toolbar
               setTimeout(() => {
@@ -584,6 +585,7 @@ export default function BambaClient() {
           />
         </main>
       </div>
+    </div>
     </>
   );
 }
