@@ -82,6 +82,6 @@
 @layer components {
   /* Use a more subtle styling for code, closer to ChatGPT */
   .prose code {
-    @apply text-white bg-gray-700/50 rounded-md px-1.5 py-1 font-mono text-sm break-words;
+    @apply text-inherit bg-transparent rounded-none px-0 py-0 font-mono text-sm break-words;
   }
 }
