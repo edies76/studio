@@ -32,7 +32,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
-import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
 
 
 declare global {
@@ -62,39 +61,32 @@ export default function DocuCraftClient() {
   
   const editorRef = useRef<HTMLDivElement>(null);
 
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [toolbarPosition, setToolbarPosition] = useState<{ top: number; left: number } | null>(null);
-
-
-  useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
-        editorRef.current.innerHTML = documentContent;
-        if (window.MathJax) {
-          window.MathJax.typesetPromise([editorRef.current]).catch(console.error);
-        }
-    }
-  }, [documentContent]);
-
-
   const typesetMath = () => {
     if (editorRef.current && window.MathJax) {
         window.MathJax.startup.promise.then(() => {
-            window.MathJax.typesetPromise([editorRef.current]).catch((err) => {
+            window.MathJax.typesetPromise([editorRef.current!]).catch((err) => {
                 console.error("MathJax typesetting failed:", err);
             });
         });
     }
   };
 
-  const handleUpdateContent = (content: string) => {
+  const handleContentUpdate = (content: string) => {
     setDocumentContent(content);
+    if(editorRef.current) {
+        editorRef.current.innerHTML = content;
+    }
+    typesetMath();
   };
 
   useEffect(() => {
-    if(documentContent) {
+    if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
+        editorRef.current.innerHTML = documentContent;
         typesetMath();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentContent]);
+
 
   const handleGenerateContent = async () => {
     if (!topic) {
@@ -110,7 +102,7 @@ export default function DocuCraftClient() {
     const { dismiss } = toast({ description: "Generating content..." });
     try {
       const result = await generateDocumentContent({ topic });
-      handleUpdateContent(result.content);
+      handleContentUpdate(result.content);
       toast({ title: "Success", description: "Content generated successfully." });
     } catch (error) {
       console.error(error);
@@ -127,15 +119,16 @@ export default function DocuCraftClient() {
   };
 
   const handleFormatDocument = async () => {
+    if (!editorRef.current?.innerHTML) return;
     setIsLoading(true);
     setActiveTool("format");
     const { dismiss } = toast({ description: "Formatting document..." });
     try {
       const result = await autoFormatDocument({
-        documentContent: editorRef.current?.innerHTML || documentContent,
+        documentContent: editorRef.current.innerHTML,
         styleGuide: styleGuide as "APA" | "IEEE",
       });
-      handleUpdateContent(result.formattedDocument);
+      handleContentUpdate(result.formattedDocument);
       toast({ title: "Success", description: "Document formatted." });
     } catch (error) {
       console.error(error);
@@ -147,78 +140,6 @@ export default function DocuCraftClient() {
     } finally {
       setIsLoading(false);
       setActiveTool(null);
-      dismiss();
-    }
-  };
-
-  const handleSelectionChange = () => {
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      const range = sel.getRangeAt(0);
-      if (!range.collapsed && editorRef.current?.contains(range.commonAncestorContainer)) {
-        setSelection(sel);
-        const rect = range.getBoundingClientRect();
-        if (editorRef.current) {
-          const editorRect = editorRef.current.getBoundingClientRect();
-          setToolbarPosition({
-            top: rect.top - editorRect.top - 40, // Position above the selection
-            left: rect.left - editorRect.left + rect.width / 2,
-          });
-        }
-      } else {
-        setSelection(null);
-        setToolbarPosition(null);
-      }
-    }
-  };
-
-  const handleEnhanceSelection = async () => {
-    if (!selection || !enhancementFeedback) {
-      toast({
-        variant: "destructive",
-        title: "Selection and Feedback required",
-        description: "Please select text and provide enhancement feedback.",
-      });
-      return;
-    }
-
-    const selectedText = selection.toString();
-    setIsLoading(true);
-    setActiveTool("enhance");
-    const { dismiss } = toast({ description: "Enhancing selection..." });
-
-    try {
-      const result = await enhanceDocument({
-        documentContent: selectedText,
-        feedback: enhancementFeedback,
-      });
-
-      const range = selection.getRangeAt(0);
-      range.deleteContents();
-      const newContentNode = document.createElement("span");
-      newContentNode.innerHTML = result.enhancedDocumentContent;
-      // Insert all children of the new node at the range
-      // This is to avoid inserting a span into a block element like a p
-      const fragment = document.createDocumentFragment();
-      Array.from(newContentNode.childNodes).forEach(child => {
-          fragment.appendChild(child);
-      });
-      range.insertNode(fragment);
-      
-      handleUpdateContent(editorRef.current?.innerHTML || "");
-      toast({ title: "Success", description: "Selection enhanced." });
-    } catch (error) {
-      console.error("Enhancement failed", error);
-      toast({
-        variant: "destructive",
-        title: "Enhancement failed",
-        description: "Could not enhance the selected text.",
-      });
-    } finally {
-      setIsLoading(false);
-      setActiveTool(null);
-      setSelection(null);
-      setToolbarPosition(null);
       dismiss();
     }
   };
@@ -307,7 +228,7 @@ export default function DocuCraftClient() {
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair', serif;}</style></head><body>`;
+        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair Display', serif;}</style></head><body>`;
     const footer = "</body></html>";
     const sourceHTML = header+content+footer;
 
@@ -325,7 +246,7 @@ export default function DocuCraftClient() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
         <div className="flex items-center gap-3">
           <Wand2 className="w-6 h-6 text-blue-500" />
-          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
+          <h1 className="text-2xl font-['Playfair_Display'] font-bold text-white">
             bamba
           </h1>
         </div>
@@ -430,33 +351,19 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden p-8 md:p-12">
-          <div className="relative w-full h-full">
-            {toolbarPosition && (
-              <EnhancementToolbar
-                style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
-                onEnhance={handleEnhanceSelection}
-                isLoading={isLoading && activeTool === 'enhance'}
-              />
+        <main className="flex-1 flex flex-col overflow-hidden p-8">
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={(e) => setDocumentContent(e.currentTarget.innerHTML)}
+            className={cn(
+              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
+              { "opacity-60": isLoading }
             )}
-            <div
-              ref={editorRef}
-              contentEditable
-              suppressContentEditableWarning
-              onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
-              onMouseUp={handleSelectionChange}
-              onKeyUp={handleSelectionChange}
-              className={cn(
-                "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
-                { "opacity-60": isLoading }
-              )}
-              dangerouslySetInnerHTML={{ __html: documentContent }}
-            />
-          </div>
+          />
         </main>
       </div>
     </div>
   );
 }
-
-    
