@@ -303,7 +303,7 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[400px_1fr] overflow-hidden">
+      <div className="flex-1 grid md:grid-cols-[500px_1fr] overflow-hidden">
         {/* AI Tools Panel */}
         <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
           <h2 className="text-lg font-semibold flex items-center gap-2">
