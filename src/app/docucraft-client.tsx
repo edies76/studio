@@ -249,32 +249,22 @@ export default function DocuCraftClient() {
         </aside>
 
         {/* Editor Panel */}
-        <main className="flex-1 grid grid-rows-2 overflow-hidden relative">
-            {/* Source Editor */}
-            <div className="flex flex-col h-full">
-                <div className="p-2 border-b border-gray-700 text-sm font-medium text-gray-400">Editor</div>
-                <Textarea 
-                    value={documentContent}
-                    onChange={(e) => handleUpdateContent(e.target.value)}
-                    className="flex-1 w-full h-full bg-[#1e1e1e] border-0 rounded-none focus-visible:ring-0"
-                    placeholder="Start writing your HTML content..."
-                />
-            </div>
-
-            {/* Live Preview */}
-            <div className="flex flex-col h-full border-t border-gray-700">
-                <div className="p-2 border-b border-gray-700 text-sm font-medium text-gray-400">Preview</div>
-                <div
-                    ref={previewRef}
-                    className={cn(
-                        "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-                        { "opacity-60": isLoading }
-                    )}
-                    dangerouslySetInnerHTML={{ __html: documentContent }}
-                />
-            </div>
+        <main className="flex-1 flex flex-col overflow-hidden relative">
+            <div
+                ref={previewRef}
+                contentEditable
+                suppressContentEditableWarning
+                onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
+                className={cn(
+                    "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
+                    { "opacity-60": isLoading }
+                )}
+                dangerouslySetInnerHTML={{ __html: documentContent }}
+            />
         </main>
       </div>
     </div>
   );
 }
+
+    
