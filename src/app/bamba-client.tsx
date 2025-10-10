@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { generateDocumentContent } from "@/ai/flows/generate-document-content";
 import { autoFormatDocument } from "@/ai/flows/auto-format-document";
-import { enhanceDocument } from "@/ai/flows/enhance-document";
+import { enhanceDocument, EnhancementAction } from "@/ai/flows/enhance-document";
 import { generateConceptMap } from "@/ai/flows/generate-concept-map";
 
 import { Button } from "@/components/ui/button";
@@ -66,7 +66,6 @@ export default function BambaClient() {
   const [documentContent, setDocumentContent] = useState(initialContent);
   const [topic, setTopic] = useState("");
   const [styleGuide, setStyleGuide] = useState("APA");
-  const [enhancementFeedback, setEnhancementFeedback] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<
     "generate" | "format" | "enhance" | "conceptMap" | null
@@ -107,7 +106,6 @@ export default function BambaClient() {
 
   const handleEditorInput = () => {
     // This handler is intentionally left blank to prevent re-renders on every keystroke.
-    // The content is sourced directly from the editor's DOM when needed.
   };
 
   useEffect(() => {
@@ -234,13 +232,13 @@ export default function BambaClient() {
     }
   };
 
-  const handleEnhanceSelection = async () => {
+  const handleEnhanceAction = async (action: EnhancementAction) => {
     const currentSelection = selectionRef.current;
-    if (!currentSelection || !enhancementFeedback) {
+    if (!currentSelection) {
       toast({
         variant: "destructive",
-        title: "Selection and Feedback Required",
-        description: "Please select text and provide enhancement feedback.",
+        title: "Selection Required",
+        description: "Please select the text you want to enhance.",
       });
       return;
     }
@@ -253,7 +251,7 @@ export default function BambaClient() {
       tempDiv.appendChild(selectedHtml);
       const result = await enhanceDocument({
         documentContent: tempDiv.innerHTML,
-        feedback: enhancementFeedback,
+        action: action,
       });
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
@@ -511,18 +509,6 @@ export default function BambaClient() {
                 </SelectContent>
               </Select>
             </div>
-             <div className="space-y-2">
-              <label htmlFor="enhancement-feedback" className="text-sm font-medium">
-                Enhancement Feedback
-              </label>
-              <Textarea
-                id="enhancement-feedback"
-                placeholder="e.g., 'Make this sound more professional'"
-                value={enhancementFeedback}
-                onChange={(e) => setEnhancementFeedback(e.target.value)}
-                className="bg-gray-800 border-gray-700 h-24"
-              />
-            </div>
           </div>
           <div className="flex flex-col gap-3 mt-auto">
             <Button
@@ -571,7 +557,7 @@ export default function BambaClient() {
            {showToolbar && (
             <EnhancementToolbar
               style={toolbarPosition}
-              onEnhance={handleEnhanceSelection}
+              onAction={handleEnhanceAction}
               isLoading={isLoading && activeTool === "enhance"}
             />
           )}
@@ -595,11 +581,9 @@ export default function BambaClient() {
               "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
             )}
-          >
-          </div>
+          />
         </main>
       </div>
-    </div>
     </>
   );
 }
