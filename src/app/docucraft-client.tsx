@@ -32,7 +32,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
-import Image from "next/image";
+import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
+
 
 declare global {
   interface Window {
@@ -47,45 +48,30 @@ declare global {
 
 const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools.</p>`;
 
-// MOCK
-const useDocument = (id: string) => {
-  const [document, setDocument] = useState({
-    id: "1",
-    name: "My Document",
-    content: "",
-  });
-
-  useEffect(() => {
-    // Simulate fetching initial content
-    setDocument((prev) => ({ ...prev, content: initialContent }));
-  }, []);
-
-  return document;
-};
-
 
 export default function DocuCraftClient() {
   const [documentContent, setDocumentContent] = useState("");
   const [topic, setTopic] = useState("");
   const [styleGuide, setStyleGuide] = useState("APA");
+  const [enhancementFeedback, setEnhancementFeedback] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<
     "generate" | "format" | "enhance" | null
   >(null);
   const { toast } = useToast();
   
-  const doc = useDocument("doc1"); // Hardcoded doc ID for now
-
   const editorRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    if (doc) {
-      setDocumentContent(doc.content);
-    }
-  }, [doc]);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [toolbarPosition, setToolbarPosition] = useState<{ top: number; left: number } | null>(null);
+
 
   useEffect(() => {
-    if (editorRef.current) {
+    setDocumentContent(initialContent);
+  }, []);
+
+  useEffect(() => {
+    if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
         editorRef.current.innerHTML = documentContent;
     }
   }, [documentContent]);
@@ -108,7 +94,6 @@ export default function DocuCraftClient() {
   }, [documentContent]);
 
   const handleUpdateContent = (content: string) => {
-    // In the future, this will call update_textdoc() Cloud Function
     setDocumentContent(content);
   };
 
@@ -123,7 +108,7 @@ export default function DocuCraftClient() {
     }
     setIsLoading(true);
     setActiveTool("generate");
-    const { id, dismiss } = toast({ description: "Generating content..." });
+    const { dismiss } = toast({ description: "Generating content..." });
     try {
       const result = await generateDocumentContent({ topic });
       handleUpdateContent(result.content);
@@ -145,10 +130,10 @@ export default function DocuCraftClient() {
   const handleFormatDocument = async () => {
     setIsLoading(true);
     setActiveTool("format");
-    const { id, dismiss } = toast({ description: "Formatting document..." });
+    const { dismiss } = toast({ description: "Formatting document..." });
     try {
       const result = await autoFormatDocument({
-        documentContent,
+        documentContent: editorRef.current?.innerHTML || documentContent,
         styleGuide: styleGuide as "APA" | "IEEE",
       });
       handleUpdateContent(result.formattedDocument);
@@ -166,16 +151,87 @@ export default function DocuCraftClient() {
       dismiss();
     }
   };
+
+  const handleSelectionChange = () => {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      if (!range.collapsed) {
+        setSelection(sel);
+        const rect = range.getBoundingClientRect();
+        if (editorRef.current) {
+          const editorRect = editorRef.current.getBoundingClientRect();
+          setToolbarPosition({
+            top: rect.top - editorRect.top - 40, // Position above the selection
+            left: rect.left - editorRect.left + rect.width / 2,
+          });
+        }
+      } else {
+        setSelection(null);
+        setToolbarPosition(null);
+      }
+    }
+  };
+
+  const handleEnhanceSelection = async () => {
+    if (!selection || !enhancementFeedback) {
+      toast({
+        variant: "destructive",
+        title: "Selection and Feedback required",
+        description: "Please select text and provide enhancement feedback.",
+      });
+      return;
+    }
+
+    const selectedText = selection.toString();
+    setIsLoading(true);
+    setActiveTool("enhance");
+    const { dismiss } = toast({ description: "Enhancing selection..." });
+
+    try {
+      const result = await enhanceDocument({
+        documentContent: selectedText,
+        feedback: enhancementFeedback,
+      });
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+      const newContentNode = document.createElement("span");
+      newContentNode.innerHTML = result.enhancedDocumentContent;
+      // Insert all children of the new node at the range
+      // This is to avoid inserting a span into a block element like a p
+      Array.from(newContentNode.childNodes).reverse().forEach(child => {
+          range.insertNode(child);
+      });
+      
+      handleUpdateContent(editorRef.current?.innerHTML || "");
+      toast({ title: "Success", description: "Selection enhanced." });
+    } catch (error) {
+      console.error("Enhancement failed", error);
+      toast({
+        variant: "destructive",
+        title: "Enhancement failed",
+        description: "Could not enhance the selected text.",
+      });
+    } finally {
+      setIsLoading(false);
+      setActiveTool(null);
+      setSelection(null);
+      setToolbarPosition(null);
+      dismiss();
+    }
+  };
   
   const handleExportPdf = async () => {
     if (!editorRef.current) return;
     setIsLoading(true);
-    const { id, dismiss } = toast({ description: "Exporting PDF..." });
+    const { dismiss } = toast({ description: "Exporting PDF..." });
   
     try {
-      // Ensure MathJax has rendered
-      await window.MathJax.startup.promise;
-      await window.MathJax.typesetPromise([editorRef.current]);
+      if (window.MathJax) {
+        await window.MathJax.startup.promise;
+        await window.MathJax.typesetPromise([editorRef.current]);
+      }
   
       const pdf = new jsPDF({
         orientation: "p",
@@ -183,17 +239,14 @@ export default function DocuCraftClient() {
         format: "a4",
       });
   
-      // Clone the node to avoid modifying the original
       const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
       document.body.appendChild(contentToExport);
   
-      // Apply styles for PDF export
       contentToExport.style.backgroundColor = 'white';
       contentToExport.style.padding = '35px';
-      contentToExport.style.width = '525pt'; // A4 width in points minus margins
+      contentToExport.style.width = '525pt';
       contentToExport.style.fontFamily = 'Inter, sans-serif';
       
-      // Ensure all child elements have black text and correct font
       Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
         const htmlEl = el as HTMLElement;
         htmlEl.style.color = 'black';
@@ -203,7 +256,6 @@ export default function DocuCraftClient() {
       await pdf.html(contentToExport, {
         callback: function (doc) {
           doc.save("document.pdf");
-          // Clean up the cloned node
           document.body.removeChild(contentToExport);
           dismiss();
           toast({ title: "Success", description: "PDF exported successfully." });
@@ -228,32 +280,28 @@ export default function DocuCraftClient() {
   
   const handleExportWord = () => {
     if (!editorRef.current) return;
-    // Get the innerHTML of the editor
     let content = editorRef.current.innerHTML;
 
-    // Convert MathJax elements to Office Math (OMML)
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = content;
     const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
     mathJaxElements.forEach((mjx) => {
         const mathml = mjx.querySelector('math');
         if(mathml) {
-            // This is a simplified conversion, a full one is more complex
             const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
             const parent = mjx.parentElement;
             if(parent) {
-                // Replace the mjx-container with the OMML string
-                // We wrap it in a temporary span to parse it as a node
                 const span = document.createElement('span');
                 span.innerHTML = oMath;
-                parent.replaceChild(span.firstChild!, mjx);
+                if (span.firstChild) {
+                  parent.replaceChild(span.firstChild, mjx);
+                }
             }
         }
     });
 
     content = tempDiv.innerHTML;
 
-    // Create the Word document source
     const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
@@ -271,7 +319,6 @@ export default function DocuCraftClient() {
     document.body.removeChild(fileDownload);
   };
   
-
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
       <header className="flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0">
@@ -339,6 +386,18 @@ export default function DocuCraftClient() {
                 </SelectContent>
               </Select>
             </div>
+             <div className="space-y-2">
+              <label htmlFor="enhancement-feedback" className="text-sm font-medium">
+                Enhancement Feedback
+              </label>
+              <Textarea
+                id="enhancement-feedback"
+                placeholder="e.g., 'Make this sound more professional'"
+                value={enhancementFeedback}
+                onChange={(e) => setEnhancementFeedback(e.target.value)}
+                className="bg-gray-800 border-gray-700 h-24"
+              />
+            </div>
           </div>
           <div className="flex flex-col gap-3 mt-auto">
             <Button
@@ -371,17 +430,27 @@ export default function DocuCraftClient() {
 
         {/* Editor Panel */}
         <main className="flex-1 flex flex-col overflow-hidden p-8 md:px-24 md:py-12">
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
-            className={cn(
-              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
-              { "opacity-60": isLoading }
+          <div className="relative w-full h-full">
+            {toolbarPosition && (
+              <EnhancementToolbar
+                style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
+                onEnhance={handleEnhanceSelection}
+                isLoading={isLoading && activeTool === 'enhance'}
+              />
             )}
-            dangerouslySetInnerHTML={{ __html: documentContent }}
-          />
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
+              onMouseUp={handleSelectionChange}
+              onKeyUp={handleSelectionChange}
+              className={cn(
+                "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
+                { "opacity-60": isLoading }
+              )}
+            />
+          </div>
         </main>
       </div>
     </div>

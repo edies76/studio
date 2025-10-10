@@ -89,3 +89,9 @@
     content: none;
   }
 }
+
+/* Remove default browser selection override */
+::selection {
+  background-color: hsl(var(--primary) / 0.4);
+  color: hsl(var(--foreground));
+}
