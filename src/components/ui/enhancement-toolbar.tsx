@@ -13,6 +13,7 @@ interface EnhancementToolbarProps {
 export function EnhancementToolbar({ style, onEnhance, isLoading }: EnhancementToolbarProps) {
   return (
     <div
+      data-enhancement-toolbar
       className="absolute z-10 -translate-x-1/2 rounded-lg bg-gray-800 border border-gray-700 shadow-xl p-1 flex items-center gap-1"
       style={style}
       onMouseDown={(e) => e.preventDefault()} // Prevent editor from losing focus
@@ -34,3 +35,5 @@ export function EnhancementToolbar({ style, onEnhance, isLoading }: EnhancementT
     </div>
   );
 }
+
+    

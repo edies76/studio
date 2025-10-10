@@ -94,14 +94,13 @@ export default function DocuCraftClient() {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
         const range = selection.getRangeAt(0);
+        setCurrentSelection(range.cloneRange());
         const rect = range.getBoundingClientRect();
         
-        setCurrentSelection(range.cloneRange());
-
         if (editorRef.current) {
           const editorRect = editorRef.current.getBoundingClientRect();
           setToolbarPosition({
-            top: rect.top - editorRect.top - 40, 
+            top: rect.top - editorRect.top - 40,
             left: rect.left - editorRect.left + rect.width / 2,
           });
           setShowToolbar(true);
@@ -441,7 +440,16 @@ export default function DocuCraftClient() {
             suppressContentEditableWarning
             onInput={(e) => handleContentUpdate(e.currentTarget.innerHTML)}
             onMouseUp={handleMouseUp}
-            onBlur={() => setShowToolbar(false)}
+            onBlur={() => {
+              // We add a small delay to allow click events on the toolbar
+              setTimeout(() => {
+                if (
+                  document.activeElement?.closest('[data-enhancement-toolbar]') === null
+                ) {
+                  setShowToolbar(false);
+                }
+              }, 200);
+            }}
             className={cn(
               "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
@@ -452,3 +460,5 @@ export default function DocuCraftClient() {
     </div>
   );
 }
+
+    
