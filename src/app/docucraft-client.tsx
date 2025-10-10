@@ -29,8 +29,6 @@ import {
   Loader2,
   Wand2,
   ChevronDown,
-  Paperclip,
-  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
@@ -69,11 +67,16 @@ const useDocument = (id: string) => {
 
 
 export default function DocuCraftClient() {
+  const [documentContent, setDocumentContent] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [activeTool, setActiveTool] = useState<
+    "generate" | "format" | "enhance" | null
+  >(null);
   const { toast } = useToast();
   
   const doc = useDocument("doc1"); // Hardcoded doc ID for now
-  const [documentContent, setDocumentContent] = useState("");
+
+  const editorRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -229,42 +232,34 @@ export default function DocuCraftClient() {
       </header>
       
       <div className="flex-1 grid grid-cols-2 overflow-hidden">
-        {/* Left Panel: Chat */}
-        <aside className="flex flex-col p-6 bg-gray-800/50 border-r border-gray-700">
-            <div className="flex-1 overflow-y-auto space-y-4">
-                {/* Chat messages will go here */}
-                <div className="p-4 bg-gray-700/50 rounded-lg">
-                    <p className="text-sm text-gray-300">Welcome to bamba! Give me instructions to edit the document.</p>
-                </div>
-            </div>
-            <div className="mt-4 flex items-center gap-2">
-                <Button variant="ghost" size="icon">
-                    <Paperclip className="h-5 w-5" />
-                </Button>
-                <Textarea placeholder="e.g., 'Rewrite the first paragraph to be more concise.'" className="bg-gray-900 border-gray-600 focus:ring-blue-500 focus:border-blue-500" rows={1}/>
-                <Button>
-                    <Send className="h-5 w-5" />
-                </Button>
-            </div>
-        </aside>
-
         {/* Editor Panel */}
-        <main className="flex-1 flex flex-col overflow-hidden relative">
-            <div
-                ref={previewRef}
-                contentEditable
-                suppressContentEditableWarning
-                onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
-                className={cn(
-                    "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
-                    { "opacity-60": isLoading }
-                )}
-                dangerouslySetInnerHTML={{ __html: documentContent }}
-            />
+        <main className="flex-1 flex flex-col overflow-hidden">
+          <div
+            ref={editorRef}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={(e) => handleUpdateContent(e.currentTarget.innerHTML)}
+            className={cn(
+              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-gray-800/30",
+              { "opacity-60": isLoading }
+            )}
+            dangerouslySetInnerHTML={{ __html: documentContent }}
+          />
         </main>
+        
+        {/* Preview Panel */}
+        <aside className="flex flex-col border-l border-gray-700 overflow-hidden">
+            <div className="p-2 border-b border-gray-700 text-sm font-medium text-gray-400">Preview</div>
+            <div
+              ref={previewRef}
+              className={cn(
+                "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none p-8 md:p-12 overflow-y-auto bg-[#1e1e1e]",
+                { "opacity-60": isLoading }
+              )}
+              dangerouslySetInnerHTML={{ __html: documentContent }}
+            />
+        </aside>
       </div>
     </div>
   );
 }
-
-    
