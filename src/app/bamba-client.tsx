@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { generateDocumentContent } from "@/ai/flows/generate-document-content";
-import { autoFormatDocument } from "@/ai/flows/auto-format-document";
 import { enhanceDocument, EnhancementAction } from "@/ai/flows/enhance-document";
+import { PresentationView } from "@/components/ui/presentation-view";
+import { TimelineView } from "@/components/ui/timeline-view";
+import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,24 +22,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
-import { PresentationView } from "@/components/ui/presentation-view";
-import { TimelineView } from "@/components/ui/timeline-view";
-import { AutoResearcherView } from "@/components/ui/auto-researcher-view";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
-  FileText,
   Bot,
   Sparkles,
-  BookCheck,
   Loader2,
   Wand2,
   Download,
   Presentation,
   CalendarClock,
   FileEdit,
-  FlaskConical, // New icon for the researcher
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
@@ -45,18 +40,17 @@ import html2canvas from 'html2canvas';
 import { Document, Packer, Paragraph, TextRun, ImageRun, HeadingLevel } from 'docx';
 import { saveAs } from 'file-saver';
 
-// Define the types for the new data structures
+// Data structure interfaces
 interface Slide {
   title: string;
   bulletPoints: string[];
 }
-
 interface TimelineEvent {
   date: string;
   description: string;
 }
 
-// Declare MathJax on the window object for TypeScript
+// Type declaration for MathJax on the window object
 declare global {
   interface Window {
     MathJax: {
@@ -71,29 +65,31 @@ declare global {
 const initialContent = `<h1>Welcome to Bamba!</h1><p>Enter a topic on the left and click 'Generate Content' to begin your journey from idea to professional results.</p>`;
 
 export default function BambaClient() {
+  // State Management
   const [documentContent, setDocumentContent] = useState(initialContent);
   const [presentationSlides, setPresentationSlides] = useState<Slide[]>([]);
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([]);
-
   const [topic, setTopic] = useState("");
-  const [styleGuide, setStyleGuide] = useState("APA");
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTool, setActiveTool] = useState<"generate" | "format" | "enhance" | null>(null);
-
+  const [activeTool, setActiveTool] = useState<"generate" | "enhance" | null>(null);
   const [showToolbar, setShowToolbar] = useState(false);
   const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
-  const selectionRef = useRef<Range | null>(null);
 
-  const { toast } = useToast();
+  // Refs
+  const selectionRef = useRef<Range | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
 
+  // Hooks
+  const { toast } = useToast();
+
+  // Callbacks
   const typesetMath = useCallback(() => {
     if (editorRef.current && window.MathJax) {
-        window.MathJax.startup.promise.then(() => {
-            window.MathJax.typesetPromise([editorRef.current!]).catch((err: any) => {
-                console.error("MathJax typesetting failed:", err);
-            });
+      window.MathJax.startup.promise.then(() => {
+        window.MathJax.typesetPromise([editorRef.current!]).catch((err: any) => {
+          console.error("MathJax typesetting failed:", err);
         });
+      });
     }
   }, []);
 
@@ -127,6 +123,7 @@ export default function BambaClient() {
     }, 10);
   };
 
+  // Core AI Functions
   const handleGenerateContent = async () => {
     if (!topic) {
       toast({ variant: "destructive", title: "Topic is required" });
@@ -186,9 +183,154 @@ export default function BambaClient() {
     }
   };
 
-  // Placeholder for handleExportPdf and handleExportWord
-  const handleExportPdf = () => toast({title: "Coming soon!"});
-  const handleExportWord = () => toast({title: "Coming soon!"});
+  // Export Functions
+  const handleExportPdf = async () => {
+    if (!editorRef.current) return;
+    setIsLoading(true);
+    const { dismiss } = toast({ description: "Preparing document for export..." });
+
+    try {
+      if (window.MathJax) {
+        await window.MathJax.startup.promise;
+        await window.MathJax.typesetPromise([editorRef.current]);
+      }
+
+      toast({ description: "Generating high-fidelity PDF..." });
+
+      const editor = editorRef.current;
+      const canvas = await html2canvas(editor, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+      });
+
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'pt',
+        format: 'a4',
+      });
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const canvasWidth = canvas.width;
+      const canvasHeight = canvas.height;
+      const ratio = canvasWidth / pdfWidth;
+      const imgHeight = canvasHeight / ratio;
+
+      let heightLeft = imgHeight;
+      let position = 0;
+
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save("document.pdf");
+      dismiss();
+      toast({ title: "Success", description: "PDF exported successfully." });
+
+    } catch (error) {
+      console.error("Error exporting PDF:", error);
+      dismiss();
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not export PDF. Please try again.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleExportWord = async () => {
+    if (!editorRef.current) return;
+    setIsLoading(true);
+    const { dismiss } = toast({ description: "Generating professional .docx file..." });
+
+    try {
+      if (window.MathJax) {
+        await window.MathJax.startup.promise;
+        await window.MathJax.typesetPromise([editorRef.current]);
+      }
+
+      const editor = editorRef.current.cloneNode(true) as HTMLElement;
+      const docxChildren = [];
+
+      const parseNode = async (node: ChildNode): Promise<any> => {
+        switch (node.nodeName) {
+          case 'H1':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_1 });
+          case 'H2':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_2 });
+          case 'H3':
+            return new Paragraph({ text: node.textContent || '', heading: HeadingLevel.HEADING_3 });
+          case 'P': {
+            const paragraphRuns: (TextRun | ImageRun)[] = [];
+            for (const pChild of Array.from(node.childNodes)) {
+              if (pChild.nodeType === Node.TEXT_NODE) {
+                paragraphRuns.push(new TextRun(pChild.textContent || ''));
+              } else if (pChild.nodeType === Node.ELEMENT_NODE) {
+                const element = pChild as HTMLElement;
+                if (element.tagName === 'MJX-CONTAINER') {
+                  const canvas = await html2canvas(element, { backgroundColor: 'white', scale: 3 });
+                  const imageBuffer = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+                  if (imageBuffer) {
+                    const buffer = await imageBuffer.arrayBuffer();
+                    paragraphRuns.push(new ImageRun({
+                      type: 'png',
+                      data: buffer,
+                      transformation: { width: canvas.width / 3, height: canvas.height / 3 },
+                    }));
+                  }
+                } else {
+                  paragraphRuns.push(new TextRun(element.textContent || ''));
+                }
+              }
+            }
+            return new Paragraph({ children: paragraphRuns });
+          }
+          default:
+            return null;
+        }
+      };
+
+      for (const child of Array.from(editor.childNodes)) {
+        const docxChild = await parseNode(child);
+        if (docxChild) {
+          docxChildren.push(docxChild);
+        }
+      }
+
+      const doc = new Document({
+        sections: [{
+          children: docxChildren,
+        }],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      saveAs(blob, 'Bamba-Document.docx');
+
+      dismiss();
+      toast({ title: "Success", description: "Word document exported successfully." });
+
+    } catch (error) {
+      console.error("Error exporting Word document:", error);
+      dismiss();
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Could not export Word document.",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-gray-100 font-sans">
@@ -215,13 +357,13 @@ export default function BambaClient() {
           <h2 className="text-lg font-semibold flex items-center gap-2"><Bot className="w-5 h-5" /> AI Tools</h2>
           <div className="space-y-4">
             <div className="space-y-2">
-              <label htmlFor="topic">Topic</label>
+              <label htmlFor="topic" className="font-medium">Topic</label>
               <Textarea id="topic" placeholder="e.g., 'The history of artificial intelligence'" value={topic} onChange={(e) => setTopic(e.target.value)} />
             </div>
             <div className="space-y-2">
-              <label htmlFor="style-guide">Style Guide</label>
-              <Select value={styleGuide} onValueChange={setStyleGuide}>
-                <SelectTrigger id="style-guide"><SelectValue /></SelectTrigger>
+              <label htmlFor="style-guide" className="font-medium">Style Guide</label>
+              <Select>
+                <SelectTrigger id="style-guide"><SelectValue placeholder="Select style..." /></SelectTrigger>
                 <SelectContent><SelectItem value="APA">APA</SelectItem><SelectItem value="IEEE">IEEE</SelectItem></SelectContent>
               </Select>
             </div>
@@ -235,13 +377,13 @@ export default function BambaClient() {
         </aside>
 
         <main className="flex-1 flex flex-col overflow-hidden">
-          <Tabs defaultValue="editor" className="flex-1 flex flex-col">
+          <Tabs defaultValue="editor" className="flex-1 flex flex-col h-full">
             <TabsList className="shrink-0">
               <TabsTrigger value="editor"><FileEdit className="w-4 h-4 mr-2" />Editor</TabsTrigger>
               <TabsTrigger value="presentation"><Presentation className="w-4 h-4 mr-2" />Presentation</TabsTrigger>
               <TabsTrigger value="timeline"><CalendarClock className="w-4 h-4 mr-2" />Timeline</TabsTrigger>
-              <TabsTrigger value="researcher"><FlaskConical className="w-4 h-4 mr-2" />Researcher</TabsTrigger>
             </TabsList>
+
             <TabsContent value="editor" className="flex-1 relative overflow-hidden p-4">
               {showToolbar && <EnhancementToolbar style={toolbarPosition} onAction={handleEnhanceAction} isLoading={isLoading && activeTool === "enhance"} />}
               <div
@@ -259,9 +401,6 @@ export default function BambaClient() {
             </TabsContent>
             <TabsContent value="timeline" className="flex-1 overflow-hidden">
               <TimelineView events={timelineEvents} />
-            </TabsContent>
-            <TabsContent value="researcher" className="flex-1 overflow-hidden">
-              <AutoResearcherView />
             </TabsContent>
           </Tabs>
         </main>
