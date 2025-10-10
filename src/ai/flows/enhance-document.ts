@@ -37,7 +37,9 @@ const enhanceDocumentPrompt = ai.definePrompt({
   name: 'enhanceDocumentPrompt',
   input: {schema: EnhanceDocumentInputSchema},
   output: {schema: EnhanceDocumentOutputSchema},
-  prompt: `You are an AI document enhancement tool.  You will receive the current document content and specific feedback on what to improve.  Apply the feedback to the document and return the enhanced content. 
+  prompt: `You are an AI document enhancement tool. You will receive the current document content and specific feedback on what to improve. Apply the feedback to the document and return the enhanced content.
+
+The output MUST be a single, valid HTML string. Do not use markdown or backticks.
 
 Original Document:
 {{{documentContent}}}

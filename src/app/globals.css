@@ -79,8 +79,15 @@
 }
 
 @layer components {
+  /* Use a more subtle styling for code, closer to ChatGPT */
   .prose code {
-    @apply text-blue-400 rounded-md px-1 font-mono text-sm break-words;
-    background-color: transparent;
+    @apply text-white rounded-md px-1 font-mono text-sm break-words;
+    background-color: hsl(var(--secondary)); /* Subtle background */
+  }
+
+  /* Remove Tailwind's default backticks for code */
+  .prose code::before,
+  .prose code::after {
+    content: none;
   }
 }
