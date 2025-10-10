@@ -50,7 +50,7 @@ const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing
 
 
 export default function DocuCraftClient() {
-  const [documentContent, setDocumentContent] = useState("");
+  const [documentContent, setDocumentContent] = useState(initialContent);
   const [topic, setTopic] = useState("");
   const [styleGuide, setStyleGuide] = useState("APA");
   const [enhancementFeedback, setEnhancementFeedback] = useState("");
@@ -67,35 +67,34 @@ export default function DocuCraftClient() {
 
 
   useEffect(() => {
-    setDocumentContent(initialContent);
-  }, []);
-
-  useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
         editorRef.current.innerHTML = documentContent;
-    }
-  }, [documentContent]);
-
-
-  useEffect(() => {
-    const typesetMath = async () => {
-      if (editorRef.current && window.MathJax) {
-        try {
-          await window.MathJax.startup.promise;
-          await window.MathJax.typesetPromise([editorRef.current]);
-        } catch (err) {
-          console.error("MathJax typesetting failed:", err);
+        if (window.MathJax) {
+          window.MathJax.typesetPromise([editorRef.current]).catch(console.error);
         }
-      }
-    };
-    if (documentContent) {
-        typesetMath();
     }
   }, [documentContent]);
+
+
+  const typesetMath = () => {
+    if (editorRef.current && window.MathJax) {
+        window.MathJax.startup.promise.then(() => {
+            window.MathJax.typesetPromise([editorRef.current]).catch((err) => {
+                console.error("MathJax typesetting failed:", err);
+            });
+        });
+    }
+  };
 
   const handleUpdateContent = (content: string) => {
     setDocumentContent(content);
   };
+
+  useEffect(() => {
+    if(documentContent) {
+        typesetMath();
+    }
+  }, [documentContent]);
 
   const handleGenerateContent = async () => {
     if (!topic) {
@@ -200,9 +199,11 @@ export default function DocuCraftClient() {
       newContentNode.innerHTML = result.enhancedDocumentContent;
       // Insert all children of the new node at the range
       // This is to avoid inserting a span into a block element like a p
-      Array.from(newContentNode.childNodes).reverse().forEach(child => {
-          range.insertNode(child);
+      const fragment = document.createDocumentFragment();
+      Array.from(newContentNode.childNodes).forEach(child => {
+          fragment.appendChild(child);
       });
+      range.insertNode(fragment);
       
       handleUpdateContent(editorRef.current?.innerHTML || "");
       toast({ title: "Success", description: "Selection enhanced." });
@@ -306,7 +307,7 @@ export default function DocuCraftClient() {
         "xmlns:w='urn:schemas-microsoft-com:office:word' "+
         "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
         "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Lora', serif;}</style></head><body>`;
+        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair', serif;}</style></head><body>`;
     const footer = "</body></html>";
     const sourceHTML = header+content+footer;
 
@@ -449,6 +450,7 @@ export default function DocuCraftClient() {
                 "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
                 { "opacity-60": isLoading }
               )}
+              dangerouslySetInnerHTML={{ __html: documentContent }}
             />
           </div>
         </main>
