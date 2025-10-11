@@ -174,58 +174,38 @@ export default function DocuCraftClient() {
     }
   };
 
-  const handleEnhanceSelection = async () => {
-    const currentSelection = selectionRef.current;
-    if (!currentSelection || !enhancementFeedback) {
-      toast({
-        variant: "destructive",
-        title: "Selection and Feedback Required",
-        description: "Please select text and provide enhancement feedback.",
-      });
-      return;
+  const handleToolbarAction = (
+    action: "improve" | "summarize" | "shorter" | "tone",
+    option?: string
+  ) => {
+    let description = "";
+    switch (action) {
+      case "improve":
+        description = "Improving writing...";
+        break;
+      case "summarize":
+        description = "Summarizing selection...";
+        break;
+      case "shorter":
+        description = "Making selection shorter...";
+        break;
+      case "tone":
+        description = `Changing tone to ${option}...`;
+        break;
     }
-    setIsLoading(true);
-    setActiveTool("enhance");
-    const { dismiss } = toast({ description: "Enhancing selection..." });
 
-    try {
-      const selectedHtml = currentSelection.cloneContents();
-      const tempDiv = document.createElement("div");
-      tempDiv.appendChild(selectedHtml);
+    toast({
+      description,
+    });
 
-      const result = await enhanceDocument({
-        documentContent: tempDiv.innerHTML,
-        feedback: enhancementFeedback,
+    // Simulate AI processing
+    setTimeout(() => {
+      toast({
+        title: "Success",
+        description: "Action completed.",
       });
-
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        range.deleteContents();
-        const newContentFragment = range.createContextualFragment(result.enhancedDocumentContent);
-        range.insertNode(newContentFragment);
-      }
-      
-      if(editorRef.current) {
-        setDocumentContent(editorRef.current.innerHTML);
-      }
-      
       setShowToolbar(false);
-      selectionRef.current = null;
-      toast({ title: "Success", description: "Selection enhanced." });
-
-    } catch (error) {
-      console.error(error);
-      toast({
-        variant: "destructive",
-        title: "Uh oh! Something went wrong.",
-        description: "Could not enhance selection.",
-      });
-    } finally {
-      setIsLoading(false);
-      setActiveTool(null);
-      dismiss();
-    }
+    }, 1500);
   };
   
   const handleExportPdf = async () => {
@@ -439,7 +419,7 @@ export default function DocuCraftClient() {
            {showToolbar && (
             <EnhancementToolbar
               style={toolbarPosition}
-              onEnhance={handleEnhanceSelection}
+              onAction={handleToolbarAction}
               isLoading={isLoading && activeTool === "enhance"}
             />
           )}
