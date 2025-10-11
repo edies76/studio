@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 import { Toaster } from "@/components/ui/toaster"
 
 export const metadata: Metadata = {
-  title: 'bamba',
+  title: 'Bamba | AI-Powered Document Editor',
   description: 'Generate, format, and enhance documents with AI.',
 };
 
