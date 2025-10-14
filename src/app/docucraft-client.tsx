@@ -12,15 +12,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
+import AiToolsSidebar from "@/components/ai-tools-sidebar";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
@@ -51,9 +45,6 @@ const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing
 
 export default function DocuCraftClient() {
   const [documentContent, setDocumentContent] = useState(initialContent);
-  const [topic, setTopic] = useState("");
-  const [styleGuide, setStyleGuide] = useState("APA");
-  const [enhancementFeedback, setEnhancementFeedback] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<
     "generate" | "format" | "enhance" | null
@@ -77,13 +68,6 @@ export default function DocuCraftClient() {
         });
     }
   }, []);
-
-  const handleContentUpdate = useCallback((content: string) => {
-    // This function is now only called by the editor's onInput.
-    // We update the state, but we don't cause a re-render that overwrites the editor.
-    // The state and editor are now coupled in one direction inside this component.
-  }, []);
-
 
   useEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
@@ -113,65 +97,6 @@ export default function DocuCraftClient() {
         setShowToolbar(false);
       }
     }, 10);
-  };
-
-
-  const handleGenerateContent = async () => {
-    if (!topic) {
-      toast({
-        variant: "destructive",
-        title: "Topic is required",
-        description: "Please enter a topic to generate content.",
-      });
-      return;
-    }
-    setIsLoading(true);
-    setActiveTool("generate");
-    setShowToolbar(false);
-    const { dismiss } = toast({ description: "Generating content..." });
-    try {
-      const result = await generateDocumentContent({ topic, includeFormulas: true });
-      setDocumentContent(result.content);
-      toast({ title: "Success", description: "Content generated successfully." });
-    } catch (error) {
-      console.error(error);
-      toast({
-        variant: "destructive",
-        title: "Uh oh! Something went wrong.",
-        description: "Could not generate content.",
-      });
-    } finally {
-      setIsLoading(false);
-      setActiveTool(null);
-      dismiss();
-    }
-  };
-
-  const handleFormatDocument = async () => {
-    if (!editorRef.current?.innerHTML) return;
-    setIsLoading(true);
-    setActiveTool("format");
-    setShowToolbar(false);
-    const { dismiss } = toast({ description: "Formatting document..." });
-    try {
-      const result = await autoFormatDocument({
-        documentContent: editorRef.current.innerHTML,
-        styleGuide: styleGuide as "APA" | "IEEE",
-      });
-      setDocumentContent(result.formattedDocument);
-      toast({ title: "Success", description: "Document formatted." });
-    } catch (error) {
-      console.error(error);
-      toast({
-        variant: "destructive",
-        title: "Uh oh! Something went wrong.",
-        description: "Could not format document.",
-      });
-    } finally {
-      setIsLoading(false);
-      setActiveTool(null);
-      dismiss();
-    }
   };
 
   const handleToolbarAction = (
@@ -336,83 +261,8 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[500px_1fr] overflow-hidden">
-        {/* AI Tools Panel */}
-        <aside className="p-6 bg-gray-900/50 border-r border-gray-800 flex flex-col gap-6">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Bot className="w-5 h-5" /> AI Tools
-          </h2>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="topic" className="text-sm font-medium">
-                Topic
-              </label>
-              <Textarea
-                id="topic"
-                placeholder="e.g., 'The history of artificial intelligence'"
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                className="bg-gray-800 border-gray-700 h-24"
-              />
-            </div>
-            <div className="space-y-2">
-              <label htmlFor="style-guide" className="text-sm font-medium">
-                Style Guide
-              </label>
-              <Select
-                value={styleGuide}
-                onValueChange={setStyleGuide}
-              >
-                <SelectTrigger id="style-guide" className="bg-gray-800 border-gray-700">
-                  <SelectValue placeholder="Select style" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="APA">APA</SelectItem>
-                  <SelectItem value="IEEE">IEEE</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-             <div className="space-y-2">
-              <label htmlFor="enhancement-feedback" className="text-sm font-medium">
-                Enhancement Feedback
-              </label>
-              <Textarea
-                id="enhancement-feedback"
-                placeholder="e.g., 'Make this sound more professional'"
-                value={enhancementFeedback}
-                onChange={(e) => setEnhancementFeedback(e.target.value)}
-                className="bg-gray-800 border-gray-700 h-24"
-              />
-            </div>
-          </div>
-          <div className="flex flex-col gap-3 mt-auto">
-            <Button
-              onClick={handleGenerateContent}
-              disabled={isLoading}
-              className="w-full"
-            >
-              {isLoading && activeTool === "generate" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <Sparkles className="mr-2" />
-              )}
-              Generate Content
-            </Button>
-            <Button
-              onClick={handleFormatDocument}
-              disabled={isLoading}
-              variant="outline"
-              className="w-full"
-            >
-              {isLoading && activeTool === "format" ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <BookCheck className="mr-2" />
-              )}
-              Format Document
-            </Button>
-          </div>
-        </aside>
+      <div className="flex-1 grid md:grid-cols-[350px_1fr] overflow-hidden">
+        <AiToolsSidebar />
 
         {/* Editor Panel */}
         <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:p-12">
@@ -442,7 +292,7 @@ export default function DocuCraftClient() {
               }, 200);
             }}
             className={cn(
-              "prose dark:prose-invert prose-lg max-w-none w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
+              "prose dark:prose-invert prose-lg max-w-[85%] w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
             )}
           />
@@ -451,5 +301,3 @@ export default function DocuCraftClient() {
     </div>
   );
 }
-
-    
