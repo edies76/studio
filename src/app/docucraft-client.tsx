@@ -12,22 +12,18 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Textarea } from "@/components/ui/textarea";
-import { EnhancementToolbar } from "@/components/ui/enhancement-toolbar";
 import AiToolsSidebar from "@/components/ai-tools-sidebar";
+import FloatingToolbar from "@/components/ui/floating-toolbar";
+import TextSelectionIcon from "@/components/ui/text-selection-icon";
+import TextSelectionMenu from "@/components/ui/text-selection-menu";
 import { useToast } from "@/hooks/use-toast";
 import {
   FileText,
-  Bot,
-  Sparkles,
-  BookCheck,
-  Loader2,
-  Wand2,
   Download,
+  Wand2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import jsPDF from "jspdf";
-
 
 declare global {
   interface Window {
@@ -42,21 +38,15 @@ declare global {
 
 const initialContent = `<h1>The Future of Space Exploration</h1><p>Start writing your document here or generate content using the AI tools.</p>`;
 
-
 export default function DocuCraftClient() {
   const [documentContent, setDocumentContent] = useState(initialContent);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeTool, setActiveTool] = useState<
-    "generate" | "format" | "enhance" | null
-  >(null);
-
-  const [showToolbar, setShowToolbar] = useState(false);
-  const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
+  const [showIcon, setShowIcon] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   
   const selectionRef = useRef<Range | null>(null);
-
   const { toast } = useToast();
-  
   const editorRef = useRef<HTMLDivElement>(null);
 
   const typesetMath = useCallback(() => {
@@ -87,50 +77,130 @@ export default function DocuCraftClient() {
         
         if (editorRef.current) {
           const editorRect = editorRef.current.getBoundingClientRect();
-          setToolbarPosition({
-            top: rect.top - editorRect.top - 50, // Position toolbar above selection
-            left: rect.left - editorRect.left + rect.width / 2,
+          setMenuPosition({
+            top: rect.top - editorRect.top + rect.height / 2 - 16, // Center vertically
+            left: rect.right - editorRect.left + 10, // Position to the right
           });
-          setShowToolbar(true);
+          setShowIcon(true);
+          setShowMenu(false);
         }
       } else {
-        setShowToolbar(false);
+        setShowIcon(false);
+        setShowMenu(false);
       }
     }, 10);
   };
+  
+  const handleIconClick = () => {
+    if (selectionRef.current) {
+        const rect = selectionRef.current.getBoundingClientRect();
+        if (editorRef.current) {
+            const editorRect = editorRef.current.getBoundingClientRect();
+            setMenuPosition({
+                top: rect.bottom - editorRect.top + 5,
+                left: rect.left - editorRect.left + rect.width / 2 - 160, // Center horizontally
+            });
+            setShowIcon(false);
+            setShowMenu(true);
+        }
+    }
+  };
 
-  const handleToolbarAction = (
-    action: "improve" | "summarize" | "shorter" | "tone",
-    option?: string
-  ) => {
-    let description = "";
+  const handleFloatingBarAction = async (action: string) => {
+    if (action === 'grammar') {
+        handleGrammarCheck();
+    } else {
+        handleAIAction(action);
+    }
+  };
+
+  const handleGrammarCheck = async () => {
+    if (!editorRef.current) return;
+    setIsLoading(true);
+    const { dismiss } = toast({ description: "Checking grammar for the entire document..." });
+    try {
+      const result = await enhanceDocument({
+        documentContent: editorRef.current.innerText,
+        feedback: "Fix all grammar and spelling mistakes in the text. Only return the corrected text.",
+      });
+      setDocumentContent(result.enhancedDocumentContent);
+      toast({ title: "Success", description: "Grammar check completed." });
+    } catch (error) {
+      console.error(error);
+      toast({ variant: "destructive", title: "Error", description: "Could not perform grammar check." });
+    } finally {
+      setIsLoading(false);
+      dismiss();
+    }
+  };
+
+  const handleAIAction = async (action: string, value?: string) => {
+    let prompt = '';
+    const selectedText = selectionRef.current?.toString() || '';
+
+    if (!selectedText && action !== 'grammar') {
+        toast({ variant: "destructive", description: "Please select text to perform this action." });
+        return;
+    }
+
     switch (action) {
-      case "improve":
-        description = "Improving writing...";
+      case 'improve':
+        prompt = 'Improve the following text:';
         break;
-      case "summarize":
-        description = "Summarizing selection...";
+      case 'summarize':
+        prompt = 'Summarize the following text:';
         break;
-      case "shorter":
-        description = "Making selection shorter...";
+      case 'shorter':
+        prompt = 'Make the following text shorter:';
         break;
-      case "tone":
-        description = `Changing tone to ${option}...`;
+      case 'custom_prompt':
+        prompt = value || '';
         break;
     }
 
-    toast({
-      description,
-    });
+    if (!prompt) return;
 
-    // Simulate AI processing
-    setTimeout(() => {
-      toast({
-        title: "Success",
-        description: "Action completed.",
+    setIsLoading(true);
+    const { dismiss } = toast({ description: "AI is thinking..." });
+
+    try {
+      const result = await enhanceDocument({
+        documentContent: selectedText,
+        feedback: prompt,
       });
-      setShowToolbar(false);
-    }, 1500);
+
+      if (editorRef.current && selectionRef.current) {
+        const range = selectionRef.current;
+        range.deleteContents();
+        // Instead of inserting a text node, create a temporary element
+        // to parse the HTML string and insert the nodes.
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = result.enhancedDocumentContent;
+        const nodes = Array.from(tempDiv.childNodes);
+        nodes.reverse().forEach(node => range.insertNode(node));
+        // Reselect the newly inserted content
+        const newRange = document.createRange();
+        newRange.setStartBefore(nodes[nodes.length - 1]);
+        newRange.setEndAfter(nodes[0]);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(newRange);
+        selectionRef.current = newRange;
+      }
+
+      toast({ title: "Success", description: "Text updated successfully." });
+    } catch (error) {
+      console.error(error);
+      toast({
+        variant: "destructive",
+        title: "Uh oh! Something went wrong.",
+        description: "Could not enhance text.",
+      });
+    } finally {
+      setIsLoading(false);
+      setShowMenu(false);
+      dismiss();
+    }
   };
   
   const handleExportPdf = async () => {
@@ -236,7 +306,7 @@ export default function DocuCraftClient() {
         <div className="flex items-center gap-3">
           <Wand2 className="w-6 h-6 text-blue-500" />
           <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
-            bamba
+            B.A.M.B.A.I
           </h1>
         </div>
         <div className="flex items-center gap-4">
@@ -261,41 +331,29 @@ export default function DocuCraftClient() {
         </div>
       </header>
 
-      <div className="flex-1 grid md:grid-cols-[350px_1fr] overflow-hidden">
+      <div className="flex-1 grid md:grid-cols-[300px_1fr] overflow-hidden">
         <AiToolsSidebar />
 
-        {/* Editor Panel */}
-        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:p-12">
-           {showToolbar && (
-            <EnhancementToolbar
-              style={toolbarPosition}
-              onAction={handleToolbarAction}
-              isLoading={isLoading && activeTool === "enhance"}
+        <main className="relative flex-1 flex flex-col overflow-hidden p-8 md:p-12" onMouseUp={handleMouseUp}>
+          {showIcon && <TextSelectionIcon top={menuPosition.top} left={menuPosition.left} onClick={handleIconClick} />}
+          {showMenu && (
+            <TextSelectionMenu
+              top={menuPosition.top}
+              left={menuPosition.left}
+              onAction={handleAIAction}
+              onClose={() => setShowMenu(false)}
             />
           )}
           <div
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => {
-              // We don't set state here to avoid re-renders on every keystroke
-            }}
-            onMouseUp={handleMouseUp}
-            onBlur={() => {
-              // We add a small delay to allow click events on the toolbar
-              setTimeout(() => {
-                if (
-                  document.activeElement?.closest('[data-enhancement-toolbar]') === null
-                ) {
-                  setShowToolbar(false);
-                }
-              }, 200);
-            }}
             className={cn(
               "prose dark:prose-invert prose-lg max-w-[85%] w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6",
               { "opacity-60": isLoading }
             )}
           />
+          <FloatingToolbar onAction={handleFloatingBarAction} />
         </main>
       </div>
     </div>
