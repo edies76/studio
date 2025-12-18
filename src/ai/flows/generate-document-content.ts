@@ -13,12 +13,11 @@ import {z} from 'genkit';
 
 const GenerateDocumentContentInputSchema = z.object({
   topic: z.string().describe('The topic for which to generate document content.'),
-  includeFormulas: z.boolean().optional().describe('Whether to include mathematical formulas in the content.'),
 });
 export type GenerateDocumentContentInput = z.infer<typeof GenerateDocumentContentInputSchema>;
 
 const GenerateDocumentContentOutputSchema = z.object({
-  content: z.string().describe('The generated document content, including mathematical formulas if requested, formatted as a single HTML string.'),
+  content: z.string().describe('The generated document content, including mathematical formulas, formatted as a single HTML string.'),
 });
 export type GenerateDocumentContentOutput = z.infer<typeof GenerateDocumentContentOutputSchema>;
 
@@ -30,17 +29,22 @@ const prompt = ai.definePrompt({
   name: 'generateDocumentContentPrompt',
   input: {schema: GenerateDocumentContentInputSchema},
   output: {schema: GenerateDocumentContentOutputSchema},
-  prompt: `You are a document content generator. Your goal is to generate comprehensive, well-structured, and detailed content based on the provided topic.
+  prompt: `You are a document content generator. Your goal is to generate comprehensive, well-structured, and detailed content on the provided topic.
 
   The output MUST be a single, valid HTML string.
 
   - Structure the content logically with headings (<h2>, <h3>), paragraphs (<p>), and lists (<ul>, <ol>, <li>).
-  - Provide detailed explanations, examples, and definitions where appropriate.
-  - The generated content should be substantial and informative, not just a brief summary.
-  - For text that should be presented as inline code or a literal (like variable names or simple notations), use the <code>...</code> tag. For example: <code>P(x)</code>. Do NOT use markdown backticks (\`\`\`).
-  - For complex mathematical formulas, you MUST use standard LaTeX syntax. Wrap inline formulas in \\\\( ... \\\\) and block formulas in \\\\[ ... \\\\]. For example: \\\\( E = mc^2 \\\\).
-  - Use standard LaTeX commands like \\forall for "for all" and \\exists for "exists". Do not invent commands or use unicode characters directly in formulas.
-  - The entire response should be formatted as a single block of HTML content, ready to be displayed on a web page.
+  - Provide detailed explanations, examples, and definitions.
+
+  - **Crucially, for ALL mathematical notation, from single variables to complex equations, you MUST use standard LaTeX syntax.**
+    - Wrap inline formulas in \\\\( ... \\\\). For example: \\\\( E = mc^2 \\\\).
+    - Wrap block formulas (displayed on their own line) in \\\\[ ... \\\\]. For example: \\\\[ \sum_{i=1}^{n} i = \frac{n(n+1)}{2} \\\\].
+    - Use standard LaTeX commands, like \\vec{r} for vectors. Do not use unicode characters like '→' inside math delimiters.
+    - Do NOT use <code> tags for mathematical content. For instance, instead of <code>Ψ(→r, t)</code>, you must write \\\\(Ψ(\\vec{r}, t)\\\\).
+
+  - For non-mathematical code snippets or variable names, use the <code>...</code> tag. For example: <code>my_variable</code>.
+
+  - The entire response must be a single block of HTML content, ready to be displayed on a web page.
 
   Topic: {{{topic}}}
 
@@ -58,5 +62,3 @@ const generateDocumentContentFlow = ai.defineFlow(
     return output!;
   }
 );
-
-    

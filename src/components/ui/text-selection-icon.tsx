@@ -11,6 +11,7 @@ export default function TextSelectionIcon({ top, left, onClick }: TextSelectionI
     <div
       style={{ top, left }}
       onClick={onClick}
+      onMouseUp={(e) => e.stopPropagation()} // Prevent handleMouseUp from firing
       className="absolute z-50 w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center cursor-pointer shadow-lg animate-in fade-in zoom-in-95"
     >
       <Sparkles className="text-white w-5 h-5" />
