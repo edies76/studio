@@ -3,6 +3,7 @@
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import DocuCraftClient from './docucraft-client';
+import Loading from './loading'; // Import the loading component
 
 export default function Home() {
   const searchParams = useSearchParams();
@@ -37,7 +38,7 @@ export default function Home() {
 
   // Render a loading state or nothing until the initialContent is determined.
   if (initialContent === null) {
-    return null; // Or a more sophisticated loading skeleton component
+    return <Loading />; // Display the loading component
   }
 
   // Once content is ready, render the main client.
