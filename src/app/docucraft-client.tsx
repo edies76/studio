@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { generateDocumentContent } from '@/ai/flows/generate-document-content';
 import { enhanceDocument } from '@/ai/flows/enhance-document';
 import { Button } from '@/components/ui/button';
@@ -10,8 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import AiToolsSidebar from '@/components/ai-tools-sidebar';
-import FloatingToolbar from '@/components/ui/floating-toolbar';
+import RightSidebar from '@/components/right-sidebar';
 import TextSelectionIcon from '@/components/ui/text-selection-icon';
 import TextSelectionMenu from '@/components/ui/text-selection-menu';
 import { useToast } from '@/hooks/use-toast';
@@ -19,21 +18,20 @@ import {
   FileText,
   Download,
   Wand2,
-  Upload,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import jsPDF from 'jspdf';
-import * as mammoth from 'mammoth';
+
 
 declare global {
-  interface Window {
-    MathJax: {
-      typesetPromise: (elements?: HTMLElement[]) => Promise<void>;
-      startup: {
-        promise: Promise<void>;
-      };
-    };
-  }
+  interface Window { MathJax: any; } 
+}
+
+interface UploadedImage {
+  id: string;
+  name: string;
+  dataUrl: string;
+  number: number;
 }
 
 export default function DocuCraftClient({ topic }: { topic: string }) {
@@ -43,405 +41,208 @@ export default function DocuCraftClient({ topic }: { topic: string }) {
   const [showMenu, setShowMenu] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
   const [isClient, setIsClient] = useState(false);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
 
   const selectionRef = useRef<Range | null>(null);
   const { toast } = useToast();
   const editorRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const typesetMath = useCallback(() => {
     if (editorRef.current && window.MathJax) {
         window.MathJax.startup.promise.then(() => {
-            window.MathJax.typesetPromise([editorRef.current!]).catch((err) => {
-                console.error('MathJax typesetting failed:', err);
-            });
-        });
+            if (window.MathJax.startup.document.menu) {
+                window.MathJax.startup.document.menu.settings.showMathMenu = false;
+            }
+            if(editorRef.current) {
+                window.MathJax.typesetClear([editorRef.current]);
+                window.MathJax.typesetPromise([editorRef.current]).catch((err: any) => {
+                    if (!String(err).includes('restart')) {
+                        console.error('MathJax typesetting failed:', err);
+                    }
+                });
+            }
+        }).catch((err: any) => console.error('MathJax startup promise failed:', err));
     }
   }, []);
 
-  useEffect(() => {
-    const uploadedContent = sessionStorage.getItem('uploadedDocumentContent');
-    sessionStorage.removeItem('uploadedDocumentContent');
+  const processPlaceholders = useCallback((content: string, images: UploadedImage[]): string => {
+      const regex = /\[IMAGE_PLACEHOLDER: (.*?)\]/g;
+      return content.replace(regex, (match, captured) => {
+          const parts = captured.split(',').map((s: string) => s.trim());
+          const id = parts[0];
+          const size = parts.length > 1 ? parseInt(parts[1], 10) : 1;
+          const image = images.find(img => img.id === id);
 
+          if (!image) {
+              return '<span style="color:orange; border: 1px dashed orange; padding: 2px 4px; border-radius: 4px; font-family: monospace;">[Image not found]</span>';
+          }
+          const style = `width: ${size === 1 ? '100%' : size === 2 ? '75%' : size === 3 ? '50%' : size === 4 ? '35%' : '25%'}; display: block; margin: 1rem auto; border-radius: 0.5rem;`;
+          return `<img src="${image.dataUrl}" alt="${image.name || 'Uploaded image'}" style="${style}" />`;
+      });
+  }, []);
+
+  useEffect(() => {
+    if (!isClient) { setIsClient(true); return; }
     const generateInitialContent = async () => {
-      const { dismiss } = toast({ description: 'B.A.M.B.A.I. is thinking... a document will be generated soon' });
+      setIsLoading(true);
+      const { dismiss } = toast({ description: 'B.A.M.B.A.I. is preparing the document...' });
       try {
-        const result = await generateDocumentContent({ topic: uploadedContent ? `${topic}\n\n${uploadedContent}` : topic });
-        setDocumentContent(result.content);
-        toast({ title: 'Success', description: 'Document generated successfully.' });
+        const initialTopic = sessionStorage.getItem('initialTopic') || topic;
+        const initialImagesRaw = sessionStorage.getItem('initialImages');
+        let initialImages: UploadedImage[] = [];
+        if (initialImagesRaw) { try { initialImages = JSON.parse(initialImagesRaw); setUploadedImages(initialImages); } catch (e) { console.error("Failed to parse images", e); } }
+        sessionStorage.removeItem('uploadedDocumentContent');
+        const result = await generateDocumentContent({ topic: initialTopic });
+        const finalContent = processPlaceholders(result.content, initialImages);
+        setDocumentContent(finalContent);
+        toast({ title: 'Success', description: 'Document generated.' });
       } catch (error) { 
-        console.error(error);
-        toast({ variant: 'destructive', title: 'Error', description: 'Could not generate document content.' });
-        setDocumentContent(`<h1>Error generating document</h1><p>Please try again later.</p>`);
-      } finally {
-        setIsLoading(false);
-        dismiss();
-      }
+        console.error("Error generating content:", error);
+        toast({ variant: 'destructive', title: 'Error', description: 'Could not generate content.' });
+      } finally { setIsLoading(false); dismiss(); }
     };
+    generateInitialContent();
+  }, [isClient, topic, toast, processPlaceholders]);
 
-    if (topic) {
-      generateInitialContent();
-    }
-  }, [topic, toast]);
-
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
       editorRef.current.innerHTML = documentContent;
-      typesetMath();
     }
-  }, [documentContent, typesetMath]);
+  }, [documentContent]);
 
   useEffect(() => {
-    const handlePaste = (event: ClipboardEvent) => {
-      event.preventDefault();
-      const items = event.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const blob = items[i].getAsFile();
-          if (!blob) continue;
-
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const src = e.target?.result as string;
-            const img = document.createElement('img');
-            img.src = src;
-
-            const selection = window.getSelection();
-            if (!selection || selection.rangeCount === 0) return;
-
-            const range = selection.getRangeAt(0);
-            range.deleteContents();
-            range.insertNode(img);
-
-            // Move cursor after the inserted image
-            const newRange = document.createRange();
-            newRange.setStartAfter(img);
-            newRange.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-
-            // Save the updated content
-            if (editorRef.current) {
-              setDocumentContent(editorRef.current.innerHTML);
-            }
-          };
-          reader.readAsDataURL(blob);
-        }
-      }
-    };
-
-    const editor = editorRef.current;
-    if (editor) {
-      editor.addEventListener('paste', handlePaste);
+    if (!isLoading) {
+      typesetMath();
     }
-
-    return () => {
-      if (editor) {
-        editor.removeEventListener('paste', handlePaste);
-      }
-    };
-  }, [editorRef]);
+  }, [documentContent, isLoading, typesetMath]);
 
   const handleMouseUp = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.floating-toolbar-container')) {
-      return;
-    }
+    if ((e.target as HTMLElement).closest('.right-sidebar')) return;
     setTimeout(() => {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
         const range = selection.getRangeAt(0);
         selectionRef.current = range.cloneRange();
         const rect = range.getBoundingClientRect();
-        
         if (editorRef.current) {
           const editorRect = editorRef.current.getBoundingClientRect();
-          setMenuPosition({
-            top: rect.top - editorRect.top + rect.height / 2 - 16, // Center vertically
-            left: rect.right - editorRect.left + 10, // Position to the right
-          });
-          setShowIcon(true);
-          setShowMenu(false);
+          setMenuPosition({ top: rect.top - editorRect.top + rect.height / 2 - 16, left: rect.right - editorRect.left + 10 });
+          setShowIcon(true); setShowMenu(false);
         }
-      } else {
-        setShowIcon(false);
-        setShowMenu(false);
-      }
+      } else { setShowIcon(false); setShowMenu(false); }
     }, 10);
   };
   
   const handleIconClick = () => {
-    if (selectionRef.current) {
-        const rect = selectionRef.current.getBoundingClientRect();
-        if (editorRef.current) {
-            const editorRect = editorRef.current.getBoundingClientRect();
-            setMenuPosition({
-                top: rect.bottom - editorRect.top + 5,
-                left: rect.left - editorRect.left + rect.width / 2 - 160, // Center horizontally
-            });
-            setShowIcon(false);
-            setShowMenu(true);
-        }
+    if (selectionRef.current && editorRef.current) {
+      const rect = selectionRef.current.getBoundingClientRect();
+      const editorRect = editorRef.current.getBoundingClientRect();
+      setMenuPosition({ top: rect.bottom - editorRect.top + 5, left: rect.left - editorRect.left + rect.width / 2 - 160 });
+      setShowIcon(false); setShowMenu(true);
     }
   };
 
-  const handleFloatingBarAction = async (action: string) => {
-    if (!editorRef.current) return;
-
-    let feedback = '';
-    let toastDescription = 'AI is enhancing the document...';
-
-    switch (action) {
-      case 'grammar':
-        feedback = 'Fix all grammar and spelling mistakes in the text. Only return the corrected text.';
-        toastDescription = 'Checking grammar for the entire document...';
-        break;
-      case 'suggest-changes':
-         feedback = 'Act as an editor. Review the following document and provide a revised version with improvements to clarity, flow, and overall quality. Only return the improved text.';
-         toastDescription = 'AI is suggesting changes...';
-        break;
-      case 'improve':
-        feedback = 'Improve the entire document, making it more engaging and clear.';
-        break;
-      case 'shorter':
-        feedback = 'Make the entire document shorter and more concise.';
-        break;
-      case 'expand':
-        feedback = 'Expand on the content of the entire document, adding more detail and explanation.';
-        break;
-      default:
-        console.warn(`Unknown floating bar action: ${action}`);
-        return;
-    }
-
-    setIsLoading(true);
-    const { dismiss } = toast({ description: toastDescription });
-    try {
-      const result = await enhanceDocument({
-        documentContent: editorRef.current.innerText,
-        feedback: feedback,
-      });
-      setDocumentContent(result.enhancedDocumentContent);
-      toast({ title: 'Success', description: 'Document enhancement completed.' });
-    } catch (error) {
-      console.error(error);
-      toast({ variant: 'destructive', title: 'Error', description: 'Could not enhance the document.' });
-    } finally {
-      setIsLoading(false);
-      dismiss();
-    }
+  const handleImageUpload = (files: File[]) => {
+    const newImagesInfo = files.map((file, index) => ({ id: crypto.randomUUID(), name: file.name, number: uploadedImages.length + index + 1 }));
+    newImagesInfo.forEach((imageInfo, index) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        setUploadedImages(prev => { const updated = [...prev, { ...imageInfo, dataUrl }]; sessionStorage.setItem('initialImages', JSON.stringify(updated)); return updated; });
+      };
+      reader.readAsDataURL(files[index]);
+    });
+    toast({ title: 'Success', description: `Uploaded ${files.length} image(s).` });
   };
 
-  const handleAIAction = async (action: string, value?: string) => {
-    let prompt = '';
-    const selectedText = selectionRef.current?.toString() || '';
-
-    if (!selectedText) {
-        toast({ variant: 'destructive', description: 'Please select text to perform this action.' });
-        return;
-    }
-
-    switch (action) {
-      case 'improve':
-        prompt = 'Improve the following text:';
-        break;
-      case 'summarize':
-        prompt = 'Summarize the following text:';
-        break;
-      case 'shorter':
-        prompt = 'Make the following text shorter:';
-        break;
-      case 'expand':
-        prompt = 'Expand on the following text:';
-        break;
-      case 'custom_prompt':
-        prompt = value || '';
-        break;
-    }
-
-    if (!prompt) return;
-
-    setIsLoading(true);
-    const { dismiss } = toast({ description: 'AI is thinking...' });
-
+  const handleChatMessage = async (message: string, images: UploadedImage[]): Promise<string | null> => {
+    if (!editorRef.current) return null;
+    const { dismiss } = toast({ description: 'AI is updating the document...' });
     try {
-      const result = await enhanceDocument({
-        documentContent: selectedText,
-        feedback: prompt,
-      });
-
-      if (editorRef.current && selectionRef.current) {
-        const range = selectionRef.current;
-        range.deleteContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = result.enhancedDocumentContent;
-        const nodes = Array.from(tempDiv.childNodes);
-        nodes.reverse().forEach(node => range.insertNode(node));
-        const newRange = document.createRange();
-        newRange.setStartBefore(nodes[nodes.length - 1]);
-        newRange.setEndAfter(nodes[0]);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(newRange);
-        selectionRef.current = newRange;
-      }
-
-      toast({ title: 'Success', description: 'Text updated successfully.' });
-    } catch (error) {
-      console.error(error);
-      toast({
-        variant: 'destructive',
-        title: 'Uh oh! Something went wrong.',
-        description: 'Could not enhance text.',
-      });
-    } finally {
-      setIsLoading(false);
-      setShowMenu(false);
-      dismiss();
-    }
+      const result = await enhanceDocument({ documentContent: editorRef.current.innerHTML, feedback: `USER REQUEST: "${message}"` });
+      const finalContent = processPlaceholders(result.enhancedDocumentContent, images);
+      setDocumentContent(finalContent);
+      return "I've updated the document as requested.";
+    } catch (error) { console.error(error); return "I encountered an error."; } 
+    finally { dismiss(); }
   };
   
+  const handleReanalyze = () => {
+      if (!editorRef.current) { toast({ variant: 'destructive', title: 'Error', description: 'Editor not available.'}); return; }
+      const currentContent = editorRef.current.innerHTML;
+      const processedContent = processPlaceholders(currentContent, uploadedImages);
+      setDocumentContent(processedContent);
+      toast({ title: 'Success', description: 'Document re-analyzed and images updated.' });
+  };
+
+  const handleAIAction = async (action: string, value?: string) => { /* Placeholder */ };
+
   const handleExportPdf = async () => {
-    if (!editorRef.current) return;
-    setIsLoading(true);
-    const { dismiss } = toast({ description: 'Exporting PDF...' });
-  
+    if (!editorRef.current) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Editor is not available.' });
+      return;
+    }
+    const { dismiss } = toast({ description: 'Exporting to PDF...' });
     try {
-      if (window.MathJax) {
-        await window.MathJax.startup.promise;
-        await window.MathJax.typesetPromise([editorRef.current]);
-      }
-  
-      const pdf = new jsPDF({
+      const doc = new jsPDF({
         orientation: 'p',
-        unit: 'pt',
+        unit: 'px',
         format: 'a4',
+        putOnlyUsedFonts: true,
+        floatPrecision: 16 
       });
-  
-      const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
-      document.body.appendChild(contentToExport);
-  
-      contentToExport.style.backgroundColor = 'white';
-      contentToExport.style.padding = '35px';
-      contentToExport.style.width = '525pt';
-      contentToExport.style.fontFamily = 'Inter, sans-serif';
-      
-      Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
-        const htmlEl = el as HTMLElement;
-        htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Inter, sans-serif';
-      });
-      
-      await pdf.html(contentToExport, {
+      await doc.html(editorRef.current, {
         callback: function (doc) {
           doc.save('document.pdf');
-          document.body.removeChild(contentToExport);
           dismiss();
-          toast({ title: 'Success', description: 'PDF exported successfully.' });
+          toast({ title: 'Success', description: 'Document exported to PDF.' });
         },
-        width: 525,
-        windowWidth: contentToExport.scrollWidth,
-        autoPaging: 'text'
+        margin: [10, 10, 10, 10],
+        autoPaging: 'text',
+        width: 425, // A4 width in px (approx)
+        windowWidth: editorRef.current.scrollWidth,
       });
-  
     } catch (error) {
-      console.error('Error exporting PDF:', error);
+      console.error("Error exporting to PDF:", error);
       dismiss();
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Could not export PDF. Please try again.',
-      });
-    } finally {
-      setIsLoading(false);
+      toast({ variant: 'destructive', title: 'Error', description: 'Could not export to PDF.' });
     }
   };
-  
+
   const handleExportWord = () => {
-    if (!editorRef.current) return;
-    let content = editorRef.current.innerHTML;
+    if (!editorRef.current) {
+      toast({ variant: 'destructive', title: 'Error', description: 'Editor is not available.' });
+      return;
+    }
+    const { dismiss } = toast({ description: 'Exporting to Word...' });
+    try {
+        const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
+            "xmlns:w='urn:schemas-microsoft-com:office:word' "+
+            "xmlns='http://www.w3.org/TR/REC-html40'>"+
+            "<head><meta charset='utf-8'><title>Export HTML to Word Document</title></head><body>";
+        const content = editorRef.current.innerHTML;
+        const footer = "</body></html>";
+        const sourceHTML = header + content + footer;
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = content;
-    const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
-    mathJaxElements.forEach((mjx) => {
-        const mathml = mjx.querySelector('math');
-        if(mathml) {
-            const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
-            const parent = mjx.parentElement;
-            if(parent) {
-                const span = document.createElement('span');
-                span.innerHTML = oMath;
-                if (span.firstChild) {
-                  parent.replaceChild(span.firstChild, mjx);
-                }
-            }
-        }
-    });
+        const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+        const fileDownload = document.createElement("a");
+        document.body.appendChild(fileDownload);
+        fileDownload.href = source;
+        fileDownload.download = 'document.doc';
+        fileDownload.click();
+        document.body.removeChild(fileDownload);
 
-    content = tempDiv.innerHTML;
-
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
-        "xmlns:w='urn:schemas-microsoft-com:office:word' "+
-        "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
-        "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair Display', serif;}</style></head><body>`;
-    const footer = '</body></html>';
-    const sourceHTML = header+content+footer;
-
-    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
-    const fileDownload = document.createElement('a');
-    document.body.appendChild(fileDownload);
-    fileDownload.href = source;
-    fileDownload.download = 'document.doc';
-    fileDownload.click();
-    document.body.removeChild(fileDownload);
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const fileContent = e.target?.result;
-        if (fileContent) {
-          if (file.name.endsWith('.docx')) {
-            try {
-              const mammothResult = await mammoth.convertToHtml({ arrayBuffer: fileContent as ArrayBuffer });
-              if (editorRef.current) {
-                editorRef.current.innerHTML += mammothResult.value;
-              }
-            } catch (error) {
-              console.error('Error converting .docx to HTML:', error);
-            }
-          } else if (file.type.startsWith('image/')) {
-            if (editorRef.current) {
-              editorRef.current.innerHTML += `<img src="${fileContent}" />`;
-            }
-          } else {
-            if (editorRef.current) {
-              editorRef.current.innerHTML += fileContent as string;
-            }
-          }
-        }
-      };
-      if (file.name.endsWith('.docx')) {
-        reader.readAsArrayBuffer(file);
-      } else if (file.type.startsWith('image/')) {
-        reader.readAsDataURL(file);
-      } else {
-        reader.readAsText(file);
-      }
+        dismiss();
+        toast({ title: 'Success', description: 'Document exported to Word.' });
+    } catch (error) {
+        console.error("Error exporting to Word:", error);
+        dismiss();
+        toast({ variant: 'destructive', title: 'Error', description: 'Could not export to Word.' });
     }
   };
 
   if (!isClient) {
-    return null;
+    return <div className="flex h-screen w-full items-center justify-center bg-gray-900"><p className="text-white">Loading Editor...</p></div>;
   }
 
   return (
@@ -449,69 +250,42 @@ export default function DocuCraftClient({ topic }: { topic: string }) {
       <header className='flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0'>
         <div className='flex items-center gap-3'>
           <Wand2 className='w-6 h-6 text-blue-500' />
-          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
-            B.A.M.B.A.I
-          </h1>
+          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">B.A.M.B.A.I</h1>
         </div>
         <div className='flex items-center gap-4'>
-          <Button variant='outline' className='border-gray-700' onClick={() => fileInputRef.current?.click()}>
-            Upload
-            <Upload className='w-4 h-4 ml-2' />
-          </Button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            className="hidden"
-            accept=".txt,.md,.html,.docx,image/*"
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant='outline' className='border-gray-700'>
-                Export
-                <Download className='w-4 h-4 ml-2' />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={handleExportPdf}>
-                <FileText className='w-4 h-4 mr-2' />
-                Export to PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleExportWord}>
-                <FileText className='w-4 h-4 mr-2' />
-                Export to Word
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <DropdownMenu><DropdownMenuTrigger asChild><Button variant='outline' className='border-gray-700'><Download className='w-4 h-4 mr-2' />Export</Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuItem onClick={handleExportPdf}><FileText className='w-4 h-4 mr-2' />Export to PDF</DropdownMenuItem><DropdownMenuItem onClick={handleExportWord}><FileText className='w-4 h-4 mr-2' />Export to Word</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
         </div>
       </header>
 
-      <div className='flex-1 grid md:grid-cols-[300px_1fr] overflow-hidden'>
-        <AiToolsSidebar />
-
-        <main className='relative flex-1 flex flex-col overflow-hidden p-8 md:p-12' onMouseUp={handleMouseUp}>
-          {showIcon && <TextSelectionIcon top={menuPosition.top} left={menuPosition.left} onClick={handleIconClick} />}
-          {showMenu && (
-            <TextSelectionMenu
-              top={menuPosition.top}
-              left={menuPosition.left}
-              onAction={handleAIAction}
-              onClose={() => setShowMenu(false)}
-            />
-          )}
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            className={cn(
-              'prose dark:prose-invert prose-lg max-w-[85%] w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6',
-              { 'opacity-60': isLoading }
+      <div className='flex-1 grid md:grid-cols-[1fr_400px] min-h-0'>
+        <main className='relative flex-1 flex flex-col p-8 md:p-12 overflow-y-auto' onMouseUp={handleMouseUp}>
+            {isLoading ? (
+                <div className="flex items-center justify-center h-full"><p>Generating document...</p></div>
+            ) : (
+                <>
+                    {showIcon && <TextSelectionIcon top={menuPosition.top} left={menuPosition.left} onClick={handleIconClick} />}
+                    {showMenu && <TextSelectionMenu top={menuPosition.top} left={menuPosition.left} onAction={handleAIAction} onClose={() => setShowMenu(false)} />}
+                    <style>{`.prose img { margin: 2em auto; border-radius: 0.5rem; }`}</style>
+                    <div
+                        ref={editorRef}
+                        contentEditable
+                        suppressContentEditableWarning
+                        className={cn('prose dark:prose-invert prose-lg max-w-full w-full h-full focus:outline-none bg-gray-800/30 rounded-lg p-6 overflow-y-auto')}
+                    />
+                </>
             )}
-          />
-          <div className="floating-toolbar-container">
-            <FloatingToolbar onAction={handleFloatingBarAction} />
-          </div>
         </main>
+        
+        <div className="right-sidebar h-full">
+           <RightSidebar 
+              initialPrompt={sessionStorage.getItem('initialTopic') || topic}
+              onChatMessage={handleChatMessage}
+              uploadedImages={uploadedImages}
+              onImageUpload={handleImageUpload}
+              onReanalyze={handleReanalyze}
+            />
+        </div>
+
       </div>
     </div>
   );
