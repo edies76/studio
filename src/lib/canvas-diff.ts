@@ -1,6 +1,6 @@
 import { diffPlain, htmlToPlain, type DiffLine } from '@/lib/html-diff';
 
-/** Build a clear HTML overlay: red strikethrough removals + green additions */
+/** Build canvas overlay: light-red underline removals + green keep/additions */
 export function buildCanvasDiffHtml(beforeHtml: string, afterHtml: string): string {
   const lines = diffPlain(htmlToPlain(beforeHtml || ''), htmlToPlain(afterHtml || ''));
   if (!lines.length) {
@@ -14,19 +14,22 @@ export function buildCanvasDiffHtml(beforeHtml: string, afterHtml: string): stri
 
   const flushSame = () => {
     if (!bufSame.length) return;
-    parts.push(`<div class="studio-diff-same">${escape(bufSame.join(' '))}</div>`);
+    // Unchanged stays readable (kept)
+    parts.push(`<p class="studio-diff-same">${escape(bufSame.join(' '))}</p>`);
     bufSame = [];
   };
   const flushChange = () => {
     if (bufDel.length) {
+      // Soft red + underline = will be removed
       parts.push(
-        `<div class="studio-diff-del"><span class="studio-diff-badge">−</span> ${escape(bufDel.join(' '))}</div>`,
+        `<p class="studio-diff-del"><span class="studio-diff-del-text">${escape(bufDel.join(' '))}</span></p>`,
       );
       bufDel = [];
     }
     if (bufAdd.length) {
+      // Green highlight = will remain / be added
       parts.push(
-        `<div class="studio-diff-add"><span class="studio-diff-badge">+</span> ${escape(bufAdd.join(' '))}</div>`,
+        `<p class="studio-diff-add"><span class="studio-diff-add-text">${escape(bufAdd.join(' '))}</span></p>`,
       );
       bufAdd = [];
     }

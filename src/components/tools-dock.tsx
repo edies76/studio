@@ -17,14 +17,16 @@ type Props = {
   busy?: boolean;
   hasSelection?: boolean;
   onAction: (action: OrbitAction, intensity: number) => void;
+  /** Sit beside floating composer instead of absolute bottom-right */
+  variant?: 'floating' | 'inline';
 };
 
 const ACTIONS: { id: OrbitAction; label: string; icon: ReactNode }[] = [
-  { id: 'improve', label: 'Improve', icon: <Wand2 className="h-5 w-5" strokeWidth={1.75} /> },
-  { id: 'shorter', label: 'Shorter', icon: <Minimize2 className="h-5 w-5" strokeWidth={1.75} /> },
-  { id: 'expand', label: 'Expand', icon: <Maximize2 className="h-5 w-5" strokeWidth={1.75} /> },
-  { id: 'grammar', label: 'Grammar', icon: <SpellCheck className="h-5 w-5" strokeWidth={1.75} /> },
-  { id: 'academic', label: 'Academic', icon: <GraduationCap className="h-5 w-5" strokeWidth={1.75} /> },
+  { id: 'improve', label: 'Improve', icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'shorter', label: 'Shorter', icon: <Minimize2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'expand', label: 'Expand', icon: <Maximize2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'grammar', label: 'Grammar', icon: <SpellCheck className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'academic', label: 'Academic', icon: <GraduationCap className="h-4 w-4" strokeWidth={1.75} /> },
 ];
 
 const LEVELS = [
@@ -35,8 +37,13 @@ const LEVELS = [
   { value: 10, tip: 'Muy poco' },
 ];
 
-/** White capsule, black icons — hover like format toolbar; click outside collapses */
-export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
+/** Tools capsule — inline next to floating composer (default) or legacy floating */
+export default function ToolsDock({
+  busy,
+  hasSelection,
+  onAction,
+  variant = 'inline',
+}: Props) {
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<OrbitAction | null>(null);
   const [intensity, setIntensity] = useState(50);
@@ -64,7 +71,6 @@ export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
       const t = e.target as Node;
       if (rootRef.current && !rootRef.current.contains(t)) reset();
     };
-    // capture so it wins over selection handlers
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
   }, [open, action]);
@@ -79,25 +85,25 @@ export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
   const expanded = open || Boolean(action);
 
   const cell =
-    'relative flex h-14 w-14 shrink-0 items-center justify-center text-neutral-800 transition-all duration-200 ease-out';
+    'relative flex h-10 w-10 shrink-0 items-center justify-center text-neutral-800 transition-all duration-200 ease-out';
 
-  return (
+  const shell = (
     <div
       ref={rootRef}
       data-selection-ui
-      className="pointer-events-none absolute bottom-10 right-5 z-40"
       title={hasSelection ? 'Tools · selección' : 'Tools · documento'}
+      className={cn(variant === 'floating' && 'pointer-events-none absolute bottom-10 right-5 z-40')}
     >
       <div
         className={cn(
-          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-xl shadow-black/10 transition-all duration-300 ease-out',
-          expanded ? 'rounded-[32px]' : 'rounded-full',
+          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-lg shadow-black/8 transition-all duration-300 ease-out',
+          expanded ? 'rounded-[28px]' : 'rounded-full',
         )}
       >
         <div
           className={cn(
             'flex flex-col items-center overflow-hidden transition-all duration-300 ease-out',
-            expanded ? 'max-h-[400px] opacity-100' : 'max-h-0 opacity-0',
+            expanded ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0',
           )}
         >
           {!action &&
@@ -119,8 +125,8 @@ export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
               >
                 <span
                   className={cn(
-                    'absolute inset-1.5 rounded-full transition-all duration-200 ease-out',
-                    hoverKey === a.id ? 'bg-neutral-100 scale-100' : 'bg-transparent scale-90',
+                    'absolute inset-1 rounded-full transition-all duration-200 ease-out',
+                    hoverKey === a.id ? 'scale-100 bg-neutral-100' : 'scale-90 bg-transparent',
                   )}
                 />
                 <span className="relative z-10">{a.icon}</span>
@@ -144,14 +150,14 @@ export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
                 >
                   <span
                     className={cn(
-                      'absolute inset-1.5 rounded-full transition-all duration-200',
+                      'absolute inset-1 rounded-full transition-all duration-200',
                       hoverKey === `i-${lv.value}` || active ? 'bg-neutral-100' : 'bg-transparent',
                     )}
                   />
                   <span
                     className={cn(
                       'relative z-10 rounded-full bg-neutral-800 transition-all duration-200',
-                      active ? 'h-3.5 w-3.5' : 'h-2 w-2 opacity-40',
+                      active ? 'h-3 w-3' : 'h-1.5 w-1.5 opacity-40',
                     )}
                   />
                 </button>
@@ -180,21 +186,23 @@ export default function ToolsDock({ busy, hasSelection, onAction }: Props) {
             setOpen((v) => !v);
           }}
           className={cn(
-            'relative flex h-16 w-16 shrink-0 items-center justify-center text-neutral-800',
+            'relative flex h-11 w-11 shrink-0 items-center justify-center text-neutral-800',
             busy && 'opacity-50',
           )}
         >
           <span
             className={cn(
-              'absolute inset-1.5 rounded-full transition-all duration-200',
+              'absolute inset-1 rounded-full transition-all duration-200',
               hoverKey === 'main' || action ? 'bg-neutral-100' : 'bg-transparent',
             )}
           />
           <span className="relative z-10">
-            {selected ? selected.icon : <Wrench className="h-6 w-6" strokeWidth={1.75} />}
+            {selected ? selected.icon : <Wrench className="h-4.5 w-4.5" strokeWidth={1.75} />}
           </span>
         </button>
       </div>
     </div>
   );
+
+  return shell;
 }

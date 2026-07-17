@@ -15,11 +15,10 @@ import StudioChat, {
   type ChatMessage,
   type PendingEdit,
 } from '@/components/studio-chat';
-import SelectionPrompt from '@/components/selection-prompt';
 import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileText, History, MessageSquareText, PanelRightClose } from 'lucide-react';
+import { Download, FileText, History, PanelRightClose } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
@@ -33,10 +32,8 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
-import CanvasReviewBar from '@/components/canvas-review-bar';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
-import ZoomControl from '@/components/zoom-control';
 import jsPDF from 'jspdf';
 import mammoth from 'mammoth';
 
@@ -87,11 +84,11 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [history, setHistory] = useState<string[]>(['']);
   const [historyIndex, setHistoryIndex] = useState(0);
 
-  const [selOpen, setSelOpen] = useState(false);
-  const [selPos, setSelPos] = useState({ top: 0, left: 0 });
   const [hasSelection, setHasSelection] = useState(false);
+  const [composerForceExpand, setComposerForceExpand] = useState(0);
   const selectionRef = useRef<Range | null>(null);
   const selectedTextRef = useRef('');
+  const abortRef = useRef<AbortController | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -364,9 +361,13 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       ]);
 
       try {
+        abortRef.current?.abort();
+        const ac = new AbortController();
+        abortRef.current = ac;
         const res = await fetch('/api/draft', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: ac.signal,
           body: JSON.stringify({ prompt: p, model }),
         });
         if (!res.ok || !res.body) throw new Error('Draft failed');
@@ -494,12 +495,16 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       setMessages(nextMessages);
       setChatInput('');
       setIsBusy(true);
-      setActivity([{ id: uid(), label: 'Pensando…', state: 'active' }]);
+      setActivity([{ id: uid(), label: 'Recogiendo información…', state: 'active' }]);
 
       const assistantId = uid();
       setMessages((m) => [...nextMessages, { id: assistantId, role: 'assistant', content: '', streaming: true }]);
 
       try {
+        abortRef.current?.abort();
+        const ac = new AbortController();
+        abortRef.current = ac;
+
         let assignmentContext = '';
         // Never inject old Gauss/taller brief unless user explicitly loaded a guide
         try {
@@ -529,6 +534,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         const res = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: ac.signal,
           body: JSON.stringify({
             messages: nextMessages.map(({ role, content }) => ({
               role,
@@ -675,17 +681,28 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           }
         }
       } catch (e: any) {
-        toast({ variant: 'destructive', title: 'Chat failed', description: e?.message });
-        setMessages((ms) =>
-          ms.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: 'No pude completar eso. Probá de nuevo.', streaming: false }
-              : m,
-          ),
-        );
+        if (e?.name === 'AbortError') {
+          setMessages((ms) =>
+            ms.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: m.content || 'Detenido.', streaming: false }
+                : m,
+            ),
+          );
+        } else {
+          toast({ variant: 'destructive', title: 'Chat failed', description: e?.message });
+          setMessages((ms) =>
+            ms.map((m) =>
+              m.id === assistantId
+                ? { ...m, content: 'No pude completar eso. Probá de nuevo.', streaming: false }
+                : m,
+            ),
+          );
+        }
       } finally {
         setIsBusy(false);
         setActivity([]);
+        abortRef.current = null;
       }
     },
     [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks],
@@ -714,51 +731,38 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const handleMouseUp = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('[data-selection-ui]')) return;
     if ((e.target as HTMLElement).closest('[data-block-edit]')) return;
+    if ((e.target as HTMLElement).closest('.floating-composer-shell')) return;
     requestAnimationFrame(() => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.rangeCount || !canvasRef.current) {
-        setSelOpen(false);
-        setHasSelection(false);
-        selectedTextRef.current = '';
+        // Don't wipe selection if user clicked the composer
         return;
       }
       if (!selectionInCanvas(sel.anchorNode)) {
-        setSelOpen(false);
-        setHasSelection(false);
         return;
       }
       const range = sel.getRangeAt(0);
       selectionRef.current = range.cloneRange();
       selectedTextRef.current = sel.toString();
       if (!selectedTextRef.current.trim()) {
-        setSelOpen(false);
         setHasSelection(false);
         return;
       }
-      const rect = range.getBoundingClientRect();
-      const host = paperHostRef.current;
-      if (!host) return;
-      const hostRect = host.getBoundingClientRect();
-      setSelPos({
-        top: Math.min(Math.max(56, rect.bottom - hostRect.top + 10), hostRect.height - 140),
-        left: Math.min(
-          Math.max(160, rect.left - hostRect.left + rect.width / 2),
-          hostRect.width - 160,
-        ),
-      });
       setHasSelection(true);
-      setSelOpen(true);
+      // Open floating composer — no floating SelectionPrompt
+      setComposerForceExpand((n) => n + 1);
+      if (chatCollapsed === false) {
+        /* panel open is fine too */
+      }
     });
   };
 
-  const handleSelectionPrompt = (prompt: string) => {
-    const selected = selectedTextRef.current;
-    if (!selected) return;
-    setSelOpen(false);
-    void runChat(
-      `${prompt}\n\n"""${selected}"""\n\nPropose the edit with propose_edit (replace_selection).`,
-      { selectedText: selected },
-    );
+  const clearSelectionContext = () => {
+    setHasSelection(false);
+    selectedTextRef.current = '';
+    selectionRef.current = null;
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
   };
 
   const handleToolsAction = (action: OrbitAction, intensity: number) => {
@@ -771,16 +775,35 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       academic: 'More academic',
     };
     if (selected) {
-      void runChat(
-        `${labels[action]} this selection at intensity ${intensity}%.\n\n"""${selected}"""\n\nPropose the edit with propose_edit (replace_selection).`,
-        { selectedText: selected, intensity },
-      );
+      // Selection is in API context — no need to quote in the user message
+      void runChat(`${labels[action]} the selected text at intensity ${intensity}%. Propose with propose_edit (replace_selection).`, {
+        selectedText: selected,
+        intensity,
+      });
     } else {
       void runChat(
         `${labels[action]} the entire document at intensity ${intensity}%. Propose with propose_edit (replace_document).`,
         { intensity },
       );
     }
+  };
+
+  const handleComposerSend = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const selected = selectedTextRef.current.trim();
+    if (selected) {
+      void runChat(text, { selectedText: selected });
+    } else {
+      void runChat(text);
+    }
+  };
+
+  const handleStopAgent = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsBusy(false);
+    setActivity([]);
   };
 
   const acceptEdit = (id: string) => {
@@ -974,25 +997,56 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setIsBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+      // Convert DOCX → HTML (mammoth). This is an editable import, not a binary .docx viewer.
+      const result = await mammoth.convertToHtml(
+        { arrayBuffer: buf },
+        {
+          styleMap: [
+            "p[style-name='Heading 1'] => h1:fresh",
+            "p[style-name='Heading 2'] => h2:fresh",
+            "p[style-name='Heading 3'] => h3:fresh",
+            "p[style-name='Title'] => h1:fresh",
+          ],
+        },
+      );
       const html = sanitizeDocumentHtml(result.value || '<p><br></p>');
       const base = name.replace(/\.docx$/i, '').trim() || 'Documento importado';
       setDocumentTitle(base.slice(0, 80));
       applyHtml(html, true, 'cascade');
+
+      const msgs = (result.messages || []).map((m: { message?: string; type?: string }) =>
+        String(m.message || m.type || 'aviso'),
+      );
+      const summary =
+        msgs.length === 0
+          ? `Importado “${base}” · listo para editar`
+          : `Importado “${base}” · ${msgs.length} aviso(s): ${msgs.slice(0, 3).join(' · ')}${msgs.length > 3 ? '…' : ''}`;
+
       toast({
-        title: 'Word importado',
-        description: result.messages?.length
-          ? `${result.messages.length} avisos de conversión`
-          : 'Listo para editar en el lienzo',
+        title: msgs.length ? 'Word importado (con avisos)' : 'Word importado',
+        description: summary.slice(0, 220),
       });
       pushEvent(
         {
           type: 'local_edit',
           title: 'Import .docx',
-          summary: base.slice(0, 48),
+          summary: summary.slice(0, 160),
         },
         true,
       );
+      // Also surface in chat history so user can open panel and see detail
+      setMessages((ms) => [
+        ...ms,
+        {
+          id: uid(),
+          role: 'assistant',
+          content:
+            msgs.length === 0
+              ? `Importé **${base}** al lienzo. Es un documento editable (HTML desde .docx), no un visor binario de Word.`
+              : `Importé **${base}**. Avisos de conversión (no bloquean la edición):\n${msgs.map((m) => `• ${m}`).join('\n')}`,
+          streaming: false,
+        },
+      ]);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -1080,12 +1134,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const handleEditBlock = (_html: string, plain: string) => {
     selectedTextRef.current = plain;
     setHasSelection(Boolean(plain.trim()));
-    const host = paperHostRef.current;
-    if (host) {
-      const r = host.getBoundingClientRect();
-      setSelPos({ top: Math.min(r.height * 0.35, 220), left: r.width / 2 });
-    }
-    setSelOpen(true);
+    setComposerForceExpand((n) => n + 1);
   };
 
   if (!isClient) {
@@ -1233,75 +1282,45 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               </div>
             </div>
 
-            {selOpen && (
-              <SelectionPrompt
-                top={selPos.top}
-                left={selPos.left}
-                busy={isBusy}
-                snippet={selectedTextRef.current}
-                onSubmit={handleSelectionPrompt}
-                onClose={() => setSelOpen(false)}
-              />
-            )}
-
-            <ToolsDock
+            {/* Floating agent: tools left + composer + zoom line + review (always on canvas) */}
+            <FloatingComposer
+              value={chatInput}
+              onChange={setChatInput}
+              onSend={handleComposerSend}
               busy={isBusy}
+              busyLabel={
+                activity.find((a) => a.state === 'active')?.label ||
+                (isBusy ? 'Recogiendo información…' : null)
+              }
+              onStop={handleStopAgent}
+              toolLogs={floatingLogs}
+              statusLine={floatingStatus}
               hasSelection={hasSelection}
-              onAction={handleToolsAction}
+              selectionPreview={selectedTextRef.current}
+              onClearSelection={clearSelectionContext}
+              reviews={pendingList}
+              activeReviewId={pending?.id}
+              onSelectReview={setActiveEditId}
+              onAcceptReview={acceptEdit}
+              onRejectReview={rejectEdit}
+              onAcceptAll={acceptAllEdits}
+              onRejectAll={rejectAllEdits}
+              zoom={zoom}
+              onZoom={setZoom}
+              forceExpandKey={composerForceExpand}
+              onOpenPanel={() => {
+                setChatCollapsed(false);
+                setChatWidth((w) => Math.max(w, 360));
+              }}
+              toolsSlot={
+                <ToolsDock
+                  busy={isBusy}
+                  hasSelection={hasSelection}
+                  onAction={handleToolsAction}
+                  variant="inline"
+                />
+              }
             />
-
-            {/* Zoom — also Ctrl+ / Ctrl- / Ctrl0 (capture phase) */}
-            <div
-              className={cn(
-                'pointer-events-none absolute z-40',
-                chatCollapsed ? 'bottom-28 right-6' : 'bottom-4 right-24',
-              )}
-            >
-              <ZoomControl zoom={zoom} onZoom={setZoom} />
-            </div>
-
-            {/* Floating composer when panel collapsed */}
-            {chatCollapsed && (
-              <FloatingComposer
-                value={chatInput}
-                onChange={setChatInput}
-                onSend={() => void runChat(chatInput)}
-                busy={isBusy}
-                toolLogs={floatingLogs}
-                statusLine={floatingStatus}
-                onOpenPanel={() => {
-                  setChatCollapsed(false);
-                  setChatWidth((w) => Math.max(w, 360));
-                }}
-              />
-            )}
-
-            {/* Open panel (icon only) when collapsed — top right */}
-            {chatCollapsed && (
-              <button
-                type="button"
-                onClick={() => {
-                  setChatCollapsed(false);
-                  setChatWidth((w) => Math.max(w, 360));
-                }}
-                className="absolute right-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-[#c9bfb2] bg-white text-[#3d3229] shadow-md transition hover:bg-[#f3efe8] hover:scale-105"
-                title="Abrir panel de chat"
-              >
-                <MessageSquareText className="h-4.5 w-4.5" strokeWidth={1.75} />
-              </button>
-            )}
-
-            {pendingList.length > 0 && (
-              <CanvasReviewBar
-                items={pendingList}
-                activeId={pending?.id}
-                onSelect={setActiveEditId}
-                onAccept={acceptEdit}
-                onReject={rejectEdit}
-                onAcceptAll={acceptAllEdits}
-                onRejectAll={rejectAllEdits}
-              />
-            )}
           </div>
         </div>
 

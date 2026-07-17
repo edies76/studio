@@ -7,17 +7,17 @@
 - Each item includes date + "Do instead".
 
 ## Execution & Validation (Highest Priority)
-1. **[2026-07-17] Pages are real multi-page sheets, not spacers**
-   Do instead: Use `PaperCanvasHandle` (`getHtml`/`setHtml`/`getBodies`). Never write `editorRef.innerHTML` on a single continuous div. Pack via `distributeHtmlToPages` / `rebalanceFromPage` in `page-layout.ts`.
+1. **[2026-07-17] Continuous paper editor, not fake multi-page contenteditables**
+   Do instead: One `contentEditable` that grows freely; page count = ceil(scrollHeight / pageHeight); page chrome is visual break lines only. Never clip with overflow:hidden per sheet.
 
-2. **[2026-07-17] Parent must not treat canvas ref as HTMLDivElement**
-   Do instead: `useRef<PaperCanvasHandle>(null)`; typeset with `getBodies().forEach(typesetEditor)`; selection checks via `getBodies().some(b => b.contains(node))`.
+2. **[2026-07-17] Parent uses PaperCanvasHandle**
+   Do instead: `useRef<PaperCanvasHandle>(null)`; typeset `getBodies()`; selection via bodies contain check.
 
-3. **[2026-07-17] Rebalance must rewrite focused page on overflow**
-   Do instead: After pack, force-write DOM when HTML differs; if page count grew, `placeCaretAtEnd` on the new last page. Don't skip active body forever or text clips under `overflow:hidden`.
+3. **[2026-07-17] Floating composer owns agent UX**
+   Do instead: Collapse to center pill on outside click; expand on hover/focus; tools left + zoom slider under; review accept/reject in composer; no SelectionPrompt, no top-right chat FAB.
 
-4. **[2026-07-17] Import/export Word**
-   Do instead: Import with client `mammoth.convertToHtml` → `applyHtml`/`setHtml`. Export via `/api/export-docx` (docx is server-only — never import `docx` on client).
+4. **[2026-07-17] Import Word is HTML import not binary viewer**
+   Do instead: mammoth → editable HTML; surface mammoth messages in toast + chat log. Export via `/api/export-docx`.
 
 5. **[2026-07-17] Version bump on ship**
    Do instead: Bump `package.json` by exactly `0.0.1` per commit when shipping studio.
