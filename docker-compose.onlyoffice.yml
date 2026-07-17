@@ -1,0 +1,23 @@
+# Optional: real OnlyOffice Document Server (when Docker is available)
+# Usage:
+#   docker compose -f docker-compose.onlyoffice.yml up -d
+# Then set:
+#   NEXT_PUBLIC_ONLYOFFICE_URL=http://localhost:8080
+#
+# OnlyOffice is an alternative full Word engine.
+# Docs Studio default uses Syncfusion Document Editor (client + conversion service).
+
+services:
+  onlyoffice-documentserver:
+    image: onlyoffice/documentserver:latest
+    container_name: studio-onlyoffice
+    ports:
+      - "8080:80"
+    environment:
+      - JWT_ENABLED=false
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+    restart: unless-stopped
+
+volumes:
+  onlyoffice_data:

@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
 import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
+import WordEngineEditor, { type WordEngineHandle } from '@/components/word-engine-editor';
 import StudioChat, {
   type ActivityStep,
   type ChatMessage,
@@ -105,13 +106,17 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const resizingChat = useRef(false);
 
+  /** Default: real Word engine (Syncfusion). Canvas = HTML + AI diffs. */
+  const [editorMode, setEditorMode] = useState<'word' | 'canvas'>('word');
   const canvasRef = useRef<PaperCanvasHandle>(null);
+  const wordEngineRef = useRef<WordEngineHandle>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const didAuto = useRef(false);
   const skipHistory = useRef(false);
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
+  const pendingWordFile = useRef<File | null>(null);
 
   /** Active page body under caret / selection, else last page */
   const getActiveBody = useCallback((): HTMLElement | null => {
@@ -305,6 +310,21 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setHistoryIndex((i) => Math.min(i + 1, 39));
   }, [historyIndex]);
 
+  /** Push HTML into the real Word engine via DOCX round-trip */
+  const loadHtmlIntoWordEngine = useCallback(async (html: string, title: string) => {
+    const res = await fetch('/api/export-docx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html, title }),
+    });
+    if (!res.ok) throw new Error('No se pudo convertir HTML → DOCX para el motor');
+    const blob = await res.blob();
+    const file = new File([blob], `${title.replace(/[^\w\- ]+/g, '').trim() || 'doc'}.docx`, {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    });
+    await wordEngineRef.current?.openDocxFile(file);
+  }, []);
+
   const applyHtml = useCallback(
     (
       html: string,
@@ -319,34 +339,62 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       );
       setDocumentContent(withoutBreaks);
       skipHistory.current = true;
-      // Multi-page pack: canvas splits into fixed Word-like sheets
-      canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
-      requestAnimationFrame(() => {
-        // Light cascade on first page blocks after pack
-        if (mode === 'cascade') {
-          const first = canvasRef.current?.getBodies()?.[0];
-          if (first) {
-            Array.from(first.children).forEach((child, i) => {
-              const el = child as HTMLElement;
-              el.classList.add('studio-cascade-item');
-              el.style.animationDelay = `${Math.min(i * 48, 900)}ms`;
-              window.setTimeout(() => {
-                el.classList.remove('studio-cascade-item');
-                el.style.animationDelay = '';
-              }, Math.min(i * 48, 900) + 420);
+
+      if (editorMode === 'word') {
+        void loadHtmlIntoWordEngine(withoutBreaks, documentTitle || 'Documento')
+          .catch((e) => {
+            toast({
+              variant: 'destructive',
+              title: 'Motor Word',
+              description: e?.message || 'No se pudo cargar en el motor',
             });
+            // Fallback to canvas so content is never lost
+            setEditorMode('canvas');
+            canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
+          })
+          .finally(() => {
+            skipHistory.current = false;
+          });
+      } else {
+        canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
+        requestAnimationFrame(() => {
+          if (mode === 'cascade') {
+            const first = canvasRef.current?.getBodies()?.[0];
+            if (first) {
+              Array.from(first.children).forEach((child, i) => {
+                const el = child as HTMLElement;
+                el.classList.add('studio-cascade-item');
+                el.style.animationDelay = `${Math.min(i * 48, 900)}ms`;
+                window.setTimeout(() => {
+                  el.classList.remove('studio-cascade-item');
+                  el.style.animationDelay = '';
+                }, Math.min(i * 48, 900) + 420);
+              });
+            }
           }
-        }
-        typesetAll();
-        skipHistory.current = false;
-      });
+          typesetAll();
+          skipHistory.current = false;
+        });
+      }
       if (recordHistory) pushHistory(withoutBreaks);
     },
-    [pushHistory, typesetAll],
+    [pushHistory, typesetAll, editorMode, loadHtmlIntoWordEngine, documentTitle, toast],
   );
 
-  /** Full document HTML from multi-page canvas (or React state fallback) */
-  const readEditorHtml = () => canvasRef.current?.getHtml() || documentContent;
+  /** Full document HTML from canvas, or plain text from Word engine for AI context */
+  const readEditorHtml = () => {
+    if (editorMode === 'canvas') {
+      return canvasRef.current?.getHtml() || documentContent;
+    }
+    // Word engine: AI context as paragraphs from plain text
+    try {
+      const sfdt = wordEngineRef.current?.getSfdt() || '';
+      if (sfdt && documentContent) return documentContent;
+    } catch {
+      /* ignore */
+    }
+    return documentContent || '<p><br></p>';
+  };
 
   const undo = () => {
     if (historyIndex <= 0) return;
@@ -1080,46 +1128,93 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     }
     setIsBusy(true);
     try {
-      const buf = await file.arrayBuffer();
-      const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
-      setDocumentTitle(titleHint.slice(0, 80));
-      // No cascade wipe — set full document for fidelity
-      applyHtml(html, true, false);
+      const base = name.replace(/\.docx$/i, '').trim() || 'Documento importado';
+      setDocumentTitle(base.slice(0, 80));
 
-      toast({
-        title: warnings.length ? 'Word importado' : 'Word importado',
-        description: userSummary.slice(0, 240),
-      });
-      pushEvent(
-        {
-          type: 'local_edit',
-          title: 'Import .docx',
-          summary: userSummary.slice(0, 160),
-        },
-        true,
-      );
-      // Clean human message — no raw OOXML schema noise
-      setMessages((ms) => [
-        ...ms,
-        {
-          id: uid(),
-          role: 'assistant',
-          content:
-            warnings.length === 0
-              ? `Importé **${titleHint}** con formato (títulos, tablas, estilos e imágenes cuando existían).`
-              : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
-          streaming: false,
-        },
-      ]);
+      // Prefer real Word engine (native DOCX pages/styles/tables)
+      setEditorMode('word');
+      // Wait a tick for WordEngine to mount if we were on canvas
+      await new Promise((r) => setTimeout(r, 80));
+
+      if (wordEngineRef.current) {
+        await wordEngineRef.current.openDocxFile(file);
+        // Also keep HTML snapshot for AI context (best-effort mammoth)
+        try {
+          const buf = await file.arrayBuffer();
+          const { html } = await importDocxToHtml(buf, name);
+          setDocumentContent(html);
+          pushHistory(html);
+        } catch {
+          /* AI context optional */
+        }
+        toast({
+          title: 'Word abierto en motor real',
+          description: `«${base}» — páginas, estilos y tablas nativas.`,
+        });
+        pushEvent(
+          { type: 'local_edit', title: 'Import .docx (motor Word)', summary: base.slice(0, 48) },
+          true,
+        );
+        setMessages((ms) => [
+          ...ms,
+          {
+            id: uid(),
+            role: 'assistant',
+            content: `Abrí **${base}** en el **motor Word real** (Syncfusion). Editá como en Word: páginas, estilos, tablas y tipografía nativas.`,
+            streaming: false,
+          },
+        ]);
+      } else {
+        // Fallback: HTML canvas import
+        const buf = await file.arrayBuffer();
+        const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
+        setDocumentTitle(titleHint.slice(0, 80));
+        setEditorMode('canvas');
+        applyHtml(html, true, false);
+        toast({ title: 'Word importado (lienzo)', description: userSummary.slice(0, 240) });
+        pushEvent({ type: 'local_edit', title: 'Import .docx', summary: userSummary.slice(0, 160) }, true);
+        setMessages((ms) => [
+          ...ms,
+          {
+            id: uid(),
+            role: 'assistant',
+            content:
+              warnings.length === 0
+                ? `Importé **${titleHint}** al lienzo HTML.`
+                : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
+            streaming: false,
+          },
+        ]);
+      }
     } catch (e: any) {
       toast({
         variant: 'destructive',
         title: 'No se pudo importar',
-        description: e?.message || 'Error leyendo el .docx',
+        description: e?.message || 'Error abriendo el .docx en el motor',
       });
     } finally {
       setIsBusy(false);
       if (importInputRef.current) importInputRef.current.value = '';
+    }
+  };
+
+  const handleExportWordEngine = async () => {
+    try {
+      if (editorMode === 'word' && wordEngineRef.current) {
+        const blob = await wordEngineRef.current.saveAsDocxBlob();
+        if (!blob) throw new Error('Export vacío');
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(documentTitle || 'docs-studio').replace(/[^\w\- ]+/g, '').trim() || 'docs-studio'}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: 'Word (.docx) exportado desde el motor' });
+        return;
+      }
+      await handleExportWord();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Export falló', description: e?.message });
     }
   };
 
@@ -1250,7 +1345,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           <DropdownMenuItem onClick={handleExportPdf}>
             <FileText className="mr-2 h-4 w-4" /> PDF
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handleExportWord()}>
+          <DropdownMenuItem onClick={() => void handleExportWordEngine()}>
             <FileText className="mr-2 h-4 w-4" /> Exportar Word (.docx)
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1281,26 +1376,41 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           ref={paperHostRef}
         >
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <PaperCanvas
-              ref={canvasRef}
-              paperSize={paperSize}
-              onPaperSizeChange={setPaperSize}
-              fontFamily={fontFamily}
-              fontSize={fontSize}
-              contentEditable={!isBusy}
-              isLoading={isBusy}
-              onInput={onEditorInput}
-              onMouseUp={handleMouseUp}
-              onDoubleClick={handleEditorDblClick}
-              onEditBlock={handleEditBlock}
-              onPageCountChange={setPageCount}
-              ghostHtml={pending?.edit.afterHtml ?? null}
-              ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
-              ghostTitle={pending?.edit.title ?? null}
-              zoom={zoom}
-              marginPreset={prefs.marginPreset}
-              showEditButton={prefs.showEditButton}
-            />
+            {/* Real Word engine (default) */}
+            {editorMode === 'word' ? (
+              <div className="absolute inset-0 flex flex-col pt-14">
+                <WordEngineEditor
+                  ref={wordEngineRef}
+                  documentTitle={documentTitle}
+                  height="100%"
+                  onContentChange={() => {
+                    // Keep a soft flag; full SFDT history is heavy
+                    lastLocalNotify.current = Date.now();
+                  }}
+                />
+              </div>
+            ) : (
+              <PaperCanvas
+                ref={canvasRef}
+                paperSize={paperSize}
+                onPaperSizeChange={setPaperSize}
+                fontFamily={fontFamily}
+                fontSize={fontSize}
+                contentEditable={!isBusy}
+                isLoading={isBusy}
+                onInput={onEditorInput}
+                onMouseUp={handleMouseUp}
+                onDoubleClick={handleEditorDblClick}
+                onEditBlock={handleEditBlock}
+                onPageCountChange={setPageCount}
+                ghostHtml={pending?.edit.afterHtml ?? null}
+                ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
+                ghostTitle={pending?.edit.title ?? null}
+                zoom={zoom}
+                marginPreset={prefs.marginPreset}
+                showEditButton={prefs.showEditButton}
+              />
+            )}
             <input
               ref={importInputRef}
               type="file"
@@ -1330,16 +1440,19 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                   onFontSize={setFontSize}
                   pageCount={pageCount}
                   wordCount={countWords()}
-                  onInsertMath={handleInsertMath}
-                  onInsertTable={handleInsertTable}
+                  onInsertMath={editorMode === 'canvas' ? handleInsertMath : undefined}
+                  onInsertTable={editorMode === 'canvas' ? handleInsertTable : undefined}
                   onImportWord={() => importInputRef.current?.click()}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  editorMode={editorMode}
+                  onEditorModeChange={setEditorMode}
+                  canvasTools={editorMode === 'canvas'}
                 />
               </div>
             </div>
 
-            {/* Word-like selection format bar + AI pencil */}
-            {hasSelection && selBar && prefs.showSelectionToolbar && (
+            {/* Canvas-only: selection bar, tools, zoom */}
+            {editorMode === 'canvas' && hasSelection && selBar && prefs.showSelectionToolbar && (
               <SelectionFormatBar
                 top={selBar.top}
                 left={selBar.left}
@@ -1350,19 +1463,32 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               />
             )}
 
-            {/* Tools floating bottom-right (white capsule) */}
-            <ToolsDock
-              busy={isBusy}
-              hasSelection={hasSelection}
-              onAction={handleToolsAction}
-              showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
-              onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
-            />
+            {editorMode === 'canvas' && (
+              <ToolsDock
+                busy={isBusy}
+                hasSelection={hasSelection}
+                onAction={handleToolsAction}
+                showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
+                onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
+              />
+            )}
 
-            {/* Zoom — bottom-left corner */}
-            <div className="pointer-events-none absolute bottom-6 left-5 z-40">
-              <ZoomControl zoom={zoom} onZoom={setZoom} />
-            </div>
+            {editorMode === 'canvas' && (
+              <div className="pointer-events-none absolute bottom-6 left-5 z-40">
+                <ZoomControl zoom={zoom} onZoom={setZoom} />
+              </div>
+            )}
+
+            {/* Word mode: still offer agent + tools (AI over document) */}
+            {editorMode === 'word' && (
+              <ToolsDock
+                busy={isBusy}
+                hasSelection={false}
+                onAction={handleToolsAction}
+                showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
+                onOpenAgent={() => openAgent('chat')}
+              />
+            )}
 
             {/* Ephemeral agent input — only when opened (or always mode) */}
             {prefs.agentVisibility !== 'hidden' && (
