@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUp,
   Check,
@@ -13,7 +13,6 @@ import {
 import { cn } from '@/lib/utils';
 import type { ToolLogItem } from '@/components/tool-log';
 import type { ProposeEditPayload } from '@/lib/doc-tools';
-import ZoomControl from '@/components/zoom-control';
 
 export type FloatingReview = {
   id: string;
@@ -22,22 +21,23 @@ export type FloatingReview = {
 };
 
 type Props = {
+  /** Controlled visibility — not always on canvas */
+  open: boolean;
+  onClose: () => void;
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
   busy?: boolean;
-  /** Live activity label while agent works */
   busyLabel?: string | null;
   onStop?: () => void;
   toolLogs?: ToolLogItem[];
-  /** Short free-text status when idle after a reply */
   statusLine?: string | null;
   onOpenPanel?: () => void;
-  /** Selection context — no quotes, just a chip */
   hasSelection?: boolean;
   selectionPreview?: string;
   onClearSelection?: () => void;
-  /** Pending AI edits — review UI lives here (not a separate bar) */
+  /** 'edit' = working on selection; 'chat' = general agent */
+  mode?: 'chat' | 'edit';
   reviews?: FloatingReview[];
   activeReviewId?: string | null;
   onSelectReview?: (id: string) => void;
@@ -45,26 +45,17 @@ type Props = {
   onRejectReview?: (id: string) => void;
   onAcceptAll?: () => void;
   onRejectAll?: () => void;
-  /** Zoom control (white capsule, right of tools) */
-  zoom?: number;
-  onZoom?: (z: number) => void;
-  /** Slot for tools dock (right of composer, with zoom) */
-  toolsSlot?: ReactNode;
   className?: string;
-  /** Increment to force-expand (e.g. after text selection) */
-  forceExpandKey?: number;
-  onExpandedChange?: (expanded: boolean) => void;
 };
 
 /**
- * Center floating agent control:
- * - Collapsed: small elongated pill (hover → expand)
- * - Expanded: narrow pill; focus → wider (springy)
- * - Click outside → shrink to pill from center
- * - Busy: HyperWrite-style status + stop
- * - Review: compact accept/reject card above
+ * Ephemeral agent input — only mounts when open.
+ * Focus → wider. Click outside → close with animation (gone).
+ * No hover-from-pill, no always-visible tab.
  */
 export default function FloatingComposer({
+  open,
+  onClose,
   value,
   onChange,
   onSend,
@@ -77,6 +68,7 @@ export default function FloatingComposer({
   hasSelection,
   selectionPreview,
   onClearSelection,
+  mode = 'chat',
   reviews = [],
   activeReviewId,
   onSelectReview,
@@ -84,59 +76,51 @@ export default function FloatingComposer({
   onRejectReview,
   onAcceptAll,
   onRejectAll,
-  zoom = 1,
-  onZoom,
-  toolsSlot,
   className,
-  forceExpandKey = 0,
-  onExpandedChange,
 }: Props) {
-  const [expanded, setExpanded] = useState(true);
+  const [visible, setVisible] = useState(false);
   const [focused, setFocused] = useState(false);
   const [sentPulse, setSentPulse] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(true);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const pending = reviews.filter((r) => r.status === 'pending');
   const active = pending.find((p) => p.id === activeReviewId) || pending[0] || null;
 
+  // Enter / exit animation
   useEffect(() => {
-    if (!forceExpandKey) return;
-    setExpanded(true);
-    onExpandedChange?.(true);
-    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-  }, [forceExpandKey, onExpandedChange]);
-
-  // Keep open while busy or reviewing
-  useEffect(() => {
-    if (busy || pending.length > 0) {
-      setExpanded(true);
+    if (open) {
+      requestAnimationFrame(() => setVisible(true));
+      const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 80);
+      return () => clearTimeout(t);
     }
-  }, [busy, pending.length]);
+    setVisible(false);
+  }, [open]);
 
-  // Click outside → collapse (unless busy / focused typing)
+  // Keep open while busy or reviews (parent should keep open=true)
   useEffect(() => {
+    if (!open) return;
     const onDown = (e: MouseEvent) => {
+      if (busy || pending.length > 0) return;
       const t = e.target as Node;
-      if (!rootRef.current?.contains(t)) {
-        if (busy || pending.length > 0) return;
-        if (document.activeElement === inputRef.current && value.trim()) return;
-        setExpanded(false);
-        setFocused(false);
-        onExpandedChange?.(false);
+      if (rootRef.current && !rootRef.current.contains(t)) {
+        onClose();
       }
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
-  }, [busy, pending.length, value, onExpandedChange]);
+  }, [open, busy, pending.length, onClose]);
 
-  const expand = () => {
-    setExpanded(true);
-    onExpandedChange?.(true);
-    requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-  };
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busy) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy, onClose]);
+
+  if (!open && !visible) return null;
 
   const send = () => {
     if (!value.trim() || busy) return;
@@ -146,39 +130,33 @@ export default function FloatingComposer({
   };
 
   const wide = focused || value.trim().length > 0 || busy || pending.length > 0;
+  const isEdit = mode === 'edit' || hasSelection;
 
   return (
     <div
       className={cn(
-        'pointer-events-none absolute inset-x-0 bottom-5 z-40 flex justify-center px-4',
+        'pointer-events-none absolute inset-x-0 bottom-6 z-40 flex justify-center px-4',
         className,
       )}
     >
       <div
         ref={rootRef}
-        className="pointer-events-auto flex w-full max-w-5xl flex-col items-center"
-        onMouseEnter={() => {
-          if (hoverTimer.current) clearTimeout(hoverTimer.current);
-          if (!expanded) {
-            hoverTimer.current = setTimeout(() => expand(), 80);
-          }
-        }}
-        onMouseLeave={() => {
-          if (hoverTimer.current) clearTimeout(hoverTimer.current);
-        }}
+        className={cn(
+          'pointer-events-auto flex flex-col items-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          visible && open
+            ? 'translate-y-0 scale-100 opacity-100'
+            : 'translate-y-4 scale-95 opacity-0',
+        )}
       >
-        {/* —— Review card (HyperWrite-like) —— */}
-        <div
-          className={cn(
-            'mb-2 w-full overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-            expanded && pending.length > 0 && reviewOpen
-              ? 'max-h-48 translate-y-0 opacity-100'
-              : 'max-h-0 -translate-y-2 opacity-0 pointer-events-none',
-            wide ? 'max-w-lg' : 'max-w-sm',
-          )}
-        >
-          {active && (
-            <div className="rounded-2xl border border-[#d4e3f7] bg-white/95 px-3 py-2.5 shadow-lg shadow-blue-500/5 backdrop-blur-md">
+        {/* Review card */}
+        {active && (
+          <div
+            className={cn(
+              'mb-2 w-full overflow-hidden transition-all duration-300',
+              wide ? 'max-w-lg' : 'max-w-sm',
+            )}
+          >
+            <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 shadow-lg shadow-black/8">
               <div className="flex items-start gap-2">
                 <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" strokeWidth={1.75} />
                 <div className="min-w-0 flex-1">
@@ -193,7 +171,7 @@ export default function FloatingComposer({
                             className={cn(
                               'shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px]',
                               p.id === active.id
-                                ? 'bg-blue-50 text-blue-700'
+                                ? 'bg-neutral-100 text-neutral-800'
                                 : 'text-neutral-400 hover:bg-neutral-50',
                             )}
                           >
@@ -212,7 +190,7 @@ export default function FloatingComposer({
                     <button
                       type="button"
                       onClick={() => onAcceptReview?.(active.id)}
-                      className="inline-flex items-center gap-1 rounded-full bg-blue-500 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-blue-600"
+                      className="inline-flex items-center gap-1 rounded-full bg-neutral-900 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-neutral-800"
                     >
                       <Check className="h-3 w-3" strokeWidth={2.5} />
                       Aceptar
@@ -221,30 +199,13 @@ export default function FloatingComposer({
                   <p className="mt-1.5 text-[12px] leading-snug text-neutral-600">
                     <span className="font-semibold text-neutral-800">{active.edit.title}</span>
                     {active.edit.summary ? ` — ${active.edit.summary.slice(0, 120)}` : ''}
-                    {(active.edit.summary?.length || 0) > 120 && (
-                      <button
-                        type="button"
-                        className="ml-1 font-medium text-blue-600 hover:underline"
-                        onClick={() => setReviewOpen((v) => v)}
-                      >
-                        Mostrar más
-                      </button>
-                    )}
                   </p>
                   {pending.length > 1 && (
                     <div className="mt-1.5 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={onRejectAll}
-                        className="text-[10px] text-neutral-400 hover:text-neutral-600"
-                      >
+                      <button type="button" onClick={onRejectAll} className="text-[10px] text-neutral-400 hover:text-neutral-600">
                         Rechazar todo
                       </button>
-                      <button
-                        type="button"
-                        onClick={onAcceptAll}
-                        className="text-[10px] font-medium text-blue-600 hover:underline"
-                      >
+                      <button type="button" onClick={onAcceptAll} className="text-[10px] font-medium text-neutral-700 hover:underline">
                         Aceptar todo
                       </button>
                     </div>
@@ -252,212 +213,141 @@ export default function FloatingComposer({
                 </div>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* —— Compact tool log while busy —— */}
+        {busy && toolLogs.length > 0 && (
+          <div className="mb-1.5 w-full max-w-md rounded-xl border border-neutral-200 bg-white/95 px-2.5 py-1.5 text-[10px] text-neutral-500 shadow-sm">
+            {toolLogs.slice(-3).map((t) => (
+              <div key={t.id} className="truncate">
+                {t.state === 'running' ? '… ' : '✓ '}
+                {t.doneLabel || t.label}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Input pill — white toolbar family */}
         <div
           className={cn(
-            'mb-1.5 w-full overflow-hidden transition-all duration-300',
-            expanded && busy && toolLogs.length
-              ? 'max-h-20 opacity-100'
-              : 'max-h-0 opacity-0',
-            wide ? 'max-w-md' : 'max-w-xs',
+            'floating-composer-shell relative origin-center overflow-hidden rounded-full',
+            'border border-neutral-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.08)]',
+            'transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            wide ? 'w-[min(28rem,88vw)]' : 'w-[min(18rem,78vw)]',
+            focused && 'border-neutral-300 shadow-[0_12px_36px_rgba(0,0,0,0.1)]',
+            busy && 'ring-2 ring-blue-400/25',
+            sentPulse && 'floating-composer-sent',
           )}
         >
-          {busy && toolLogs.length > 0 && (
-            <div className="rounded-xl border border-neutral-200/80 bg-white/90 px-2.5 py-1.5 text-[10px] text-neutral-500 shadow-sm backdrop-blur">
-              {toolLogs.slice(-3).map((t) => (
-                <div key={t.id} className="truncate">
-                  {t.state === 'running' ? '… ' : '✓ '}
-                  {t.doneLabel || t.label}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* —— Composer center · tools + white zoom on the RIGHT —— */}
-        <div className="relative flex w-full items-end justify-center gap-3 px-2">
-          {/* Spacer so composer stays optically centered when right rail is present */}
-          <div
-            className={cn(
-              'hidden shrink-0 sm:block',
-              expanded ? 'w-[7.5rem]' : 'w-0',
-            )}
-            aria-hidden
-          />
-
-          <div className="flex min-w-0 flex-col items-center">
-            {/* Main pill — white / neutral (less brown) */}
-            <div
+          <div className="flex items-center gap-1.5 px-2 py-1.5">
+            <span
               className={cn(
-                'floating-composer-shell relative origin-center overflow-hidden',
-                'border border-neutral-200 bg-white',
-                'shadow-[0_8px_28px_rgba(0,0,0,0.08)]',
-                'transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)]',
-                expanded
-                  ? cn(
-                      'rounded-full',
-                      wide ? 'w-[min(28rem,72vw)]' : 'w-[min(20rem,68vw)]',
-                      'scale-100 opacity-100',
-                    )
-                  : 'h-3 w-16 cursor-pointer rounded-full opacity-90 hover:w-20 hover:opacity-100',
-                focused && expanded && 'border-neutral-300 shadow-[0_12px_36px_rgba(0,0,0,0.1)]',
-                sentPulse && 'floating-composer-sent',
-                busy && expanded && 'ring-2 ring-blue-400/30',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
+                busy ? 'text-blue-500' : 'text-neutral-400',
               )}
-              onClick={() => {
-                if (!expanded) expand();
-              }}
-              role={expanded ? undefined : 'button'}
-              title={expanded ? undefined : 'Abrir agente'}
             >
-              {expanded && (
-                <div className="flex items-center gap-1.5 px-2 py-1.5">
-                  <span
-                    className={cn(
-                      'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                      busy ? 'text-blue-500' : 'text-neutral-400',
-                    )}
-                  >
-                    {busy ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    )}
-                  </span>
-
-                  {busy ? (
-                    <p className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-neutral-700">
-                      {busyLabel || 'Trabajando…'}
-                    </p>
-                  ) : (
-                    <div className="flex min-w-0 flex-1 flex-col justify-center">
-                      {hasSelection && (
-                        <div className="mb-0.5 flex items-center gap-1 px-0.5">
-                          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-neutral-600">
-                            Selección
-                          </span>
-                          {selectionPreview && (
-                            <span className="truncate text-[10px] text-neutral-400">
-                              {selectionPreview.slice(0, 40)}
-                              {selectionPreview.length > 40 ? '…' : ''}
-                            </span>
-                          )}
-                          {onClearSelection && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onClearSelection();
-                              }}
-                              className="rounded p-0.5 text-neutral-400 hover:text-neutral-700"
-                              title="Quitar selección"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          )}
-                        </div>
-                      )}
-                      <textarea
-                        ref={inputRef}
-                        value={value}
-                        onChange={(e) => onChange(e.target.value)}
-                        onFocus={() => setFocused(true)}
-                        onBlur={() => setFocused(false)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            send();
-                          }
-                          if (e.key === 'Escape') {
-                            setExpanded(false);
-                            onExpandedChange?.(false);
-                            (e.target as HTMLTextAreaElement).blur();
-                          }
-                        }}
-                        rows={1}
-                        disabled={busy}
-                        placeholder={
-                          hasSelection
-                            ? 'Qué querés hacer con la selección…'
-                            : 'Escribí al agente…'
-                        }
-                        className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-neutral-900 outline-none placeholder:text-neutral-400"
-                      />
-                    </div>
-                  )}
-
-                  {onOpenPanel && !busy && (
-                    <button
-                      type="button"
-                      title="Abrir panel de chat"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpenPanel();
-                      }}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
-                    >
-                      <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} />
-                    </button>
-                  )}
-
-                  {busy && onStop ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onStop();
-                      }}
-                      title="Detener"
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow-md hover:bg-blue-600"
-                    >
-                      <Square className="h-3 w-3 fill-current" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        send();
-                      }}
-                      disabled={busy || !value.trim()}
-                      className={cn(
-                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all',
-                        'bg-neutral-900 text-white shadow-md hover:bg-neutral-800',
-                        'disabled:opacity-30',
-                        sentPulse && 'scale-90',
-                      )}
-                      title="Enviar"
-                    >
-                      <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.25} />
-                    </button>
-                  )}
-                </div>
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
               )}
-            </div>
+            </span>
 
-            {expanded && !busy && statusLine && !pending.length && (
-              <p className="mt-1.5 max-w-[16rem] truncate text-center text-[10px] text-neutral-400">
-                {statusLine}
+            {busy ? (
+              <p className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-neutral-700">
+                {busyLabel || 'Trabajando…'}
               </p>
+            ) : (
+              <div className="flex min-w-0 flex-1 flex-col justify-center">
+                {isEdit && (
+                  <div className="mb-0.5 flex items-center gap-1 px-0.5">
+                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-neutral-600">
+                      Edición
+                    </span>
+                    {selectionPreview && (
+                      <span className="truncate text-[10px] text-neutral-400">
+                        {selectionPreview.slice(0, 36)}
+                        {selectionPreview.length > 36 ? '…' : ''}
+                      </span>
+                    )}
+                    {onClearSelection && (
+                      <button
+                        type="button"
+                        onClick={onClearSelection}
+                        className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                        title="Quitar selección"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
+                <textarea
+                  ref={inputRef}
+                  value={value}
+                  onChange={(e) => onChange(e.target.value)}
+                  onFocus={() => setFocused(true)}
+                  onBlur={() => setFocused(false)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                  rows={1}
+                  disabled={busy}
+                  placeholder={
+                    isEdit ? 'Qué querés hacer con la selección…' : 'Escribí al agente…'
+                  }
+                  className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-neutral-900 outline-none placeholder:text-neutral-400"
+                />
+              </div>
             )}
-          </div>
 
-          {/* RIGHT rail: tools + white zoom */}
-          <div
-            className={cn(
-              'flex shrink-0 flex-col items-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-              expanded
-                ? 'translate-x-0 scale-100 opacity-100'
-                : 'pointer-events-none w-0 scale-75 overflow-hidden opacity-0',
+            {onOpenPanel && !busy && (
+              <button
+                type="button"
+                title="Abrir panel de chat"
+                onClick={onOpenPanel}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
+              >
+                <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </button>
             )}
-          >
-            {toolsSlot}
-            {onZoom && <ZoomControl zoom={zoom} onZoom={onZoom} />}
+
+            {busy && onStop ? (
+              <button
+                type="button"
+                onClick={onStop}
+                title="Detener"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow-md hover:bg-blue-600"
+              >
+                <Square className="h-3 w-3 fill-current" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={send}
+                disabled={busy || !value.trim()}
+                className={cn(
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all',
+                  'bg-neutral-900 text-white shadow-md hover:bg-neutral-800',
+                  'disabled:opacity-30',
+                  sentPulse && 'scale-90',
+                )}
+                title="Enviar"
+              >
+                <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.25} />
+              </button>
+            )}
           </div>
         </div>
+
+        {statusLine && !busy && !pending.length && (
+          <p className="mt-1.5 max-w-[16rem] truncate text-center text-[10px] text-neutral-400">
+            {statusLine}
+          </p>
+        )}
       </div>
     </div>
   );

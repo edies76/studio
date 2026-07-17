@@ -1,22 +1,38 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import type { PaperSize } from '@/lib/doc-tools';
 import {
   FileText,
   Image as ImageIcon,
+  Keyboard,
   LayoutTemplate,
+  MessageSquare,
   MousePointer2,
   Settings2,
   X,
 } from 'lucide-react';
+
+export type AgentVisibility = 'auto' | 'always' | 'hidden';
 
 export type StudioPrefs = {
   showEditButton: boolean;
   marginPreset: 'normal' | 'narrow' | 'wide' | 'apa';
   allowImages: boolean;
   imageMaxMb: number;
+  /** How the agent input appears */
+  agentVisibility: AgentVisibility;
+  /** Show "open agent" inside Tools dock */
+  showAgentInTools: boolean;
+  /** Show format bar on text selection */
+  showSelectionToolbar: boolean;
+  /** Show AI pencil on selection bar */
+  showSelectionAi: boolean;
+  /** Letter after Ctrl for open agent (default i) */
+  shortcutOpenAgent: string;
+  /** Letter after Ctrl for edit selection (default e) */
+  shortcutEditSelection: string;
 };
 
 export const DEFAULT_PREFS: StudioPrefs = {
@@ -24,9 +40,15 @@ export const DEFAULT_PREFS: StudioPrefs = {
   marginPreset: 'normal',
   allowImages: true,
   imageMaxMb: 5,
+  agentVisibility: 'auto',
+  showAgentInTools: true,
+  showSelectionToolbar: true,
+  showSelectionAi: true,
+  shortcutOpenAgent: 'i',
+  shortcutEditSelection: 'e',
 };
 
-type Section = 'document' | 'margins' | 'images' | 'editor';
+type Section = 'document' | 'margins' | 'images' | 'editor' | 'agent';
 
 type Props = {
   open: boolean;
@@ -42,9 +64,12 @@ const SECTIONS: { id: Section; label: string; icon: typeof Settings2 }[] = [
   { id: 'margins', label: 'Márgenes', icon: LayoutTemplate },
   { id: 'images', label: 'Imágenes', icon: ImageIcon },
   { id: 'editor', label: 'Editor', icon: MousePointer2 },
+  { id: 'agent', label: 'Agente', icon: MessageSquare },
 ];
 
-/** ChatGPT-style settings: sidebar + panel, blur enter/exit */
+const KEY_OPTIONS = ['i', 'e', 'k', 'j', 'm', '/', "'"] as const;
+
+/** Settings modal — white toolbar language (rounded chips, soft hover, Inter) */
 export default function StudioSettings({
   open,
   onClose,
@@ -57,11 +82,8 @@ export default function StudioSettings({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (open) {
-      requestAnimationFrame(() => setVisible(true));
-    } else {
-      setVisible(false);
-    }
+    if (open) requestAnimationFrame(() => setVisible(true));
+    else setVisible(false);
   }, [open]);
 
   useEffect(() => {
@@ -75,33 +97,36 @@ export default function StudioSettings({
 
   if (!open && !visible) return null;
 
+  const set = (patch: Partial<StudioPrefs>) => onPrefsChange({ ...prefs, ...patch });
+
   return (
     <div
       className={cn(
         'fixed inset-0 z-[80] flex items-center justify-center p-4 transition-all duration-300',
         visible
-          ? 'bg-[#3d3229]/40 backdrop-blur-sm opacity-100'
-          : 'bg-transparent backdrop-blur-0 opacity-0 pointer-events-none',
+          ? 'bg-black/25 backdrop-blur-sm opacity-100'
+          : 'pointer-events-none bg-transparent opacity-0 backdrop-blur-0',
       )}
       onClick={onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'flex h-[min(520px,85vh)] w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-2xl transition-all duration-300',
-          visible ? 'scale-100 opacity-100 blur-0' : 'scale-95 opacity-0 blur-sm',
+          'flex h-[min(560px,88vh)] w-full max-w-2xl overflow-hidden rounded-2xl border border-neutral-200 bg-white font-sans shadow-[0_24px_80px_rgba(0,0,0,0.12)] transition-all duration-300',
+          visible ? 'scale-100 opacity-100' : 'scale-95 opacity-0',
         )}
+        style={{ fontFamily: 'Inter, Segoe UI, system-ui, sans-serif' }}
       >
         {/* Sidebar */}
-        <aside className="flex w-44 shrink-0 flex-col border-r border-neutral-100 bg-neutral-50/80 p-2">
+        <aside className="flex w-44 shrink-0 flex-col border-r border-neutral-100 bg-neutral-50/90 p-2">
           <div className="mb-2 flex items-center justify-between px-2 py-1.5">
-            <span className="text-xs font-semibold text-neutral-800">Ajustes</span>
+            <span className="text-[12px] font-semibold tracking-tight text-neutral-800">Ajustes</span>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-1 text-neutral-400 hover:bg-neutral-200/80 hover:text-neutral-800"
+              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>
           </div>
           {SECTIONS.map((s) => {
@@ -114,8 +139,8 @@ export default function StudioSettings({
                 className={cn(
                   'mb-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium transition-colors',
                   section === s.id
-                    ? 'bg-studio-brown text-white'
-                    : 'text-neutral-600 hover:bg-neutral-200/70 hover:text-neutral-900',
+                    ? 'bg-neutral-900 text-white shadow-sm'
+                    : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900',
                 )}
               >
                 <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
@@ -131,32 +156,21 @@ export default function StudioSettings({
             <div className="space-y-5">
               <Header title="Documento" sub="Tamaño de página y formato base" />
               <Row label="Tamaño de hoja">
-                <div className="flex gap-1 rounded-full border border-neutral-200 bg-neutral-50 p-0.5">
-                  {(['letter', 'legal'] as PaperSize[]).map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => onPaperSizeChange(s)}
-                      className={cn(
-                        'rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-colors',
-                        paperSize === s
-                          ? 'bg-studio-brown text-white'
-                          : 'text-neutral-500 hover:text-neutral-900',
-                      )}
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  value={paperSize}
+                  options={[
+                    { id: 'letter', label: 'Letter' },
+                    { id: 'legal', label: 'Legal' },
+                  ]}
+                  onChange={(v) => onPaperSizeChange(v as PaperSize)}
+                />
               </Row>
-              <p className="text-[11px] leading-relaxed text-neutral-400">
-                Letter 8.5×11″ · Legal 8.5×14″. Los márgenes se aplican al lienzo y al export.
-              </p>
+              <Hint>Letter 8.5×11″ · Legal 8.5×14″. Los márgenes se aplican al lienzo y al export.</Hint>
             </div>
           )}
 
           {section === 'margins' && (
-            <div className="space-y-5">
+            <div className="space-y-3">
               <Header title="Márgenes" sub="Plantillas de espacio en página" />
               {(
                 [
@@ -169,12 +183,12 @@ export default function StudioSettings({
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => onPrefsChange({ ...prefs, marginPreset: m.id })}
+                  onClick={() => set({ marginPreset: m.id })}
                   className={cn(
                     'flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-left transition-colors',
                     prefs.marginPreset === m.id
-                      ? 'border-studio-brown bg-neutral-50'
-                      : 'border-neutral-200 hover:border-neutral-300',
+                      ? 'border-neutral-900 bg-neutral-50'
+                      : 'border-neutral-200 hover:border-neutral-300 hover:bg-neutral-50/80',
                   )}
                 >
                   <div>
@@ -183,12 +197,16 @@ export default function StudioSettings({
                   </div>
                   <span
                     className={cn(
-                      'h-4 w-4 rounded-full border-2',
+                      'flex h-4 w-4 items-center justify-center rounded-full border-2',
                       prefs.marginPreset === m.id
-                        ? 'border-studio-brown bg-studio-brown'
+                        ? 'border-neutral-900 bg-neutral-900'
                         : 'border-neutral-300',
                     )}
-                  />
+                  >
+                    {prefs.marginPreset === m.id && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
@@ -196,21 +214,16 @@ export default function StudioSettings({
 
           {section === 'images' && (
             <div className="space-y-5">
-              <Header title="Imágenes" sub="Inserción y límites (próximamente en el lienzo)" />
+              <Header title="Imágenes" sub="Inserción y límites" />
               <Row label="Permitir imágenes">
-                <Switch
-                  on={prefs.allowImages}
-                  onChange={(v) => onPrefsChange({ ...prefs, allowImages: v })}
-                />
+                <Switch on={prefs.allowImages} onChange={(v) => set({ allowImages: v })} />
               </Row>
               <Row label="Tamaño máx.">
                 <select
                   value={prefs.imageMaxMb}
                   disabled={!prefs.allowImages}
-                  onChange={(e) =>
-                    onPrefsChange({ ...prefs, imageMaxMb: Number(e.target.value) })
-                  }
-                  className="rounded-lg border border-neutral-200 bg-white px-2 py-1 text-[12px] disabled:opacity-40"
+                  onChange={(e) => set({ imageMaxMb: Number(e.target.value) })}
+                  className="h-8 rounded-lg border border-neutral-200 bg-white px-2 text-[12px] text-neutral-800 outline-none hover:bg-neutral-50 disabled:opacity-40"
                 >
                   {[2, 5, 10, 15].map((n) => (
                     <option key={n} value={n}>
@@ -219,10 +232,9 @@ export default function StudioSettings({
                   ))}
                 </select>
               </Row>
-              <p className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-4 text-center text-[11px] text-neutral-400">
-                Arrastrá o pegá imágenes en el lienzo cuando esté activo.
-                Formatos: PNG, JPG, WebP.
-              </p>
+              <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50 px-3 py-4 text-center text-[11px] text-neutral-400">
+                Arrastrá o pegá imágenes en el lienzo. PNG, JPG, WebP.
+              </div>
             </div>
           )}
 
@@ -230,14 +242,109 @@ export default function StudioSettings({
             <div className="space-y-5">
               <Header title="Editor" sub="Controles sobre el papel" />
               <Row label="Botón Editar al pasar el mouse">
+                <Switch on={prefs.showEditButton} onChange={(v) => set({ showEditButton: v })} />
+              </Row>
+              <Row label="Barra al seleccionar texto">
                 <Switch
-                  on={prefs.showEditButton}
-                  onChange={(v) => onPrefsChange({ ...prefs, showEditButton: v })}
+                  on={prefs.showSelectionToolbar}
+                  onChange={(v) => set({ showSelectionToolbar: v })}
                 />
               </Row>
-              <p className="text-[11px] text-neutral-400">
-                Si está apagado, podés seguir seleccionando texto y usando tools / prompt.
-              </p>
+              <Row label="Lápiz IA en la selección">
+                <Switch
+                  on={prefs.showSelectionAi}
+                  onChange={(v) => set({ showSelectionAi: v })}
+                  disabled={!prefs.showSelectionToolbar}
+                />
+              </Row>
+              <Hint>La barra de selección usa el mismo estilo blanco de la toolbar superior.</Hint>
+            </div>
+          )}
+
+          {section === 'agent' && (
+            <div className="space-y-5">
+              <Header title="Agente" sub="Input flotante, Tools y atajos" />
+
+              <div>
+                <p className="mb-2 text-[12px] font-medium text-neutral-700">Visibilidad del input</p>
+                <div className="flex flex-col gap-1.5">
+                  {(
+                    [
+                      {
+                        id: 'auto' as const,
+                        name: 'Solo cuando se abre',
+                        d: 'Tools, lápiz, atajos — no está siempre en pantalla',
+                      },
+                      {
+                        id: 'always' as const,
+                        name: 'Siempre visible',
+                        d: 'El input queda fijo abajo (modo clásico)',
+                      },
+                      {
+                        id: 'hidden' as const,
+                        name: 'Desactivado',
+                        d: 'No se muestra; solo panel de chat lateral',
+                      },
+                    ] as const
+                  ).map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => set({ agentVisibility: o.id })}
+                      className={cn(
+                        'flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors',
+                        prefs.agentVisibility === o.id
+                          ? 'border-neutral-900 bg-neutral-50'
+                          : 'border-neutral-200 hover:bg-neutral-50/80',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'mt-0.5 h-4 w-4 shrink-0 rounded-full border-2',
+                          prefs.agentVisibility === o.id
+                            ? 'border-neutral-900 bg-neutral-900'
+                            : 'border-neutral-300',
+                        )}
+                      />
+                      <div>
+                        <div className="text-[13px] font-semibold text-neutral-900">{o.name}</div>
+                        <div className="text-[11px] text-neutral-400">{o.d}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <Row label="Abrir desde Tools (flotante)">
+                <Switch
+                  on={prefs.showAgentInTools}
+                  onChange={(v) => set({ showAgentInTools: v })}
+                  disabled={prefs.agentVisibility === 'hidden'}
+                />
+              </Row>
+
+              <div className="rounded-xl border border-neutral-200 bg-neutral-50/80 p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-neutral-800">
+                  <Keyboard className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  Atajos de teclado
+                </div>
+                <Row label="Abrir agente">
+                  <ShortcutPicker
+                    letter={prefs.shortcutOpenAgent}
+                    onChange={(letter) => set({ shortcutOpenAgent: letter })}
+                  />
+                </Row>
+                <Row label="Editar selección">
+                  <ShortcutPicker
+                    letter={prefs.shortcutEditSelection}
+                    onChange={(letter) => set({ shortcutEditSelection: letter })}
+                  />
+                </Row>
+                <Hint>
+                  Ctrl+{prefs.shortcutOpenAgent.toUpperCase()} abre el agente · Ctrl+
+                  {prefs.shortcutEditSelection.toUpperCase()} con texto seleccionado entra en modo edición.
+                </Hint>
+              </div>
             </div>
           )}
         </div>
@@ -249,31 +356,74 @@ export default function StudioSettings({
 function Header({ title, sub }: { title: string; sub: string }) {
   return (
     <div>
-      <h2 className="text-[15px] font-semibold text-neutral-900">{title}</h2>
+      <h2 className="text-[15px] font-semibold tracking-tight text-neutral-900">{title}</h2>
       <p className="mt-0.5 text-[11px] text-neutral-400">{sub}</p>
     </div>
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
+function Hint({ children }: { children: ReactNode }) {
+  return <p className="text-[11px] leading-relaxed text-neutral-400">{children}</p>;
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-neutral-100 py-3">
+    <div className="flex items-center justify-between gap-3 border-b border-neutral-100 py-2.5 last:border-0">
       <span className="text-[13px] text-neutral-700">{label}</span>
       {children}
     </div>
   );
 }
 
-function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+function Segmented({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: { id: string; label: string }[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="flex gap-0.5 rounded-full border border-neutral-200 bg-neutral-50 p-0.5">
+      {options.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          onClick={() => onChange(o.id)}
+          className={cn(
+            'rounded-full px-3 py-1 text-[11px] font-medium transition-colors',
+            value === o.id
+              ? 'bg-neutral-900 text-white shadow-sm'
+              : 'text-neutral-500 hover:bg-white hover:text-neutral-900',
+          )}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Switch({
+  on,
+  onChange,
+  disabled,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={on}
+      disabled={disabled}
       onClick={() => onChange(!on)}
       className={cn(
-        'relative h-6 w-11 rounded-full transition-colors',
-        on ? 'bg-studio-brown' : 'bg-neutral-200',
+        'relative h-6 w-11 rounded-full transition-colors disabled:opacity-40',
+        on ? 'bg-neutral-900' : 'bg-neutral-200',
       )}
     >
       <span
@@ -283,5 +433,33 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
         )}
       />
     </button>
+  );
+}
+
+function ShortcutPicker({
+  letter,
+  onChange,
+}: {
+  letter: string;
+  onChange: (letter: string) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <kbd className="rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-neutral-500 shadow-sm">
+        Ctrl
+      </kbd>
+      <span className="text-neutral-300">+</span>
+      <select
+        value={letter.toLowerCase()}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-8 min-w-[3rem] rounded-lg border border-neutral-200 bg-white px-2 font-mono text-[12px] font-semibold uppercase text-neutral-800 outline-none hover:bg-neutral-50"
+      >
+        {KEY_OPTIONS.map((k) => (
+          <option key={k} value={k}>
+            {k === '/' ? '/' : k.toUpperCase()}
+          </option>
+        ))}
+      </select>
+    </div>
   );
 }

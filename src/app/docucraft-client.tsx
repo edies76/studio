@@ -20,6 +20,8 @@ import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
 import { Download, FileText, History, PanelRightClose } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
+import SelectionFormatBar from '@/components/selection-format-bar';
+import ZoomControl from '@/components/zoom-control';
 import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
 import type { PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
@@ -85,7 +87,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [historyIndex, setHistoryIndex] = useState(0);
 
   const [hasSelection, setHasSelection] = useState(false);
-  const [composerForceExpand, setComposerForceExpand] = useState(0);
+  const [selBar, setSelBar] = useState<{ top: number; left: number } | null>(null);
+  /** Ephemeral agent input — not always on canvas */
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentMode, setAgentMode] = useState<'chat' | 'edit'>('chat');
   const selectionRef = useRef<Range | null>(null);
   const selectedTextRef = useRef('');
   const abortRef = useRef<AbortController | null>(null);
@@ -204,6 +209,37 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setChangeLog((prev) => [...prev.slice(-80), item]);
   }, []);
 
+  const openAgent = useCallback((mode: 'chat' | 'edit' = 'chat') => {
+    if (prefs.agentVisibility === 'hidden') {
+      setChatCollapsed(false);
+      setChatWidth((w) => Math.max(w, 360));
+      return;
+    }
+    setAgentMode(mode);
+    setAgentOpen(true);
+  }, [prefs.agentVisibility]);
+
+  const closeAgent = useCallback(() => {
+    if (prefs.agentVisibility === 'always') return;
+    if (isBusy) return;
+    if (pendingEdits.some((e) => e.status === 'pending')) return;
+    setAgentOpen(false);
+    setAgentMode('chat');
+  }, [prefs.agentVisibility, isBusy, pendingEdits]);
+
+  // agentVisibility: always → keep open
+  useEffect(() => {
+    if (prefs.agentVisibility === 'always') setAgentOpen(true);
+    if (prefs.agentVisibility === 'hidden') setAgentOpen(false);
+  }, [prefs.agentVisibility]);
+
+  // Keep agent open while busy or reviewing
+  useEffect(() => {
+    if (isBusy || pendingEdits.some((e) => e.status === 'pending')) {
+      if (prefs.agentVisibility !== 'hidden') setAgentOpen(true);
+    }
+  }, [isBusy, pendingEdits, prefs.agentVisibility]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -219,19 +255,45 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         e.preventDefault();
         e.stopPropagation();
         setZoom((z) => Math.min(2, Math.round((z + 0.1) * 20) / 20));
-      } else if (zoomOut) {
+        return;
+      }
+      if (zoomOut) {
         e.preventDefault();
         e.stopPropagation();
         setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 20) / 20));
-      } else if (zoomReset) {
+        return;
+      }
+      if (zoomReset) {
         e.preventDefault();
         e.stopPropagation();
         setZoom(1);
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      const openKey = (prefs.shortcutOpenAgent || 'i').toLowerCase();
+      const editKey = (prefs.shortcutEditSelection || 'e').toLowerCase();
+
+      if (key === openKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        openAgent(hasSelection ? 'edit' : 'chat');
+        return;
+      }
+      if (key === editKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Prefer selection-edit when there is a selection
+        if (selectedTextRef.current.trim() || hasSelection) {
+          openAgent('edit');
+        } else {
+          openAgent('chat');
+        }
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, []);
+  }, [prefs.shortcutOpenAgent, prefs.shortcutEditSelection, openAgent, hasSelection]);
 
   const pushHistory = useCallback((html: string) => {
     setHistory((prev) => {
@@ -736,10 +798,13 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     requestAnimationFrame(() => {
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed || !sel.rangeCount || !canvasRef.current) {
-        // Don't wipe selection if user clicked the composer
+        setHasSelection(false);
+        setSelBar(null);
         return;
       }
       if (!selectionInCanvas(sel.anchorNode)) {
+        setHasSelection(false);
+        setSelBar(null);
         return;
       }
       const range = sel.getRangeAt(0);
@@ -747,23 +812,41 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       selectedTextRef.current = sel.toString();
       if (!selectedTextRef.current.trim()) {
         setHasSelection(false);
+        setSelBar(null);
         return;
       }
       setHasSelection(true);
-      // Open floating composer — no floating SelectionPrompt
-      setComposerForceExpand((n) => n + 1);
-      if (chatCollapsed === false) {
-        /* panel open is fine too */
+      // Word-like format bar near selection (does NOT auto-open agent)
+      if (prefs.showSelectionToolbar) {
+        const rect = range.getBoundingClientRect();
+        const host = paperHostRef.current;
+        if (host) {
+          const hostRect = host.getBoundingClientRect();
+          setSelBar({
+            top: Math.max(48, rect.top - hostRect.top - 44),
+            left: Math.min(
+              Math.max(120, rect.left - hostRect.left + rect.width / 2),
+              hostRect.width - 120,
+            ),
+          });
+        }
       }
     });
   };
 
   const clearSelectionContext = () => {
     setHasSelection(false);
+    setSelBar(null);
     selectedTextRef.current = '';
     selectionRef.current = null;
     const sel = window.getSelection();
     sel?.removeAllRanges();
+  };
+
+  const openAgentForSelection = () => {
+    if (!selectedTextRef.current.trim()) return;
+    setSelBar(null);
+    openAgent('edit');
   };
 
   const handleToolsAction = (action: OrbitAction, intensity: number) => {
@@ -1135,7 +1218,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const handleEditBlock = (_html: string, plain: string) => {
     selectedTextRef.current = plain;
     setHasSelection(Boolean(plain.trim()));
-    setComposerForceExpand((n) => n + 1);
+    openAgent('edit');
   };
 
   if (!isClient) {
@@ -1283,45 +1366,64 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               </div>
             </div>
 
-            {/* Floating agent: tools left + composer + zoom line + review (always on canvas) */}
-            <FloatingComposer
-              value={chatInput}
-              onChange={setChatInput}
-              onSend={handleComposerSend}
+            {/* Word-like selection format bar + AI pencil */}
+            {hasSelection && selBar && prefs.showSelectionToolbar && (
+              <SelectionFormatBar
+                top={selBar.top}
+                left={selBar.left}
+                visible
+                showAiPencil={prefs.showSelectionAi && prefs.agentVisibility !== 'hidden'}
+                onEditWithAi={openAgentForSelection}
+              />
+            )}
+
+            {/* Tools floating bottom-right (white capsule) */}
+            <ToolsDock
               busy={isBusy}
-              busyLabel={
-                activity.find((a) => a.state === 'active')?.label ||
-                (isBusy ? 'Recogiendo información…' : null)
-              }
-              onStop={handleStopAgent}
-              toolLogs={floatingLogs}
-              statusLine={floatingStatus}
               hasSelection={hasSelection}
-              selectionPreview={selectedTextRef.current}
-              onClearSelection={clearSelectionContext}
-              reviews={pendingList}
-              activeReviewId={pending?.id}
-              onSelectReview={setActiveEditId}
-              onAcceptReview={acceptEdit}
-              onRejectReview={rejectEdit}
-              onAcceptAll={acceptAllEdits}
-              onRejectAll={rejectAllEdits}
-              zoom={zoom}
-              onZoom={setZoom}
-              forceExpandKey={composerForceExpand}
-              onOpenPanel={() => {
-                setChatCollapsed(false);
-                setChatWidth((w) => Math.max(w, 360));
-              }}
-              toolsSlot={
-                <ToolsDock
-                  busy={isBusy}
-                  hasSelection={hasSelection}
-                  onAction={handleToolsAction}
-                  variant="inline"
-                />
-              }
+              onAction={handleToolsAction}
+              showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
+              onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
             />
+
+            {/* White zoom capsule — above tools on the right */}
+            <div className="pointer-events-none absolute bottom-[5.25rem] right-5 z-40">
+              <ZoomControl zoom={zoom} onZoom={setZoom} />
+            </div>
+
+            {/* Ephemeral agent input — only when opened (or always mode) */}
+            {prefs.agentVisibility !== 'hidden' && (
+              <FloatingComposer
+                open={agentOpen || prefs.agentVisibility === 'always'}
+                onClose={closeAgent}
+                value={chatInput}
+                onChange={setChatInput}
+                onSend={handleComposerSend}
+                busy={isBusy}
+                busyLabel={
+                  activity.find((a) => a.state === 'active')?.label ||
+                  (isBusy ? 'Recogiendo información…' : null)
+                }
+                onStop={handleStopAgent}
+                toolLogs={floatingLogs}
+                statusLine={floatingStatus}
+                mode={agentMode}
+                hasSelection={agentMode === 'edit' && hasSelection}
+                selectionPreview={selectedTextRef.current}
+                onClearSelection={clearSelectionContext}
+                reviews={pendingList}
+                activeReviewId={pending?.id}
+                onSelectReview={setActiveEditId}
+                onAcceptReview={acceptEdit}
+                onRejectReview={rejectEdit}
+                onAcceptAll={acceptAllEdits}
+                onRejectAll={rejectAllEdits}
+                onOpenPanel={() => {
+                  setChatCollapsed(false);
+                  setChatWidth((w) => Math.max(w, 360));
+                }}
+              />
+            )}
           </div>
         </div>
 

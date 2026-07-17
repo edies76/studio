@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import {
+  ArrowUp,
   GraduationCap,
   Maximize2,
+  MessageSquarePlus,
   Minimize2,
   SpellCheck,
   Wand2,
@@ -17,16 +19,18 @@ type Props = {
   busy?: boolean;
   hasSelection?: boolean;
   onAction: (action: OrbitAction, intensity: number) => void;
-  /** Sit beside floating composer instead of absolute bottom-right */
-  variant?: 'floating' | 'inline';
+  /** Open the ephemeral agent input */
+  onOpenAgent?: () => void;
+  /** Show "open agent" in the orbit menu */
+  showAgentOption?: boolean;
 };
 
-const ACTIONS: { id: OrbitAction; label: string; icon: ReactNode }[] = [
-  { id: 'improve', label: 'Improve', icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'shorter', label: 'Shorter', icon: <Minimize2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'expand', label: 'Expand', icon: <Maximize2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'grammar', label: 'Grammar', icon: <SpellCheck className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'academic', label: 'Academic', icon: <GraduationCap className="h-4 w-4" strokeWidth={1.75} /> },
+const ACTIONS: { id: OrbitAction; label: string; sendLabel: string; icon: ReactNode }[] = [
+  { id: 'improve', label: 'Improve', sendLabel: 'Send improve', icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'shorter', label: 'Shorter', sendLabel: 'Send shorter', icon: <Minimize2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'expand', label: 'Expand', sendLabel: 'Send expand', icon: <Maximize2 className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'grammar', label: 'Grammar', sendLabel: 'Send grammar', icon: <SpellCheck className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-4 w-4" strokeWidth={1.75} /> },
 ];
 
 const LEVELS = [
@@ -37,25 +41,47 @@ const LEVELS = [
   { value: 10, tip: 'Muy poco' },
 ];
 
-/** Tools capsule — inline next to floating composer (default) or legacy floating */
+/**
+ * Floating white tools capsule (bottom-right).
+ * Opens with staggered options; closes with reverse collapse animation.
+ * After picking an action → main icon becomes blue arrow "Send {action}".
+ */
 export default function ToolsDock({
   busy,
   hasSelection,
   onAction,
-  variant = 'inline',
+  onOpenAgent,
+  showAgentOption = true,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<OrbitAction | null>(null);
   const [intensity, setIntensity] = useState(50);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  /** Animate panel in/out without unmounting mid-close */
+  const [panelVisible, setPanelVisible] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const expanded = open || Boolean(action);
+  const showPanel = panelVisible || expanded;
 
   const reset = () => {
     setAction(null);
     setOpen(false);
     setIntensity(50);
     setHoverKey(null);
+    setPanelVisible(false);
   };
+
+  // Sync open → panelVisible for enter; exit animates then hides
+  useEffect(() => {
+    if (expanded) {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+      requestAnimationFrame(() => setPanelVisible(true));
+    } else if (panelVisible) {
+      setPanelVisible(false);
+    }
+  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -82,33 +108,67 @@ export default function ToolsDock({
   };
 
   const selected = ACTIONS.find((a) => a.id === action);
-  const expanded = open || Boolean(action);
-
   const cell =
-    'relative flex h-10 w-10 shrink-0 items-center justify-center text-neutral-800 transition-all duration-200 ease-out';
+    'relative flex h-11 w-11 shrink-0 items-center justify-center text-neutral-800 transition-all duration-200 ease-out';
 
-  const shell = (
+  const optionCount = (showAgentOption && onOpenAgent ? 1 : 0) + (action ? LEVELS.length : ACTIONS.length);
+  const maxH = action ? 280 : Math.min(420, 56 + optionCount * 44);
+
+  return (
     <div
       ref={rootRef}
       data-selection-ui
       title={hasSelection ? 'Tools · selección' : 'Tools · documento'}
-      className={cn(variant === 'floating' && 'pointer-events-none absolute bottom-10 right-5 z-40')}
+      className="pointer-events-none absolute bottom-6 right-5 z-40"
     >
       <div
         className={cn(
-          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-lg shadow-black/8 transition-all duration-300 ease-out',
-          expanded ? 'rounded-[28px]' : 'rounded-full',
+          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-xl shadow-black/10 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          expanded || panelVisible ? 'rounded-[28px]' : 'rounded-full',
         )}
       >
+        {/* Options panel — opens AND closes with height/opacity animation */}
         <div
           className={cn(
-            'flex flex-col items-center overflow-hidden transition-all duration-300 ease-out',
-            expanded ? 'max-h-[360px] opacity-100' : 'max-h-0 opacity-0',
+            'flex flex-col items-center overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            panelVisible && expanded
+              ? 'opacity-100'
+              : 'pointer-events-none opacity-0',
           )}
+          style={{
+            maxHeight: panelVisible && expanded ? maxH : 0,
+          }}
         >
+          {/* Open agent — no intensity */}
+          {showAgentOption && onOpenAgent && !action && open && (
+            <button
+              type="button"
+              title="Abrir agente"
+              disabled={busy}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseEnter={() => setHoverKey('agent')}
+              onMouseLeave={() => setHoverKey(null)}
+              onClick={() => {
+                onOpenAgent();
+                reset();
+              }}
+              className={cn(cell, busy && 'opacity-40')}
+            >
+              <span
+                className={cn(
+                  'absolute inset-1 rounded-full transition-all duration-200 ease-out',
+                  hoverKey === 'agent' ? 'scale-100 bg-neutral-100' : 'scale-90 bg-transparent',
+                )}
+              />
+              <span className="relative z-10">
+                <MessageSquarePlus className="h-4 w-4" strokeWidth={1.75} />
+              </span>
+            </button>
+          )}
+
           {!action &&
             open &&
-            ACTIONS.map((a) => (
+            ACTIONS.map((a, idx) => (
               <button
                 key={a.id}
                 type="button"
@@ -122,6 +182,9 @@ export default function ToolsDock({
                   setIntensity(50);
                 }}
                 className={cn(cell, busy && 'opacity-40')}
+                style={{
+                  transitionDelay: panelVisible ? `${idx * 30}ms` : '0ms',
+                }}
               >
                 <span
                   className={cn(
@@ -165,12 +228,13 @@ export default function ToolsDock({
             })}
         </div>
 
+        {/* Main button */}
         <button
           type="button"
           disabled={busy}
           title={
             action
-              ? `${selected?.label} · click enviar · click fuera cancela`
+              ? selected?.sendLabel || 'Send'
               : open
                 ? 'Cerrar'
                 : 'AI tools'
@@ -183,26 +247,39 @@ export default function ToolsDock({
               run();
               return;
             }
-            setOpen((v) => !v);
+            if (open) {
+              // Close with animation
+              setPanelVisible(false);
+              window.setTimeout(() => setOpen(false), 280);
+            } else {
+              setOpen(true);
+            }
           }}
           className={cn(
-            'relative flex h-11 w-11 shrink-0 items-center justify-center text-neutral-800',
+            'relative flex h-12 w-12 shrink-0 items-center justify-center transition-colors',
             busy && 'opacity-50',
+            action && 'text-blue-600',
           )}
         >
           <span
             className={cn(
-              'absolute inset-1 rounded-full transition-all duration-200',
-              hoverKey === 'main' || action ? 'bg-neutral-100' : 'bg-transparent',
+              'absolute inset-1.5 rounded-full transition-all duration-200',
+              hoverKey === 'main' || action
+                ? action
+                  ? 'bg-blue-50'
+                  : 'bg-neutral-100'
+                : 'bg-transparent',
             )}
           />
-          <span className="relative z-10">
-            {selected ? selected.icon : <Wrench className="h-4.5 w-4.5" strokeWidth={1.75} />}
+          <span className="relative z-10 transition-transform duration-200">
+            {action ? (
+              <ArrowUp className="h-5 w-5 text-blue-600" strokeWidth={2.25} />
+            ) : (
+              <Wrench className="h-5 w-5" strokeWidth={1.75} />
+            )}
           </span>
         </button>
       </div>
     </div>
   );
-
-  return shell;
 }
