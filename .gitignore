@@ -1,5 +1,3 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
 /node_modules
 /.pnp
@@ -23,23 +21,19 @@
 # misc
 .DS_Store
 *.pem
+*.log
+.genkit/*
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# vercel
-.vercel
+# env (never commit secrets)
+.env
+.env*.local
+!.env.example
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-.genkit/*
-.env*
-
-# firebase
+# firebase / local
 firebase-debug.log
 firestore-debug.log
+.idx/

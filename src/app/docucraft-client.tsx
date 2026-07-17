@@ -1,8 +1,6 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { generateDocumentContent } from '@/ai/flows/generate-document-content';
-import { enhanceDocument } from '@/ai/flows/enhance-document';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -10,509 +8,991 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import AiToolsSidebar from '@/components/ai-tools-sidebar';
-import FloatingToolbar from '@/components/ui/floating-toolbar';
-import TextSelectionIcon from '@/components/ui/text-selection-icon';
-import TextSelectionMenu from '@/components/ui/text-selection-menu';
+import DocumentEditorToolbar from '@/components/document-editor-toolbar';
+import PaperCanvas from '@/components/paper-canvas';
+import StudioChat, {
+  type ActivityStep,
+  type ChatMessage,
+  type PendingEdit,
+} from '@/components/studio-chat';
+import SelectionPrompt from '@/components/selection-prompt';
+import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
+import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
+import { Download, FileText } from 'lucide-react';
+import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
+import type { PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
 import {
-  FileText,
-  Download,
-  Wand2,
-  Upload,
-} from 'lucide-react';
-import { cn } from '@/lib/utils';
+  sanitizeDocumentHtml,
+  typesetEditor,
+  insertMathAtSelection,
+  insertTableAtSelection,
+  replaceMathNode,
+  getMathSource,
+  htmlForWordExport,
+} from '@/lib/math-html';
+import { applyHtmlWithCascade, paintStreamingHtml } from '@/lib/cascade';
+import { serializeEditorHtml, stripBreaks } from '@/lib/page-layout';
+import CanvasReviewBar from '@/components/canvas-review-bar';
+import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
+import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
+import ZoomControl from '@/components/zoom-control';
 import jsPDF from 'jspdf';
-import * as mammoth from 'mammoth';
 
-declare global {
-  interface Window {
-    MathJax: {
-      typesetPromise: (elements?: HTMLElement[]) => Promise<void>;
-      startup: {
-        promise: Promise<void>;
-      };
-    };
-  }
+const DEFAULT_FONT = 'Inter, Segoe UI, system-ui, sans-serif';
+
+function uid() {
+  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export default function DocuCraftClient({ topic }: { topic: string }) {
-  const [documentContent, setDocumentContent] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [showIcon, setShowIcon] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
-  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
-  const [isClient, setIsClient] = useState(false);
+function isDocEmpty(html: string) {
+  const t = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+  return t.length < 8;
+}
 
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
+/** Only draft a full document when the user clearly asks for one — not "hola". */
+function wantsFullDocument(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (/^(hola|hello|hi|hey|buenas|buen[oa]s|qué tal|que tal|gracias|ok|vale|hey+)[\s!?.]*$/i.test(t)) {
+    return false;
+  }
+  if (t.length < 10) return false;
+  return /doc(umento)?|ensayo|informe|redact|escrib[ií]|gener[ae]|crea(r|me)?|paper|taller|revoluci|sobre\s+\w{4,}|estructura|apa|capítulo|articulo|artículo/i.test(
+    t,
+  ) || t.length > 48;
+}
 
-  const selectionRef = useRef<Range | null>(null);
+export default function DocsStudioClient({ topic }: { topic: string }) {
   const { toast } = useToast();
-  const editorRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const typesetMath = useCallback(() => {
-    if (editorRef.current && window.MathJax) {
-        window.MathJax.startup.promise.then(() => {
-            window.MathJax.typesetPromise([editorRef.current!]).catch((err) => {
-                console.error('MathJax typesetting failed:', err);
-            });
-        });
+  const [documentTitle, setDocumentTitle] = useState('Untitled');
+  const [documentContent, setDocumentContent] = useState('');
+  const [isClient, setIsClient] = useState(false);
+  const [isBusy, setIsBusy] = useState(false);
+  const [paperSize, setPaperSize] = useState<PaperSize>('letter');
+  const [fontFamily, setFontFamily] = useState(DEFAULT_FONT);
+  const [fontSize, setFontSize] = useState('12px');
+  const [pageCount, setPageCount] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [model] = useState(DEFAULT_STUDIO_MODEL);
+  const [prefs, setPrefs] = useState<StudioPrefs>(DEFAULT_PREFS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
+
+  const [history, setHistory] = useState<string[]>(['']);
+  const [historyIndex, setHistoryIndex] = useState(0);
+
+  const [selOpen, setSelOpen] = useState(false);
+  const [selPos, setSelPos] = useState({ top: 0, left: 0 });
+  const [hasSelection, setHasSelection] = useState(false);
+  const selectionRef = useRef<Range | null>(null);
+  const selectedTextRef = useRef('');
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [activity, setActivity] = useState<ActivityStep[]>([]);
+  const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const paperHostRef = useRef<HTMLDivElement>(null);
+  const didAuto = useRef(false);
+  const skipHistory = useRef(false);
+  const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastLocalNotify = useRef(0);
+
+  useEffect(() => setIsClient(true), []);
+
+  useEffect(() => {
+    // Only load brief if explicitly marked active (pre-summary with guide)
+    try {
+      if (sessionStorage.getItem('studioBriefActive') !== '1') {
+        sessionStorage.removeItem('studioAssignment');
+        sessionStorage.removeItem('studioBriefRaw');
+        return;
+      }
+      const raw = sessionStorage.getItem('studioAssignment');
+      if (raw) {
+        const a = JSON.parse(raw);
+        if (a?.title) setDocumentTitle(a.title);
+      }
+    } catch {
+      /* ignore */
     }
   }, []);
 
-  useEffect(() => {
-    const uploadedContent = sessionStorage.getItem('uploadedDocumentContent');
-    sessionStorage.removeItem('uploadedDocumentContent');
-
-    const generateInitialContent = async () => {
-      const { dismiss } = toast({ description: 'B.A.M.B.A.I. is thinking... a document will be generated soon' });
-      try {
-        const result = await generateDocumentContent({ topic: uploadedContent ? `${topic}\n\n${uploadedContent}` : topic });
-        setDocumentContent(result.content);
-        toast({ title: 'Success', description: 'Document generated successfully.' });
-      } catch (error) { 
-        console.error(error);
-        toast({ variant: 'destructive', title: 'Error', description: 'Could not generate document content.' });
-        setDocumentContent(`<h1>Error generating document</h1><p>Please try again later.</p>`);
-      } finally {
-        setIsLoading(false);
-        dismiss();
-      }
-    };
-
-    if (topic) {
-      generateInitialContent();
-    }
-  }, [topic, toast]);
-
-  useEffect(() => {
-    if (editorRef.current && editorRef.current.innerHTML !== documentContent) {
-      editorRef.current.innerHTML = documentContent;
-      typesetMath();
-    }
-  }, [documentContent, typesetMath]);
-
-  useEffect(() => {
-    const handlePaste = (event: ClipboardEvent) => {
-      event.preventDefault();
-      const items = event.clipboardData?.items;
-      if (!items) return;
-
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.indexOf('image') !== -1) {
-          const blob = items[i].getAsFile();
-          if (!blob) continue;
-
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const src = e.target?.result as string;
-            const img = document.createElement('img');
-            img.src = src;
-
-            const selection = window.getSelection();
-            if (!selection || selection.rangeCount === 0) return;
-
-            const range = selection.getRangeAt(0);
-            range.deleteContents();
-            range.insertNode(img);
-
-            // Move cursor after the inserted image
-            const newRange = document.createRange();
-            newRange.setStartAfter(img);
-            newRange.collapse(true);
-            selection.removeAllRanges();
-            selection.addRange(newRange);
-
-            // Save the updated content
-            if (editorRef.current) {
-              setDocumentContent(editorRef.current.innerHTML);
-            }
-          };
-          reader.readAsDataURL(blob);
-        }
-      }
-    };
-
-    const editor = editorRef.current;
-    if (editor) {
-      editor.addEventListener('paste', handlePaste);
-    }
-
-    return () => {
-      if (editor) {
-        editor.removeEventListener('paste', handlePaste);
-      }
-    };
-  }, [editorRef]);
-
-  const handleMouseUp = (e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest('.floating-toolbar-container')) {
-      return;
-    }
-    setTimeout(() => {
-      const selection = window.getSelection();
-      if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
-        const range = selection.getRangeAt(0);
-        selectionRef.current = range.cloneRange();
-        const rect = range.getBoundingClientRect();
-        
-        if (editorRef.current) {
-          const editorRect = editorRef.current.getBoundingClientRect();
-          setMenuPosition({
-            top: rect.top - editorRect.top + rect.height / 2 - 16, // Center vertically
-            left: rect.right - editorRect.left + 10, // Position to the right
-          });
-          setShowIcon(true);
-          setShowMenu(false);
-        }
-      } else {
-        setShowIcon(false);
-        setShowMenu(false);
-      }
-    }, 10);
-  };
-  
-  const handleIconClick = () => {
-    if (selectionRef.current) {
-        const rect = selectionRef.current.getBoundingClientRect();
-        if (editorRef.current) {
-            const editorRect = editorRef.current.getBoundingClientRect();
-            setMenuPosition({
-                top: rect.bottom - editorRect.top + 5,
-                left: rect.left - editorRect.left + rect.width / 2 - 160, // Center horizontally
-            });
-            setShowIcon(false);
-            setShowMenu(true);
-        }
-    }
-  };
-
-  const handleFloatingBarAction = async (action: string) => {
-    if (!editorRef.current) return;
-
-    let feedback = '';
-    let toastDescription = 'AI is enhancing the document...';
-
-    switch (action) {
-      case 'grammar':
-        feedback = 'Fix all grammar and spelling mistakes in the text. Only return the corrected text.';
-        toastDescription = 'Checking grammar for the entire document...';
-        break;
-      case 'suggest-changes':
-         feedback = 'Act as an editor. Review the following document and provide a revised version with improvements to clarity, flow, and overall quality. Only return the improved text.';
-         toastDescription = 'AI is suggesting changes...';
-        break;
-      case 'improve':
-        feedback = 'Improve the entire document, making it more engaging and clear.';
-        break;
-      case 'shorter':
-        feedback = 'Make the entire document shorter and more concise.';
-        break;
-      case 'expand':
-        feedback = 'Expand on the content of the entire document, adding more detail and explanation.';
-        break;
-      default:
-        console.warn(`Unknown floating bar action: ${action}`);
+  /** Only crucial events go to history drawer — not spam in chat */
+  const pushEvent = useCallback((event: ChatEvent, crucial = false) => {
+    if (!crucial && (event.type === 'local_edit' || event.type === 'ai_change')) {
+      // drop noisy local keystrokes entirely; only AI apply/draft/reject matter
+      if (event.type === 'local_edit' && !/export|fórmula|tabla|aplicado|rechaz/i.test(event.title)) {
         return;
-    }
-
-    setIsLoading(true);
-    const { dismiss } = toast({ description: toastDescription });
-    try {
-      const result = await enhanceDocument({
-        documentContent: editorRef.current.innerText,
-        feedback: feedback,
-      });
-      setDocumentContent(result.enhancedDocumentContent);
-      toast({ title: 'Success', description: 'Document enhancement completed.' });
-    } catch (error) {
-      console.error(error);
-      toast({ variant: 'destructive', title: 'Error', description: 'Could not enhance the document.' });
-    } finally {
-      setIsLoading(false);
-      dismiss();
-    }
-  };
-
-  const handleAIAction = async (action: string, value?: string) => {
-    let prompt = '';
-    const selectedText = selectionRef.current?.toString() || '';
-
-    if (!selectedText) {
-        toast({ variant: 'destructive', description: 'Please select text to perform this action.' });
-        return;
-    }
-
-    switch (action) {
-      case 'improve':
-        prompt = 'Improve the following text:';
-        break;
-      case 'summarize':
-        prompt = 'Summarize the following text:';
-        break;
-      case 'shorter':
-        prompt = 'Make the following text shorter:';
-        break;
-      case 'expand':
-        prompt = 'Expand on the following text:';
-        break;
-      case 'custom_prompt':
-        prompt = value || '';
-        break;
-    }
-
-    if (!prompt) return;
-
-    setIsLoading(true);
-    const { dismiss } = toast({ description: 'AI is thinking...' });
-
-    try {
-      const result = await enhanceDocument({
-        documentContent: selectedText,
-        feedback: prompt,
-      });
-
-      if (editorRef.current && selectionRef.current) {
-        const range = selectionRef.current;
-        range.deleteContents();
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = result.enhancedDocumentContent;
-        const nodes = Array.from(tempDiv.childNodes);
-        nodes.reverse().forEach(node => range.insertNode(node));
-        const newRange = document.createRange();
-        newRange.setStartBefore(nodes[nodes.length - 1]);
-        newRange.setEndAfter(nodes[0]);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(newRange);
-        selectionRef.current = newRange;
       }
-
-      toast({ title: 'Success', description: 'Text updated successfully.' });
-    } catch (error) {
-      console.error(error);
-      toast({
-        variant: 'destructive',
-        title: 'Uh oh! Something went wrong.',
-        description: 'Could not enhance text.',
-      });
-    } finally {
-      setIsLoading(false);
-      setShowMenu(false);
-      dismiss();
     }
-  };
-  
-  const handleExportPdf = async () => {
-    if (!editorRef.current) return;
-    setIsLoading(true);
-    const { dismiss } = toast({ description: 'Exporting PDF...' });
-  
-    try {
-      if (window.MathJax) {
-        await window.MathJax.startup.promise;
-        await window.MathJax.typesetPromise([editorRef.current]);
+    const item: HistoryItem = { id: uid(), at: Date.now(), event };
+    setChangeLog((prev) => [...prev.slice(-80), item]);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      if (e.key === '=' || e.key === '+') {
+        e.preventDefault();
+        setZoom((z) => Math.min(2, Math.round((z + 0.1) * 20) / 20));
+      } else if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 20) / 20));
+      } else if (e.key === '0') {
+        e.preventDefault();
+        setZoom(1);
       }
-  
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'pt',
-        format: 'a4',
-      });
-  
-      const contentToExport = editorRef.current.cloneNode(true) as HTMLElement;
-      document.body.appendChild(contentToExport);
-  
-      contentToExport.style.backgroundColor = 'white';
-      contentToExport.style.padding = '35px';
-      contentToExport.style.width = '525pt';
-      contentToExport.style.fontFamily = 'Inter, sans-serif';
-      
-      Array.from(contentToExport.querySelectorAll('*')).forEach(el => {
-        const htmlEl = el as HTMLElement;
-        htmlEl.style.color = 'black';
-        htmlEl.style.fontFamily = 'Inter, sans-serif';
-      });
-      
-      await pdf.html(contentToExport, {
-        callback: function (doc) {
-          doc.save('document.pdf');
-          document.body.removeChild(contentToExport);
-          dismiss();
-          toast({ title: 'Success', description: 'PDF exported successfully.' });
-        },
-        width: 525,
-        windowWidth: contentToExport.scrollWidth,
-        autoPaging: 'text'
-      });
-  
-    } catch (error) {
-      console.error('Error exporting PDF:', error);
-      dismiss();
-      toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Could not export PDF. Please try again.',
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-  
-  const handleExportWord = () => {
-    if (!editorRef.current) return;
-    let content = editorRef.current.innerHTML;
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = content;
-    const mathJaxElements = tempDiv.querySelectorAll('mjx-container');
-    mathJaxElements.forEach((mjx) => {
-        const mathml = mjx.querySelector('math');
-        if(mathml) {
-            const oMath = `<m:oMath>${mathml.outerHTML}</m:oMath>`;
-            const parent = mjx.parentElement;
-            if(parent) {
-                const span = document.createElement('span');
-                span.innerHTML = oMath;
-                if (span.firstChild) {
-                  parent.replaceChild(span.firstChild, mjx);
-                }
-            }
-        }
+  const pushHistory = useCallback((html: string) => {
+    setHistory((prev) => {
+      const next = prev.slice(0, historyIndex + 1);
+      next.push(html);
+      if (next.length > 40) next.shift();
+      return next;
     });
+    setHistoryIndex((i) => Math.min(i + 1, 39));
+  }, [historyIndex]);
 
-    content = tempDiv.innerHTML;
+  const applyHtml = useCallback(
+    (html: string, recordHistory = true, cascade = false) => {
+      const clean = sanitizeDocumentHtml(html);
+      // Never store page-break spacers in history / state
+      const withoutBreaks = clean.replace(
+        /<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi,
+        '',
+      );
+      setDocumentContent(withoutBreaks);
+      if (editorRef.current) {
+        skipHistory.current = true;
+        stripBreaks(editorRef.current);
+        if (cascade) {
+          applyHtmlWithCascade(editorRef.current, withoutBreaks, () => {
+            typesetEditor(editorRef.current);
+            skipHistory.current = false;
+          });
+        } else {
+          editorRef.current.innerHTML = withoutBreaks;
+          requestAnimationFrame(() => typesetEditor(editorRef.current));
+          skipHistory.current = false;
+        }
+      }
+      if (recordHistory) pushHistory(withoutBreaks);
+    },
+    [pushHistory],
+  );
 
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
-        "xmlns:w='urn:schemas-microsoft-com:office:word' "+
-        "xmlns:m='http://schemas.openxmlformats.org/office/2006/math' "+
-        "xmlns='http://www.w3.org/TR/REC-html40'>"+
-        `<head><meta charset='utf-8'><title>Export HTML to Word</title><style>body{font-family: 'Inter', sans-serif;} h1,h2,h3,h4,h5,h6{font-family: 'Playfair Display', serif;}</style></head><body>`;
-    const footer = '</body></html>';
-    const sourceHTML = header+content+footer;
+  /** Always strip page-break spacers before AI / history / export */
+  const readEditorHtml = () =>
+    serializeEditorHtml(editorRef.current) || documentContent;
 
-    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
-    const fileDownload = document.createElement('a');
-    document.body.appendChild(fileDownload);
-    fileDownload.href = source;
-    fileDownload.download = 'document.doc';
-    fileDownload.click();
-    document.body.removeChild(fileDownload);
+  const undo = () => {
+    if (historyIndex <= 0) return;
+    const i = historyIndex - 1;
+    setHistoryIndex(i);
+    applyHtml(history[i] || '', false);
+    pushEvent({
+      type: 'local_edit',
+      title: 'Deshiciste un cambio',
+      summary: 'Se restauró una versión anterior del documento.',
+    });
   };
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const fileContent = e.target?.result;
-        if (fileContent) {
-          if (file.name.endsWith('.docx')) {
+  const redo = () => {
+    if (historyIndex >= history.length - 1) return;
+    const i = historyIndex + 1;
+    setHistoryIndex(i);
+    applyHtml(history[i] || '', false);
+  };
+
+  const setActivityLabel = (label: string, state: ActivityStep['state'] = 'active') => {
+    setActivity((prev) => {
+      const done = prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s));
+      return [...done.slice(-12), { id: uid(), label, state }];
+    });
+  };
+
+  /** Fast first draft — no diff, auto-apply + live stream preview */
+  const runFastDraft = useCallback(
+    async (prompt: string) => {
+      const p = prompt.trim();
+      if (!p) return;
+      setIsBusy(true);
+      setChatInput('');
+      setPendingEdits([]);
+      setActivity([{ id: uid(), label: 'Escribiendo…', state: 'active' }]);
+      if (!documentTitle || documentTitle === 'Untitled') {
+        setDocumentTitle(p.slice(0, 48) + (p.length > 48 ? '…' : ''));
+      }
+      const assistantId = uid();
+      setMessages((m) => [
+        ...m,
+        { id: uid(), role: 'user', content: p },
+        {
+          id: assistantId,
+          role: 'assistant',
+          content: 'Escribiendo…',
+          streaming: true,
+          isDraftStream: true,
+          draftHtml: '',
+          draftStatus: 'Escribiendo…',
+        },
+      ]);
+
+      try {
+        const res = await fetch('/api/draft', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: p, model }),
+        });
+        if (!res.ok || !res.body) throw new Error('Draft failed');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let htmlAcc = '';
+        let lastPaint = 0;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+          for (const chunk of parts) {
+            const line = chunk.trim();
+            if (!line.startsWith('data:')) continue;
+            let ev: any;
             try {
-              const mammothResult = await mammoth.convertToHtml({ arrayBuffer: fileContent as ArrayBuffer });
-              if (editorRef.current) {
-                editorRef.current.innerHTML += mammothResult.value;
+              ev = JSON.parse(line.slice(5).trim());
+            } catch {
+              continue;
+            }
+            if (ev.type === 'status') {
+              setActivityLabel(ev.label || 'Escribiendo…', 'active');
+              setMessages((ms) =>
+                ms.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, draftStatus: ev.label || 'Escribiendo…', streaming: true }
+                    : m,
+                ),
+              );
+            }
+            if (ev.type === 'html_delta') {
+              htmlAcc += ev.delta || '';
+              const now = Date.now();
+              if (now - lastPaint > 80) {
+                lastPaint = now;
+                const clean = sanitizeDocumentHtml(htmlAcc);
+                if (editorRef.current) {
+                  skipHistory.current = true;
+                  paintStreamingHtml(editorRef.current, clean);
+                  skipHistory.current = false;
+                  if (htmlAcc.length % 400 < 40) typesetEditor(editorRef.current);
+                }
+                setMessages((ms) =>
+                  ms.map((m) =>
+                    m.id === assistantId
+                      ? {
+                          ...m,
+                          draftHtml: clean,
+                          draftStatus: 'Escribiendo…',
+                          streaming: true,
+                          isDraftStream: true,
+                        }
+                      : m,
+                  ),
+                );
               }
-            } catch (error) {
-              console.error('Error converting .docx to HTML:', error);
             }
-          } else if (file.type.startsWith('image/')) {
-            if (editorRef.current) {
-              editorRef.current.innerHTML += `<img src="${fileContent}" />`;
+            if (ev.type === 'html_ready') {
+              const finalHtml = sanitizeDocumentHtml(ev.html || htmlAcc);
+              applyHtml(finalHtml, true, true);
+              requestAnimationFrame(() => typesetEditor(editorRef.current));
+              setMessages((ms) =>
+                ms.map((m) =>
+                  m.id === assistantId
+                    ? {
+                        ...m,
+                        content: 'Listo',
+                        draftHtml: finalHtml,
+                        draftStatus: 'Listo',
+                        streaming: false,
+                        isDraftStream: true,
+                      }
+                    : m,
+                ),
+              );
+              pushEvent(
+                {
+                  type: 'ai_draft',
+                  title: 'Documento creado',
+                  summary: 'aplicado al lienzo',
+                },
+                true,
+              );
+              setActivityLabel('Done', 'done');
             }
-          } else {
-            if (editorRef.current) {
-              editorRef.current.innerHTML += fileContent as string;
+            if (ev.type === 'error') {
+              toast({ variant: 'destructive', title: 'Draft error', description: ev.message });
+              setMessages((ms) =>
+                ms.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: ev.message || 'Error', streaming: false, isDraftStream: false }
+                    : m,
+                ),
+              );
             }
           }
         }
-      };
-      if (file.name.endsWith('.docx')) {
-        reader.readAsArrayBuffer(file);
-      } else if (file.type.startsWith('image/')) {
-        reader.readAsDataURL(file);
-      } else {
-        reader.readAsText(file);
+      } catch (e: any) {
+        toast({ variant: 'destructive', title: 'Draft failed', description: e?.message });
+      } finally {
+        setIsBusy(false);
       }
+    },
+    [model, applyHtml, toast, documentTitle, pushEvent],
+  );
+
+  /** Edits / rewrites — propose + ghost / accept */
+  const runChat = useCallback(
+    async (userText: string, opts?: { selectedText?: string; intensity?: number }) => {
+      const text = userText.trim();
+      if (!text) return;
+
+      const empty = isDocEmpty(readEditorHtml());
+      // Only full-draft on clear document requests — never on "hola"
+      if (empty && wantsFullDocument(text)) {
+        await runFastDraft(text);
+        return;
+      }
+
+      const userMsg: ChatMessage = { id: uid(), role: 'user', content: text };
+      const nextMessages = [...messages, userMsg];
+      setMessages(nextMessages);
+      setChatInput('');
+      setIsBusy(true);
+      setActivity([{ id: uid(), label: 'Pensando…', state: 'active' }]);
+
+      const assistantId = uid();
+      setMessages((m) => [...nextMessages, { id: assistantId, role: 'assistant', content: '', streaming: true }]);
+
+      try {
+        let assignmentContext = '';
+        // Never inject old Gauss/taller brief unless user explicitly loaded a guide
+        try {
+          if (sessionStorage.getItem('studioBriefActive') === '1') {
+            const raw = sessionStorage.getItem('studioAssignment');
+            const briefRaw = sessionStorage.getItem('studioBriefRaw');
+            if (raw) {
+              const a = JSON.parse(raw);
+              assignmentContext = [
+                a.title && `Title: ${a.title}`,
+                a.tasks?.length && `Tasks: ${a.tasks.map((t: any) => t.title).join('; ')}`,
+              ]
+                .filter(Boolean)
+                .join('\n');
+            }
+            if (briefRaw) assignmentContext += `\n${briefRaw.slice(0, 4000)}`;
+          }
+        } catch {
+          /* ignore */
+        }
+
+        const intensityNote =
+          opts?.intensity != null
+            ? `\nApply intensity ${opts.intensity}% (10=subtle, 100=strong).`
+            : '';
+
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: nextMessages.map(({ role, content }) => ({
+              role,
+              content: role === 'user' && content === text ? content + intensityNote : content,
+            })),
+            documentHtml: readEditorHtml(),
+            documentTitle,
+            paperSize,
+            selectedText: opts?.selectedText || selectedTextRef.current || '',
+            model,
+            autoStart: false,
+            assignmentContext,
+          }),
+        });
+
+        if (!res.ok || !res.body) throw new Error('Chat failed');
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let acc = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split('\n\n');
+          buffer = chunks.pop() || '';
+          for (const chunk of chunks) {
+            const line = chunk.trim();
+            if (!line.startsWith('data:')) continue;
+            let ev: any;
+            try {
+              ev = JSON.parse(line.slice(5).trim());
+            } catch {
+              continue;
+            }
+            if (ev.type === 'thinking' || ev.type === 'status') {
+              setActivityLabel(ev.label || 'Working…', 'active');
+            }
+            if (ev.type === 'tool_start') setActivityLabel(ev.label || ev.name || 'Tool…', 'active');
+            if (ev.type === 'tool_end') {
+              setActivity((prev) =>
+                prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)),
+              );
+            }
+            if (ev.type === 'text') {
+              acc += ev.delta || '';
+              setMessages((ms) =>
+                ms.map((m) => (m.id === assistantId ? { ...m, content: acc, streaming: true } : m)),
+              );
+            }
+            if (ev.type === 'propose_edit') {
+              const edit = ev.edit as ProposeEditPayload;
+              if (!edit.beforeHtml && edit.mode === 'replace_document') {
+                edit.beforeHtml = readEditorHtml();
+              }
+              if (!edit.beforeHtml && edit.mode === 'replace_selection') {
+                edit.beforeHtml = selectedTextRef.current
+                  ? `<p>${selectedTextRef.current}</p>`
+                  : '';
+              }
+              setPendingEdits((p) => [...p, { id: ev.id, edit, status: 'pending' }]);
+              setActivityLabel('Revisá en el lienzo', 'done');
+              pushEvent(
+                {
+                  type: 'ai_change',
+                  title: edit.title || 'Cambio propuesto',
+                  summary: 'revisá diff en el lienzo',
+                },
+                true,
+              );
+            }
+            if (ev.type === 'error') {
+              toast({ variant: 'destructive', title: 'Chat error', description: ev.message });
+            }
+            if (ev.type === 'done') {
+              setMessages((ms) =>
+                ms.map((m) =>
+                  m.id === assistantId
+                    ? { ...m, content: acc || ev.finalText || m.content, streaming: false }
+                    : m,
+                ),
+              );
+              setActivityLabel('Done', 'done');
+            }
+          }
+        }
+      } catch (e: any) {
+        toast({ variant: 'destructive', title: 'Chat failed', description: e?.message });
+        setMessages((ms) =>
+          ms.map((m) =>
+            m.id === assistantId
+              ? { ...m, content: 'No pude completar eso. Probá de nuevo.', streaming: false }
+              : m,
+          ),
+        );
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent],
+  );
+
+  useEffect(() => {
+    if (!topic || didAuto.current || !isClient) return;
+    didAuto.current = true;
+    setDocumentTitle(topic.slice(0, 48) + (topic.length > 48 ? '…' : ''));
+    void runFastDraft(topic);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic, isClient]);
+
+  const onEditorInput = () => {
+    if (!editorRef.current || skipHistory.current) return;
+    const html = serializeEditorHtml(editorRef.current);
+    setDocumentContent(html);
+    pushHistory(html);
+
+    // Re-typeset only — no spam events for every keystroke
+    if (localEditTimer.current) clearTimeout(localEditTimer.current);
+    localEditTimer.current = setTimeout(() => {
+      if (editorRef.current) typesetEditor(editorRef.current);
+    }, 800);
+  };
+
+  const handleMouseUp = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('[data-selection-ui]')) return;
+    if ((e.target as HTMLElement).closest('[data-block-edit]')) return;
+    requestAnimationFrame(() => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !editorRef.current) {
+        setSelOpen(false);
+        setHasSelection(false);
+        selectedTextRef.current = '';
+        return;
+      }
+      if (!editorRef.current.contains(sel.anchorNode)) {
+        setSelOpen(false);
+        setHasSelection(false);
+        return;
+      }
+      const range = sel.getRangeAt(0);
+      selectionRef.current = range.cloneRange();
+      selectedTextRef.current = sel.toString();
+      if (!selectedTextRef.current.trim()) {
+        setSelOpen(false);
+        setHasSelection(false);
+        return;
+      }
+      const rect = range.getBoundingClientRect();
+      const host = paperHostRef.current;
+      if (!host) return;
+      const hostRect = host.getBoundingClientRect();
+      setSelPos({
+        top: Math.min(Math.max(56, rect.bottom - hostRect.top + 10), hostRect.height - 140),
+        left: Math.min(
+          Math.max(160, rect.left - hostRect.left + rect.width / 2),
+          hostRect.width - 160,
+        ),
+      });
+      setHasSelection(true);
+      setSelOpen(true);
+    });
+  };
+
+  const handleSelectionPrompt = (prompt: string) => {
+    const selected = selectedTextRef.current;
+    if (!selected) return;
+    setSelOpen(false);
+    void runChat(
+      `${prompt}\n\n"""${selected}"""\n\nPropose the edit with propose_edit (replace_selection).`,
+      { selectedText: selected },
+    );
+  };
+
+  const handleToolsAction = (action: OrbitAction, intensity: number) => {
+    const selected = selectedTextRef.current.trim();
+    const labels: Record<OrbitAction, string> = {
+      improve: 'Improve',
+      shorter: 'Make shorter',
+      expand: 'Expand',
+      grammar: 'Fix grammar',
+      academic: 'More academic',
+    };
+    if (selected) {
+      void runChat(
+        `${labels[action]} this selection at intensity ${intensity}%.\n\n"""${selected}"""\n\nPropose the edit with propose_edit (replace_selection).`,
+        { selectedText: selected, intensity },
+      );
+    } else {
+      void runChat(
+        `${labels[action]} the entire document at intensity ${intensity}%. Propose with propose_edit (replace_document).`,
+        { intensity },
+      );
     }
   };
 
+  const acceptEdit = (id: string) => {
+    const item = pendingEdits.find((p) => p.id === id);
+    if (!item) return;
+    const { edit } = item;
+
+    if (edit.mode === 'replace_document') {
+      applyHtml(edit.afterHtml, true, true);
+    } else if (edit.mode === 'replace_selection' && selectionRef.current && editorRef.current) {
+      try {
+        const range = selectionRef.current;
+        range.deleteContents();
+        const temp = document.createElement('div');
+        temp.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
+        const frag = document.createDocumentFragment();
+        while (temp.firstChild) frag.appendChild(temp.firstChild);
+        range.insertNode(frag);
+        const html = editorRef.current.innerHTML;
+        setDocumentContent(html);
+        pushHistory(html);
+        requestAnimationFrame(() => typesetEditor(editorRef.current));
+      } catch {
+        applyHtml(edit.afterHtml, true, true);
+      }
+    } else if (edit.mode === 'insert_html' && editorRef.current) {
+      editorRef.current.innerHTML =
+        (readEditorHtml() || '') + sanitizeDocumentHtml(edit.afterHtml);
+      setDocumentContent(editorRef.current.innerHTML);
+      pushHistory(editorRef.current.innerHTML);
+    } else {
+      applyHtml(edit.afterHtml, true, true);
+    }
+
+    setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'accepted' } : e)));
+    pushEvent(
+      {
+        type: 'ai_applied',
+        title: `Aplicado: ${edit.title}`,
+        summary: edit.summary?.slice(0, 48),
+      },
+      true,
+    );
+    requestAnimationFrame(() => typesetEditor(editorRef.current));
+  };
+
+  const rejectEdit = (id: string) => {
+    const item = pendingEdits.find((p) => p.id === id);
+    setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'rejected' } : e)));
+    pushEvent(
+      {
+        type: 'local_edit',
+        title: 'Rechazado',
+        summary: item?.edit.title,
+      },
+      true,
+    );
+  };
+
+  const handleExportPdf = async () => {
+    if (!editorRef.current) return;
+    setIsBusy(true);
+    try {
+      typesetEditor(editorRef.current);
+      await new Promise((r) => setTimeout(r, 200));
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'pt',
+        format: paperSize === 'legal' ? [612, 1008] : 'letter',
+      });
+      const clone = editorRef.current.cloneNode(true) as HTMLElement;
+      document.body.appendChild(clone);
+      clone.style.background = 'white';
+      clone.style.color = 'black';
+      clone.style.padding = '48px';
+      clone.style.width = '516pt';
+      await pdf.html(clone, {
+        callback: (doc) => {
+          doc.save(`${documentTitle || 'docs-studio'}.pdf`);
+          document.body.removeChild(clone);
+          toast({ title: 'PDF exported' });
+        },
+        width: 516,
+        windowWidth: clone.scrollWidth,
+        autoPaging: 'text',
+      });
+    } catch {
+      toast({ variant: 'destructive', title: 'PDF export failed' });
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleExportWord = async () => {
+    if (!editorRef.current) return;
+    try {
+      typesetEditor(editorRef.current);
+      await new Promise((r) => setTimeout(r, 120));
+      const html = readEditorHtml();
+      const title = documentTitle || 'Docs Studio';
+
+      // Server-side .docx (docx package stays off the client — avoids "super" SyntaxError)
+      const res = await fetch('/api/export-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html, title }),
+      });
+
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^\w\- ]+/g, '').trim() || 'docs-studio'}.docx`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast({ title: 'Word (.docx) exportado' });
+        pushEvent({ type: 'local_edit', title: 'Export .docx', summary: 'listo' });
+        return;
+      }
+
+      // Fallback: Word-compatible HTML .doc
+      const docHtml = htmlForWordExport(editorRef.current, title);
+      const blob = new Blob(['\ufeff', docHtml], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${title.replace(/[^\w\- ]+/g, '').trim() || 'docs-studio'}.doc`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: 'Word (.doc) exportado', description: 'Fallback HTML' });
+      pushEvent({ type: 'local_edit', title: 'Export .doc', summary: 'fallback' });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Export falló', description: e?.message });
+    }
+  };
+
+  const countWords = () => {
+    const plain = (editorRef.current?.innerText || documentContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!plain) return 0;
+    return plain.split(/\s+/).filter(Boolean).length;
+  };
+
+  const handleInsertMath = () => {
+    if (!editorRef.current) return;
+    const tex = window.prompt('LaTeX (inline). Ej: x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 'E = mc^2');
+    if (tex == null || !tex.trim()) return;
+    const display = window.confirm('¿Fórmula en bloque (centrada)?\nOK = bloque · Cancelar = inline');
+    skipHistory.current = true;
+    insertMathAtSelection(editorRef.current, tex.trim(), display);
+    skipHistory.current = false;
+    const html = editorRef.current.innerHTML;
+    setDocumentContent(html);
+    pushHistory(html);
+    pushEvent({
+      type: 'local_edit',
+      title: 'Fórmula insertada',
+      summary: display ? `Bloque: ${tex.slice(0, 60)}` : `Inline: ${tex.slice(0, 60)}`,
+    });
+  };
+
+  const handleInsertTable = () => {
+    if (!editorRef.current) return;
+    skipHistory.current = true;
+    insertTableAtSelection(editorRef.current, 3, 3);
+    skipHistory.current = false;
+    const html = editorRef.current.innerHTML;
+    setDocumentContent(html);
+    pushHistory(html);
+    pushEvent({
+      type: 'local_edit',
+      title: 'Tabla insertada',
+      summary: 'Tabla 3×3 editable en el lienzo.',
+    });
+  };
+
+  /** Double-click math to edit TeX source */
+  const handleEditorDblClick = (e: React.MouseEvent) => {
+    const t = e.target as HTMLElement;
+    const math =
+      (t.closest('mjx-container') as HTMLElement | null) ||
+      (t.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null);
+    if (!math || !editorRef.current) return;
+    e.preventDefault();
+    const src = getMathSource(math) || '';
+    const display =
+      math.getAttribute('data-display') === '1' ||
+      math.classList.contains('studio-math-block') ||
+      math.getAttribute('display') === 'true';
+    const next = window.prompt('Editar LaTeX', src);
+    if (next == null) return;
+    if (!next.trim()) {
+      math.remove();
+    } else {
+      skipHistory.current = true;
+      replaceMathNode(editorRef.current, math, next.trim(), display);
+      skipHistory.current = false;
+    }
+    const html = editorRef.current.innerHTML;
+    setDocumentContent(html);
+    pushHistory(html);
+    pushEvent({
+      type: 'local_edit',
+      title: 'Fórmula actualizada',
+      summary: next.trim().slice(0, 80) || 'Fórmula eliminada',
+    });
+  };
+
+  const handleEditBlock = (_html: string, plain: string) => {
+    selectedTextRef.current = plain;
+    setHasSelection(Boolean(plain.trim()));
+    const host = paperHostRef.current;
+    if (host) {
+      const r = host.getBoundingClientRect();
+      setSelPos({ top: Math.min(r.height * 0.35, 220), left: r.width / 2 });
+    }
+    setSelOpen(true);
+  };
+
   if (!isClient) {
-    return null;
+    // Soft load without brand mark (page.tsx Suspense also uses loading.tsx)
+    return (
+      <div className="studio-load-screen flex h-[100dvh] w-full flex-col items-center justify-center bg-white">
+        <div className="studio-load-orb" aria-hidden />
+        <div className="relative z-10 flex flex-col items-center gap-5">
+          <div className="studio-load-lines" aria-hidden>
+            <span />
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <p className="studio-shine-text text-[13px] font-medium tracking-wide">
+            Preparando el lienzo…
+          </p>
+        </div>
+      </div>
+    );
   }
 
+  const exportBtn = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-md border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+        >
+          Export
+          <Download className="ml-1.5 h-3.5 w-3.5" strokeWidth={1.5} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={handleExportPdf}>
+          <FileText className="mr-2 h-4 w-4" /> PDF
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void handleExportWord()}>
+          <FileText className="mr-2 h-4 w-4" /> Word (.docx)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
+  const pending = pendingEdits.find((e) => e.status === 'pending');
+
   return (
-    <div className='flex flex-col h-screen bg-gray-900 text-gray-100 font-sans'>
-      <header className='flex items-center justify-between px-6 py-3 border-b border-gray-800 shrink-0'>
-        <div className='flex items-center gap-3'>
-          <Wand2 className='w-6 h-6 text-blue-500' />
-          <h1 className="text-2xl font-['Playwrite_IT_Moderna'] font-bold text-white">
-            B.A.M.B.A.I
-          </h1>
-        </div>
-        <div className='flex items-center gap-4'>
-          <Button variant='outline' className='border-gray-700' onClick={() => fileInputRef.current?.click()}>
-            Upload
-            <Upload className='w-4 h-4 ml-2' />
-          </Button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileUpload}
-            className="hidden"
-            accept=".txt,.md,.html,.docx,image/*"
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant='outline' className='border-gray-700'>
-                Export
-                <Download className='w-4 h-4 ml-2' />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={handleExportPdf}>
-                <FileText className='w-4 h-4 mr-2' />
-                Export to PDF
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={handleExportWord}>
-                <FileText className='w-4 h-4 mr-2' />
-                Export to Word
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
-
-      <div className='flex-1 grid md:grid-cols-[300px_1fr] overflow-hidden'>
-        <AiToolsSidebar />
-
-        <main className='relative flex-1 flex flex-col overflow-hidden p-8 md:p-12' onMouseUp={handleMouseUp}>
-          {showIcon && <TextSelectionIcon top={menuPosition.top} left={menuPosition.left} onClick={handleIconClick} />}
-          {showMenu && (
-            <TextSelectionMenu
-              top={menuPosition.top}
-              left={menuPosition.left}
-              onAction={handleAIAction}
-              onClose={() => setShowMenu(false)}
+    <div className="flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
+      <div className="grid h-full min-h-0 min-w-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]">
+        <div
+          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-neutral-200"
+          ref={paperHostRef}
+        >
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <PaperCanvas
+              ref={editorRef}
+              paperSize={paperSize}
+              onPaperSizeChange={setPaperSize}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              contentEditable={!isBusy}
+              isLoading={isBusy}
+              onInput={onEditorInput}
+              onMouseUp={handleMouseUp}
+              onDoubleClick={handleEditorDblClick}
+              onEditBlock={handleEditBlock}
+              onPageCountChange={setPageCount}
+              ghostHtml={pending?.edit.afterHtml ?? null}
+              ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
+              ghostTitle={pending?.edit.title ?? null}
+              zoom={zoom}
+              marginPreset={prefs.marginPreset}
+              showEditButton={prefs.showEditButton}
             />
-          )}
-          <div
-            ref={editorRef}
-            contentEditable
-            suppressContentEditableWarning
-            className={cn(
-              'prose dark:prose-invert prose-lg max-w-[85%] w-full h-full focus:outline-none overflow-y-auto bg-gray-800/30 rounded-lg p-6',
-              { 'opacity-60': isLoading }
+
+            {/* Floating format toolbar */}
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3">
+              <div className="pointer-events-auto max-w-[min(980px,100%)] overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
+                <DocumentEditorToolbar
+                  onRequestLink={() => {
+                    const url = window.prompt('URL');
+                    if (url) document.execCommand('createLink', false, url);
+                  }}
+                  onUndo={undo}
+                  onRedo={redo}
+                  canUndo={historyIndex > 0}
+                  canRedo={historyIndex < history.length - 1}
+                  fontFamily={fontFamily}
+                  onFontFamily={setFontFamily}
+                  fontSize={fontSize}
+                  onFontSize={setFontSize}
+                  pageCount={pageCount}
+                  wordCount={countWords()}
+                  onInsertMath={handleInsertMath}
+                  onInsertTable={handleInsertTable}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
+              </div>
+            </div>
+
+            {selOpen && (
+              <SelectionPrompt
+                top={selPos.top}
+                left={selPos.left}
+                busy={isBusy}
+                snippet={selectedTextRef.current}
+                onSubmit={handleSelectionPrompt}
+                onClose={() => setSelOpen(false)}
+              />
             )}
-          />
-          <div className="floating-toolbar-container">
-            <FloatingToolbar onAction={handleFloatingBarAction} />
+
+            <ToolsDock
+              busy={isBusy}
+              hasSelection={hasSelection}
+              onAction={handleToolsAction}
+            />
+
+            {/* Zoom like Word — bottom right of canvas (left of tools dock) */}
+            <div className="pointer-events-none absolute bottom-4 right-24 z-40">
+              <ZoomControl zoom={zoom} onZoom={setZoom} />
+            </div>
+
+            {pending && (
+              <CanvasReviewBar
+                edit={pending.edit}
+                onAccept={() => acceptEdit(pending.id)}
+                onReject={() => rejectEdit(pending.id)}
+              />
+            )}
           </div>
-        </main>
+        </div>
+
+        <StudioChat
+          messages={messages}
+          activity={activity}
+          pendingEdits={pendingEdits}
+          input={chatInput}
+          onInputChange={setChatInput}
+          onSend={() => runChat(chatInput)}
+          onAcceptEdit={acceptEdit}
+          onRejectEdit={rejectEdit}
+          isBusy={isBusy}
+          onQuickAction={(p) => void runChat(p)}
+          exportSlot={exportBtn}
+          historyCount={changeLog.length}
+          onOpenHistory={() => setHistoryOpen(true)}
+        />
       </div>
+
+      <StudioSettings
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        paperSize={paperSize}
+        onPaperSizeChange={setPaperSize}
+        prefs={prefs}
+        onPrefsChange={setPrefs}
+      />
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        items={changeLog}
+      />
     </div>
   );
 }

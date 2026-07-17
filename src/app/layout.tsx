@@ -1,32 +1,46 @@
-import type {Metadata} from 'next';
+import type { Metadata } from 'next';
 import './globals.css';
-import { cn } from "@/lib/utils"
-import { Toaster } from "@/components/ui/toaster"
+import { cn } from '@/lib/utils';
+import { Toaster } from '@/components/ui/toaster';
+import Script from 'next/script';
+import { IBM_Plex_Mono, Space_Grotesk } from 'next/font/google';
+
+const displayFont = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
+  weight: ['400', '500', '600', '700'],
+});
+
+const monoFont = IBM_Plex_Mono({
+  subsets: ['latin'],
+  variable: '--font-mono',
+  display: 'swap',
+  weight: ['400', '500', '600'],
+});
 
 export const metadata: Metadata = {
-  title: 'bamba',
-  description: 'Generate, format, and enhance documents with AI.',
+  title: 'Docs Studio | Write from the brief',
+  description:
+    'Turn a topic or brief into a document you can shape, review, and export.',
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="dark">
+    <html lang="en" suppressHydrationWarning>
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&family=Playwrite+IT+Moderna:wght@400&display=swap" rel="stylesheet" />
-        <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+        {/* MathJax config MUST run before the library script */}
+        <Script src="/mathjax-config.js" strategy="beforeInteractive" />
+        <Script
+          id="MathJax-script"
+          strategy="afterInteractive"
+          src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"
+        />
       </head>
-      <body className={cn("font-sans antialiased")}>
+      <body className={cn(displayFont.variable, monoFont.variable, 'h-full overflow-hidden bg-white text-neutral-900 antialiased')}>
         {children}
         <Toaster />
       </body>
     </html>
   );
 }
-
-    

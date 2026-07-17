@@ -1,7 +1,11 @@
 import type {NextConfig} from 'next';
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {
+    root: __dirname,
+  },
+  /** Keep heavy Node packages off the client graph */
+  serverExternalPackages: ['docx'],
   typescript: {
     ignoreBuildErrors: true,
   },
