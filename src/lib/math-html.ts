@@ -25,11 +25,20 @@ export function sanitizeDocumentHtml(html: string): string {
   h = h.replace(/\\begin\s*\{\s*align\*?\\s*\}/gi, '\\begin{align*}');
   h = h.replace(/\\end\s*\{\s*align\*?\\s*\}/gi, '\\end{align*}');
 
-  // Tables: clean width junk, keep real table layout (not display:block)
+  // Tables: keep layout styles (width/border), drop only mso-* noise; real table display
   h = h.replace(/<table([^>]*)>/gi, (_m, attrs) => {
     let a = String(attrs || '');
-    a = a.replace(/\sstyle="[^"]*"/gi, '');
-    return `<table class="studio-table"${a}>`;
+    // strip mso- from style attrs only
+    a = a.replace(/\sstyle="([^"]*)"/gi, (_sm: string, st: string) => {
+      const cleaned = st
+        .split(';')
+        .filter((p) => p.trim() && !/^\s*mso-/i.test(p))
+        .join(';');
+      return cleaned ? ` style="${cleaned}"` : '';
+    });
+    if (!/class=/i.test(a)) a += ' class="studio-table"';
+    else if (!/studio-table/i.test(a)) a = a.replace(/class="([^"]*)"/i, 'class="$1 studio-table"');
+    return `<table${a}>`;
   });
   h = h.replace(/<th([^>]*)>/gi, (_m, attrs) => {
     let a = String(attrs || '');

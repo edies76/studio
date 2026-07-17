@@ -25,6 +25,8 @@ type Props = {
   onEditWithAi: () => void;
   /** Hide AI pencil if disabled in settings */
   showAiPencil?: boolean;
+  /** e.g. "Ctrl+E" shown under the pencil */
+  aiShortcutLabel?: string;
 };
 
 const COLORS = [
@@ -63,6 +65,7 @@ export default function SelectionFormatBar({
   visible,
   onEditWithAi,
   showAiPencil = true,
+  aiShortcutLabel = 'Ctrl+E',
 }: Props) {
   const [mounted, setMounted] = useState(false);
 
@@ -170,17 +173,20 @@ export default function SelectionFormatBar({
           <div className="mx-0.5 h-5 w-px bg-neutral-200" />
           <button
             type="button"
-            title="Editar con IA"
+            title={`Editar con IA · ${aiShortcutLabel}`}
             onClick={(e) => {
               e.stopPropagation();
               onEditWithAi();
             }}
             className={cn(
-              btn,
-              'bg-neutral-900 text-white hover:bg-neutral-800 hover:text-white',
+              'flex h-8 min-w-[2.5rem] flex-col items-center justify-center gap-0 rounded-md px-1.5',
+              'text-neutral-700 transition hover:bg-neutral-100 hover:text-neutral-900',
             )}
           >
             <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <span className="font-mono text-[8px] leading-none tracking-tight text-neutral-400">
+              {aiShortcutLabel}
+            </span>
           </button>
         </>
       )}

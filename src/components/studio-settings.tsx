@@ -67,7 +67,7 @@ const SECTIONS: { id: Section; label: string; icon: typeof Settings2 }[] = [
   { id: 'agent', label: 'Agente', icon: MessageSquare },
 ];
 
-const KEY_OPTIONS = ['i', 'e', 'k', 'j', 'm', '/', "'"] as const;
+const KEY_OPTIONS = ['i', 'e', 'k', 'j', 'm', 'b', 'd', 'h', '/', "'"] as const;
 
 /** Settings modal — white toolbar language (rounded chips, soft hover, Inter) */
 export default function StudioSettings({
@@ -344,6 +344,27 @@ export default function StudioSettings({
                   Ctrl+{prefs.shortcutOpenAgent.toUpperCase()} abre el agente · Ctrl+
                   {prefs.shortcutEditSelection.toUpperCase()} con texto seleccionado entra en modo edición.
                 </Hint>
+                <div className="mt-3 space-y-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-2 text-[10px] text-neutral-500">
+                  <p className="font-semibold text-neutral-700">Otros atajos del lienzo</p>
+                  <p>
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">Ctrl</kbd>+
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">+</kbd>/
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">−</kbd> zoom
+                  </p>
+                  <p>
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">Ctrl</kbd>+
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">0</kbd> zoom 100%
+                  </p>
+                  <p>
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">Esc</kbd> cierra
+                    agente (si el input está vacío)
+                  </p>
+                  <p>
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">Ctrl</kbd>+
+                    <kbd className="rounded border border-neutral-200 bg-neutral-50 px-1 font-mono">Z</kbd> deshacer
+                    (navegador / toolbar)
+                  </p>
+                </div>
               </div>
             </div>
           )}

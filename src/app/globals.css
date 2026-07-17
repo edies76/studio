@@ -74,11 +74,43 @@
     background: #a3a3a3;
   }
 
+  /* Word-like document surface */
   .studio-doc-editor {
     overflow-x: hidden !important;
     max-width: 100%;
     word-wrap: break-word;
     overflow-wrap: anywhere;
+  }
+  .studio-doc-editor table.studio-table,
+  .studio-doc-editor table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.75em 0;
+    font-size: inherit;
+  }
+  .studio-doc-editor th.studio-th,
+  .studio-doc-editor td.studio-td,
+  .studio-doc-editor th,
+  .studio-doc-editor td {
+    border: 1px solid #d4d4d4;
+    padding: 0.4em 0.55em;
+    vertical-align: top;
+  }
+  .studio-doc-editor th {
+    background: #f5f5f5;
+    font-weight: 600;
+  }
+  .studio-doc-editor img {
+    max-width: 100%;
+    height: auto;
+  }
+  .studio-doc-editor h1.doc-title {
+    font-size: 1.75em;
+    font-weight: 700;
+    margin: 0.4em 0 0.6em;
+  }
+  .studio-doc-editor [data-studio-pad='1'] {
+    min-height: 1.65em;
   }
 
   .studio-doc-editor mjx-container {

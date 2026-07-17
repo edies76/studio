@@ -7,17 +7,17 @@
 - Each item includes date + "Do instead".
 
 ## Execution & Validation (Highest Priority)
-1. **[2026-07-17] Continuous paper editor, not fake multi-page contenteditables**
-   Do instead: One `contentEditable` that grows freely; page count = ceil(scrollHeight / pageHeight); page chrome is visual break lines only. Never clip with overflow:hidden per sheet.
+1. **[2026-07-17] Continuous paper + pad empty space (Word click)**
+   Do instead: Single contentEditable; pageCount=ceil(height/pageH); `[data-studio-pad]` fillers so click below content doesn't caret-jump; strip pads on getHtml. caretRangeFromPoint on empty click.
 
-2. **[2026-07-17] Parent uses PaperCanvasHandle**
-   Do instead: `useRef<PaperCanvasHandle>(null)`; typeset `getBodies()`; selection via bodies contain check.
+2. **[2026-07-17] DOCX import via `import-docx.ts`**
+   Do instead: styleMap (ES headings), images base64, clean human warnings (no OOXML noise), promote bold titles. Never dump raw mammoth messages to chat.
 
-3. **[2026-07-17] Floating composer owns agent UX**
-   Do instead: Collapse to center pill on outside click; expand on hover/focus; tools left + zoom slider under; review accept/reject in composer; no SelectionPrompt, no top-right chat FAB.
+3. **[2026-07-17] Ephemeral agent: scale-center anim, draft sticky**
+   Do instead: open/close scale+opacity from center (not translateY); click-outside closes only if input empty; opening chat panel closes agent; softFocus after 220ms.
 
-4. **[2026-07-17] Import Word is HTML import not binary viewer**
-   Do instead: mammoth → editable HTML; surface mammoth messages in toast + chat log. Export via `/api/export-docx`.
+4. **[2026-07-17] UX chrome**
+   Do instead: No panel-close X next to history; chat panel width transition; zoom bottom-left; selection AI pencil shows Ctrl+E; tools bottom-right with close anim.
 
 5. **[2026-07-17] Version bump on ship**
    Do instead: Bump `package.json` by exactly `0.0.1` per commit when shipping studio.

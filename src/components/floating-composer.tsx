@@ -21,7 +21,6 @@ export type FloatingReview = {
 };
 
 type Props = {
-  /** Controlled visibility — not always on canvas */
   open: boolean;
   onClose: () => void;
   value: string;
@@ -36,7 +35,6 @@ type Props = {
   hasSelection?: boolean;
   selectionPreview?: string;
   onClearSelection?: () => void;
-  /** 'edit' = working on selection; 'chat' = general agent */
   mode?: 'chat' | 'edit';
   reviews?: FloatingReview[];
   activeReviewId?: string | null;
@@ -46,12 +44,14 @@ type Props = {
   onAcceptAll?: () => void;
   onRejectAll?: () => void;
   className?: string;
+  /** Soft auto-focus after open animation (not instant select) */
+  softFocus?: boolean;
 };
 
 /**
- * Ephemeral agent input — only mounts when open.
- * Focus → wider. Click outside → close with animation (gone).
- * No hover-from-pill, no always-visible tab.
+ * Ephemeral agent input.
+ * Enter/exit: scale from center + opacity (not slide up/down).
+ * Click outside closes only if input is empty (draft text is kept).
  */
 export default function FloatingComposer({
   open,
@@ -77,8 +77,10 @@ export default function FloatingComposer({
   onAcceptAll,
   onRejectAll,
   className,
+  softFocus = true,
 }: Props) {
-  const [visible, setVisible] = useState(false);
+  const [phase, setPhase] = useState<'out' | 'in'>('out');
+  const [mounted, setMounted] = useState(false);
   const [focused, setFocused] = useState(false);
   const [sentPulse, setSentPulse] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -86,22 +88,46 @@ export default function FloatingComposer({
 
   const pending = reviews.filter((r) => r.status === 'pending');
   const active = pending.find((p) => p.id === activeReviewId) || pending[0] || null;
+  const hasDraft = Boolean(value.trim());
 
-  // Enter / exit animation
+  // Mount / unmount with center scale animation
   useEffect(() => {
     if (open) {
-      requestAnimationFrame(() => setVisible(true));
-      const t = window.setTimeout(() => inputRef.current?.focus({ preventScroll: true }), 80);
-      return () => clearTimeout(t);
+      setMounted(true);
+      // Start small, then expand to full (center scale)
+      setPhase('out');
+      const t1 = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setPhase('in'));
+      });
+      // Soft focus after animation settles — no harsh instant select
+      let t2: number | undefined;
+      if (softFocus) {
+        t2 = window.setTimeout(() => {
+          const el = inputRef.current;
+          if (!el) return;
+          el.focus({ preventScroll: true });
+          // Place caret at end without selecting all
+          const len = el.value.length;
+          el.setSelectionRange(len, len);
+        }, 220);
+      }
+      return () => {
+        cancelAnimationFrame(t1);
+        if (t2) clearTimeout(t2);
+      };
     }
-    setVisible(false);
-  }, [open]);
+    // Exit: scale inward + fade, then unmount
+    setPhase('out');
+    const t = window.setTimeout(() => setMounted(false), 240);
+    return () => clearTimeout(t);
+  }, [open, softFocus]);
 
-  // Keep open while busy or reviews (parent should keep open=true)
+  // Click outside: close only if empty (keep open while drafting)
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (busy || pending.length > 0) return;
+      if (hasDraft) return; // keep open while typing draft
       const t = e.target as Node;
       if (rootRef.current && !rootRef.current.contains(t)) {
         onClose();
@@ -109,18 +135,18 @@ export default function FloatingComposer({
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
-  }, [open, busy, pending.length, onClose]);
+  }, [open, busy, pending.length, hasDraft, onClose]);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !busy) onClose();
+      if (e.key === 'Escape' && !busy && !hasDraft) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, busy, onClose]);
+  }, [open, busy, hasDraft, onClose]);
 
-  if (!open && !visible) return null;
+  if (!mounted && !open) return null;
 
   const send = () => {
     if (!value.trim() || busy) return;
@@ -129,8 +155,9 @@ export default function FloatingComposer({
     onSend();
   };
 
-  const wide = focused || value.trim().length > 0 || busy || pending.length > 0;
+  const wide = focused || hasDraft || busy || pending.length > 0;
   const isEdit = mode === 'edit' || hasSelection;
+  const shown = open && phase === 'in';
 
   return (
     <div
@@ -142,21 +169,16 @@ export default function FloatingComposer({
       <div
         ref={rootRef}
         className={cn(
-          'pointer-events-auto flex flex-col items-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-          visible && open
-            ? 'translate-y-0 scale-100 opacity-100'
-            : 'translate-y-4 scale-95 opacity-0',
+          'pointer-events-auto flex flex-col items-center',
+          'transition-all duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          // Center scale (not slide Y)
+          shown ? 'scale-100 opacity-100' : 'scale-[0.88] opacity-0',
         )}
+        style={{ transformOrigin: 'center center' }}
       >
-        {/* Review card */}
         {active && (
-          <div
-            className={cn(
-              'mb-2 w-full overflow-hidden transition-all duration-300',
-              wide ? 'max-w-lg' : 'max-w-sm',
-            )}
-          >
-            <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 shadow-lg shadow-black/8">
+          <div className={cn('mb-2 w-full', wide ? 'max-w-lg' : 'max-w-sm')}>
+            <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
               <div className="flex items-start gap-2">
                 <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" strokeWidth={1.75} />
                 <div className="min-w-0 flex-1">
@@ -227,14 +249,15 @@ export default function FloatingComposer({
           </div>
         )}
 
-        {/* Input pill — white toolbar family */}
         <div
           className={cn(
             'floating-composer-shell relative origin-center overflow-hidden rounded-full',
-            'border border-neutral-200 bg-white shadow-[0_8px_28px_rgba(0,0,0,0.08)]',
+            'border border-neutral-200/95 bg-white',
+            // Stronger professional shadow
+            'shadow-[0_16px_48px_rgba(0,0,0,0.14),0_4px_12px_rgba(0,0,0,0.06)]',
             'transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-            wide ? 'w-[min(28rem,88vw)]' : 'w-[min(18rem,78vw)]',
-            focused && 'border-neutral-300 shadow-[0_12px_36px_rgba(0,0,0,0.1)]',
+            wide ? 'w-[min(28rem,88vw)]' : 'w-[min(16rem,72vw)]',
+            focused && 'border-neutral-300 shadow-[0_20px_56px_rgba(0,0,0,0.16),0_6px_16px_rgba(0,0,0,0.08)]',
             busy && 'ring-2 ring-blue-400/25',
             sentPulse && 'floating-composer-sent',
           )}

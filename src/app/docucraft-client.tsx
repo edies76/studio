@@ -18,7 +18,7 @@ import StudioChat, {
 import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileText, History, PanelRightClose } from 'lucide-react';
+import { Download, FileText, History } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -34,10 +34,10 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
+import { importDocxToHtml } from '@/lib/import-docx';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
 import jsPDF from 'jspdf';
-import mammoth from 'mammoth';
 
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
@@ -1081,53 +1081,33 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setIsBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      // Convert DOCX → HTML (mammoth). This is an editable import, not a binary .docx viewer.
-      const result = await mammoth.convertToHtml(
-        { arrayBuffer: buf },
-        {
-          styleMap: [
-            "p[style-name='Heading 1'] => h1:fresh",
-            "p[style-name='Heading 2'] => h2:fresh",
-            "p[style-name='Heading 3'] => h3:fresh",
-            "p[style-name='Title'] => h1:fresh",
-          ],
-        },
-      );
-      const html = sanitizeDocumentHtml(result.value || '<p><br></p>');
-      const base = name.replace(/\.docx$/i, '').trim() || 'Documento importado';
-      setDocumentTitle(base.slice(0, 80));
-      applyHtml(html, true, 'cascade');
-
-      const msgs = (result.messages || []).map((m: { message?: string; type?: string }) =>
-        String(m.message || m.type || 'aviso'),
-      );
-      const summary =
-        msgs.length === 0
-          ? `Importado “${base}” · listo para editar`
-          : `Importado “${base}” · ${msgs.length} aviso(s): ${msgs.slice(0, 3).join(' · ')}${msgs.length > 3 ? '…' : ''}`;
+      const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
+      setDocumentTitle(titleHint.slice(0, 80));
+      // No cascade wipe — set full document for fidelity
+      applyHtml(html, true, false);
 
       toast({
-        title: msgs.length ? 'Word importado (con avisos)' : 'Word importado',
-        description: summary.slice(0, 220),
+        title: warnings.length ? 'Word importado' : 'Word importado',
+        description: userSummary.slice(0, 240),
       });
       pushEvent(
         {
           type: 'local_edit',
           title: 'Import .docx',
-          summary: summary.slice(0, 160),
+          summary: userSummary.slice(0, 160),
         },
         true,
       );
-      // Also surface in chat history so user can open panel and see detail
+      // Clean human message — no raw OOXML schema noise
       setMessages((ms) => [
         ...ms,
         {
           id: uid(),
           role: 'assistant',
           content:
-            msgs.length === 0
-              ? `Importé **${base}** al lienzo. Es un documento editable (HTML desde .docx), no un visor binario de Word.`
-              : `Importé **${base}**. Avisos de conversión (no bloquean la edición):\n${msgs.map((m) => `• ${m}`).join('\n')}`,
+            warnings.length === 0
+              ? `Importé **${titleHint}** con formato (títulos, tablas, estilos e imágenes cuando existían).`
+              : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
           streaming: false,
         },
       ]);
@@ -1246,17 +1226,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     <>
       <button
         type="button"
-        title="Cerrar panel"
-        onClick={() => setChatCollapsed(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-600 shadow-sm hover:bg-neutral-50"
-      >
-        <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </button>
-      <button
-        type="button"
         title="Historial de cambios"
         onClick={() => setHistoryOpen(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 shadow-sm hover:bg-neutral-50"
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
       >
         <History className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
@@ -1374,6 +1346,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                 visible
                 showAiPencil={prefs.showSelectionAi && prefs.agentVisibility !== 'hidden'}
                 onEditWithAi={openAgentForSelection}
+                aiShortcutLabel={`Ctrl+${(prefs.shortcutEditSelection || 'e').toUpperCase()}`}
               />
             )}
 
@@ -1386,8 +1359,8 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
             />
 
-            {/* White zoom capsule — above tools on the right */}
-            <div className="pointer-events-none absolute bottom-[5.25rem] right-5 z-40">
+            {/* Zoom — bottom-left corner */}
+            <div className="pointer-events-none absolute bottom-6 left-5 z-40">
               <ZoomControl zoom={zoom} onZoom={setZoom} />
             </div>
 
@@ -1418,7 +1391,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                 onRejectReview={rejectEdit}
                 onAcceptAll={acceptAllEdits}
                 onRejectAll={rejectAllEdits}
+                softFocus
                 onOpenPanel={() => {
+                  // Opening full chat closes ephemeral input
+                  setAgentOpen(false);
                   setChatCollapsed(false);
                   setChatWidth((w) => Math.max(w, 360));
                 }}
@@ -1428,27 +1404,44 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         </div>
 
         {/* Drag handle to resize / collapse chat */}
-        {!chatCollapsed && (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            title="Arrastrá para redimensionar · más a la derecha colapsa"
-            onMouseDown={() => {
-              resizingChat.current = true;
-              document.body.style.cursor = 'col-resize';
-              document.body.style.userSelect = 'none';
-            }}
-            className="group relative z-30 w-1.5 shrink-0 cursor-col-resize bg-neutral-100 hover:bg-[#c9bfb2]"
-          >
-            <div className="absolute inset-y-0 -left-1 -right-1" />
-          </div>
-        )}
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Arrastrá para redimensionar · más a la derecha colapsa"
+          onMouseDown={() => {
+            if (chatCollapsed) {
+              setAgentOpen(false);
+              setChatCollapsed(false);
+              return;
+            }
+            resizingChat.current = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+          }}
+          className={cn(
+            'group relative z-30 shrink-0 cursor-col-resize bg-neutral-100 transition-all duration-300 hover:bg-neutral-300',
+            chatCollapsed ? 'w-0 opacity-0' : 'w-1.5 opacity-100',
+          )}
+        >
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+        </div>
 
-        {!chatCollapsed && (
-          <div
-            className="studio-chat-panel flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200"
-            style={{ width: chatWidth, maxWidth: 'min(560px, 48vw)' }}
-          >
+        {/* Chat panel — slide + fade open/close */}
+        <div
+          className={cn(
+            'studio-chat-panel flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200 bg-white',
+            'transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+            chatCollapsed
+              ? 'w-0 max-w-0 border-l-0 opacity-0'
+              : 'opacity-100',
+          )}
+          style={
+            chatCollapsed
+              ? { width: 0, maxWidth: 0 }
+              : { width: chatWidth, maxWidth: 'min(560px, 48vw)' }
+          }
+        >
+          {!chatCollapsed && (
             <StudioChat
               messages={messages}
               activity={activity}
@@ -1462,8 +1455,8 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               onQuickAction={(p) => void runChat(p)}
               topBar={chatTopBar}
             />
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       <StudioSettings

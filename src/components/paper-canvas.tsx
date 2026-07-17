@@ -105,6 +105,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const pageNotify = useRef(1);
 
   const [pageCount, setPageCount] = useState(1);
+  const paperHeight = Math.max(spec.heightPx, pageCount * spec.heightPx);
   const [hoverBtn, setHoverBtn] = useState<{ top: number; left: number; el: HTMLElement } | null>(
     null,
   );
@@ -148,7 +149,23 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const getHtml = useCallback(() => {
     const el = editorRef.current;
     if (!el) return '<p><br></p>';
-    return el.innerHTML?.trim() || '<p><br></p>';
+    // Clone and strip trailing empty pad paragraphs (Word blank-page filler)
+    const clone = el.cloneNode(true) as HTMLElement;
+    const kids = Array.from(clone.children);
+    for (let i = kids.length - 1; i >= 0; i--) {
+      const k = kids[i] as HTMLElement;
+      if (k.getAttribute('data-studio-pad') === '1') {
+        k.remove();
+        continue;
+      }
+      const t = (k.textContent || '').replace(/\u00a0/g, ' ').trim();
+      const empty =
+        !t && !k.querySelector('img, table, svg, mjx-container, hr, video');
+      if (empty && i > 0) k.remove();
+      else break;
+    }
+    if (!clone.children.length) return '<p><br></p>';
+    return clone.innerHTML?.trim() || '<p><br></p>';
   }, []);
 
   const setHtml = useCallback(
@@ -209,30 +226,126 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     return () => ro.disconnect();
   }, [measurePages]);
 
-  // Seed empty doc
+  // Seed empty doc + pad blank page so click-below-content works (Word-like)
   useEffect(() => {
     const el = editorRef.current;
-    if (el && !el.innerHTML.trim()) {
+    if (!el) return;
+    if (!el.innerHTML.trim()) {
       el.innerHTML = '<p><br></p>';
     }
-  }, []);
+    padEditorToPage(el, paperHeight);
+  }, [paperHeight]);
+
+  /**
+   * Append empty paragraphs so the editable surface fills the sheet.
+   * Prevents the "click empty bottom → caret jumps to last text" flicker.
+   */
+  const padEditorToPage = (el: HTMLElement, targetH: number) => {
+    if (skipInput.current || hasGhost) return;
+    // Remove old pads first
+    el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => n.remove());
+    let guard = 0;
+    while (el.scrollHeight < targetH - 8 && guard < 80) {
+      const p = document.createElement('p');
+      p.setAttribute('data-studio-pad', '1');
+      p.innerHTML = '<br>';
+      el.appendChild(p);
+      guard++;
+    }
+  };
 
   const handleInput = () => {
     if (skipInput.current) return;
+    const el = editorRef.current;
+    if (el) {
+      // User typed into a pad paragraph → promote to real content
+      el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => {
+        const t = (n.textContent || '').replace(/\u00a0/g, ' ').trim();
+        if (t) n.removeAttribute('data-studio-pad');
+      });
+      padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
+    }
     measurePages();
     onInput();
   };
 
   const handlePaste = () => {
     requestAnimationFrame(() => {
-      // Clean up junk from Word paste a bit
       const el = editorRef.current;
       if (el) {
-        // Strip Word mso styles on spans is heavy; keep native paste for fidelity
+        el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => {
+          const t = (n.textContent || '').replace(/\u00a0/g, ' ').trim();
+          if (t || n.querySelector('img, table')) n.removeAttribute('data-studio-pad');
+        });
+        padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
         measurePages();
       }
       onInput();
     });
+  };
+
+  /**
+   * Word-like: click empty area of the page places caret there without flicker.
+   * Uses caretRangeFromPoint; if click is below content, pad then place.
+   */
+  const handleEditorMouseDown = (e: React.MouseEvent) => {
+    if (!contentEditable || hasGhost) return;
+    const el = editorRef.current;
+    if (!el) return;
+    const t = e.target as HTMLElement;
+    // Native placement inside real text blocks is fine
+    if (t.closest(BLOCK_SEL) && t.closest(BLOCK_SEL) !== el) {
+      const block = t.closest(BLOCK_SEL) as HTMLElement;
+      if (block.getAttribute('data-studio-pad') !== '1') return;
+    }
+
+    const y = e.clientY;
+    const x = e.clientX;
+
+    // Ensure enough pad for this click Y
+    padEditorToPage(el, paperHeight);
+    const last = el.lastElementChild as HTMLElement | null;
+    if (last) {
+      const lr = last.getBoundingClientRect();
+      if (y > lr.bottom - 4) {
+        // Still short of click — add a few more pads
+        for (let i = 0; i < 6; i++) {
+          const p = document.createElement('p');
+          p.setAttribute('data-studio-pad', '1');
+          p.innerHTML = '<br>';
+          el.appendChild(p);
+          if (p.getBoundingClientRect().bottom >= y) break;
+        }
+      }
+    }
+
+    // Place caret at click point (no jump-to-top)
+    try {
+      const doc = document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+      };
+      let range: Range | null = null;
+      if (doc.caretRangeFromPoint) {
+        range = doc.caretRangeFromPoint(x, y);
+      } else if (doc.caretPositionFromPoint) {
+        const pos = doc.caretPositionFromPoint(x, y);
+        if (pos) {
+          range = document.createRange();
+          range.setStart(pos.offsetNode, pos.offset);
+          range.collapse(true);
+        }
+      }
+      if (range && el.contains(range.startContainer)) {
+        e.preventDefault();
+        el.focus({ preventScroll: true });
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    } catch {
+      /* native fallback */
+    }
   };
 
   useEffect(() => {
@@ -317,8 +430,6 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     setLineHls([]);
   };
 
-  const paperHeight = Math.max(spec.heightPx, pageCount * spec.heightPx);
-
   // Repeating page break markers as background on the white sheet
   const pageBreakBg = useMemo(() => {
     // thin line every pageHeight
@@ -380,11 +491,13 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 suppressContentEditableWarning
                 onInput={handleInput}
                 onPaste={handlePaste}
+                onMouseDown={handleEditorMouseDown}
                 onMouseUp={onMouseUp}
                 onDoubleClick={onDoubleClick}
                 className={cn(
                   'studio-doc-editor relative z-10 max-w-none text-neutral-900 outline-none',
                   'prose prose-neutral prose-p:my-2.5 prose-headings:mb-3 prose-headings:mt-5 prose-headings:font-inherit',
+                  'prose-table:my-3 prose-img:my-3',
                   isLoading && 'opacity-60',
                   hasGhost && 'studio-doc-faded pointer-events-none select-none',
                 )}
@@ -403,6 +516,8 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                   fontSize,
                   lineHeight: 1.65,
                   background: 'transparent',
+                  // caret doesn't jump weirdly in empty zones
+                  caretColor: '#171717',
                 }}
               />
 
