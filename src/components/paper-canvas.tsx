@@ -16,9 +16,11 @@ import { sanitizeDocumentHtml } from '@/lib/math-html';
 import { buildCanvasDiffHtml } from '@/lib/canvas-diff';
 import {
   pageMetrics,
+  placeCaretAtEnd,
   reflowPageBreaks,
   serializeEditorHtml,
   stripBreaks,
+  trimTrailingEmpty,
 } from '@/lib/page-layout';
 import { Pencil } from 'lucide-react';
 import type { StudioPrefs } from '@/components/studio-settings';
@@ -38,9 +40,11 @@ export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
   apa: 72,
 };
 
-const PAGE_GAP = 36;
+const PAGE_GAP = 40;
 const BLOCK_SEL = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table';
-const MAX_PAGES = 60;
+const MAX_PAGES = 80;
+/** Don't reflow on every keystroke — kills typing UX */
+const REFLOW_DEBOUNCE_MS = 220;
 
 type Props = {
   paperSize: PaperSize;
@@ -96,6 +100,7 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
   const scrollRef = useRef<HTMLDivElement>(null);
   const hoverLock = useRef(false);
   const reflowing = useRef(false);
+  const reflowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pageCountRef = useRef(1);
 
   const [pageCount, setPageCount] = useState(1);
@@ -117,66 +122,66 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
     return buildCanvasDiffHtml('', ghostHtml || '');
   }, [hasGhost, ghostHtml, ghostBeforeHtml]);
 
-  // Parent reads HTML without break spacers
-  useImperativeHandle(ref, () => {
-    const el = editorRef.current as HTMLDivElement;
-    if (!el) return el;
-    // Monkey-patch: get clean HTML via property used by parent through innerHTML reads
-    // Parent should use serialize — we expose helper on element
-    (el as any).__studioSerialize = () => serializeEditorHtml(el);
-    return el;
-  });
+  useImperativeHandle(ref, () => editorRef.current as HTMLDivElement);
 
-  const applyReflow = useCallback(() => {
-    const el = editorRef.current;
-    if (!el || reflowing.current) return;
-    reflowing.current = true;
-    try {
-      // Layout breaks so content never lands in the visual gap
-      const pages = reflowPageBreaks(el, metrics);
-      const n = Math.min(MAX_PAGES, Math.max(1, pages));
+  const applyReflow = useCallback(
+    (immediate = false) => {
+      const run = () => {
+        const el = editorRef.current;
+        if (!el || reflowing.current) return;
+        reflowing.current = true;
+        try {
+          const text = (el.innerText || '').replace(/\u00a0/g, ' ').trim();
 
-      // Stack height from real pages only (not scrollHeight feedback)
-      const stack = n * spec.heightPx + (n - 1) * PAGE_GAP;
-      setStackHeight(stack);
+          if (!text) {
+            stripBreaks(el);
+            trimTrailingEmpty(el);
+            setStackHeight(spec.heightPx);
+            if (pageCountRef.current !== 1) {
+              pageCountRef.current = 1;
+              setPageCount(1);
+            }
+            return;
+          }
 
-      if (pageCountRef.current !== n) {
-        pageCountRef.current = n;
-        setPageCount(n);
+          const pages = reflowPageBreaks(el, metrics);
+          const n = Math.min(MAX_PAGES, Math.max(1, pages));
+          const stack = n * spec.heightPx + (n - 1) * PAGE_GAP;
+          setStackHeight(stack);
+          if (pageCountRef.current !== n) {
+            pageCountRef.current = n;
+            setPageCount(n);
+          }
+
+          if (ghostRef.current && hasGhost) {
+            reflowPageBreaks(ghostRef.current, metrics);
+          }
+        } finally {
+          reflowing.current = false;
+        }
+      };
+
+      if (immediate) {
+        if (reflowTimer.current) clearTimeout(reflowTimer.current);
+        requestAnimationFrame(run);
+        return;
       }
-
-      // Ghost overlay: same break logic for height match
-      const gh = ghostRef.current;
-      if (gh && hasGhost) {
-        reflowPageBreaks(gh, metrics);
-      }
-    } finally {
-      reflowing.current = false;
-    }
-  }, [metrics, spec.heightPx, hasGhost]);
+      if (reflowTimer.current) clearTimeout(reflowTimer.current);
+      reflowTimer.current = setTimeout(run, REFLOW_DEBOUNCE_MS);
+    },
+    [metrics, spec.heightPx, hasGhost],
+  );
 
   useEffect(() => {
     onPageCountChange?.(pageCount);
   }, [pageCount, onPageCountChange]);
 
+  // Reflow when layout inputs change (AI content, paper size, etc.) — immediate
   useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    // Double rAF: wait for DOM/HTML paint then reflow
-    let raf = requestAnimationFrame(() => {
-      raf = requestAnimationFrame(() => applyReflow());
-    });
-    const ro = new ResizeObserver(() => {
-      requestAnimationFrame(applyReflow);
-    });
-    ro.observe(el);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-    };
+    applyReflow(true);
   }, [applyReflow, paperSize, fontFamily, fontSize, margin, hasGhost, ghostHtml, zoom]);
 
-  // Hover: vertical hit only
+  // Hover: only 3+ line blocks, one fat rect
   useEffect(() => {
     const root = editorRef.current;
     const scroll = scrollRef.current;
@@ -207,66 +212,44 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
           break;
         }
       }
-
       if (!hit) {
         clearHover();
         return;
       }
 
-      root.querySelectorAll('.studio-block-hover').forEach((n) => {
-        if (n !== hit) n.classList.remove('studio-block-hover');
-      });
-      hit.classList.add('studio-block-hover');
-
-      const br = hit.getBoundingClientRect();
-      const top = br.top - sr.top + scroll.scrollTop + 2;
-      const left = Math.min(
-        br.right - sr.left + scroll.scrollLeft + 8,
-        scroll.scrollLeft + scroll.clientWidth - 52,
-      );
-      setHoverBtn({ top, left, el: hit });
-      setEditVisible(true);
-
       try {
         const range = document.createRange();
         range.selectNodeContents(hit);
-        const rects = Array.from(range.getClientRects());
-        if (hit.tagName.toLowerCase() === 'table' || rects.length <= 1) {
-          setLineHls([
-            {
-              top: br.top - sr.top + scroll.scrollTop - 2,
-              left: br.left - sr.left + scroll.scrollLeft - 4,
-              width: br.width + 8,
-              height: br.height + 4,
-              radius: '10px',
-            },
-          ]);
-        } else {
-          const lineH = Math.max(...rects.map((r) => r.height), 16);
-          const padY = Math.max(2, (lineH * 0.35) / 2);
-          setLineHls(
-            rects
-              .filter((r) => r.width > 2 && r.height > 2)
-              .map((r, i, arr) => {
-                const isFirst = i === 0;
-                const isLast = i === arr.length - 1;
-                return {
-                  top: r.top - sr.top + scroll.scrollTop - padY,
-                  left: r.left - sr.left + scroll.scrollLeft - 5,
-                  width: r.width + 10,
-                  height: r.height + padY * 2,
-                  radius:
-                    isFirst && isLast
-                      ? '10px'
-                      : isFirst
-                        ? '10px 10px 4px 4px'
-                        : isLast
-                          ? '4px 4px 10px 10px'
-                          : '4px',
-                };
-              }),
-          );
+        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 2 && r.height > 2);
+        const isTable = hit.tagName.toLowerCase() === 'table';
+        if (!isTable && rects.length < 3) {
+          clearHover();
+          return;
         }
+
+        root.querySelectorAll('.studio-block-hover').forEach((n) => {
+          if (n !== hit) n.classList.remove('studio-block-hover');
+        });
+        hit.classList.add('studio-block-hover');
+
+        const br = hit.getBoundingClientRect();
+        const top = br.top - sr.top + scroll.scrollTop + 2;
+        const left = Math.min(
+          br.right - sr.left + scroll.scrollLeft + 8,
+          scroll.scrollLeft + scroll.clientWidth - 52,
+        );
+        setHoverBtn({ top, left, el: hit });
+        setEditVisible(true);
+        const pad = 7;
+        setLineHls([
+          {
+            top: br.top - sr.top + scroll.scrollTop - pad,
+            left: br.left - sr.left + scroll.scrollLeft - pad,
+            width: br.width + pad * 2,
+            height: br.height + pad * 2,
+            radius: '12px',
+          },
+        ]);
       } catch {
         setLineHls([]);
       }
@@ -280,10 +263,31 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
     };
   }, [pageCount, hasGhost, zoom, showEditButton]);
 
+  /** Typing: parent history immediately; reflow debounced (no lag) */
   const handleInput = () => {
     if (reflowing.current) return;
     onInput();
-    requestAnimationFrame(applyReflow);
+    applyReflow(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Word-like: Backspace at start of empty trailing content trims empty pages on reflow
+    if (e.key === 'Backspace' || e.key === 'Delete' || e.key === 'Enter') {
+      // reflow after browser applies the key
+      requestAnimationFrame(() => applyReflow(false));
+    }
+  };
+
+  /** Click empty white of a page → focus caret at end (can type) */
+  const handlePageClick = (e: React.MouseEvent) => {
+    const el = editorRef.current;
+    if (!el || !contentEditable || hasGhost) return;
+    const t = e.target as HTMLElement;
+    // If click already inside a text node / block, let browser handle
+    if (t.closest(BLOCK_SEL) && t !== el) return;
+    if (t.closest('[data-block-edit]')) return;
+    e.preventDefault();
+    placeCaretAtEnd(el);
   };
 
   const pages = useMemo(() => Array.from({ length: pageCount }, (_, i) => i), [pageCount]);
@@ -305,11 +309,9 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
 
   const contentStyle: CSSProperties = {
     width: spec.widthPx,
-    /**
-     * stackHeight comes from break count × page size — NOT from scrollHeight.
-     * (Old bug: minHeight = f(scrollHeight) → scrollHeight = f(minHeight) → 400 pages)
-     */
+    // Exactly the page stack — content drives pageCount via breaks, not the reverse
     minHeight: stackHeight,
+    height: stackHeight,
     boxSizing: 'border-box',
     paddingLeft: margin,
     paddingRight: margin,
@@ -318,6 +320,7 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
     fontFamily,
     fontSize,
     lineHeight: 1.65,
+    overflow: 'hidden', // never paint into the air outside the stack
   };
 
   return (
@@ -326,6 +329,7 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
         ref={scrollRef}
         className="relative min-h-0 flex-1 overflow-y-auto overflow-x-auto"
         style={{ WebkitOverflowScrolling: 'touch' }}
+        onClick={handlePageClick}
       >
         <div className="px-8 py-10">
           <div
@@ -337,7 +341,6 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
               marginBottom: Math.max(0, stackHeight * (zoom - 1)),
             }}
           >
-            {/* Paper sheets — one per real page */}
             {pages.map((i) => (
               <div
                 key={i}
@@ -351,21 +354,22 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
                 aria-hidden
               >
                 <div className="absolute bottom-4 left-0 right-0 text-center font-mono text-[10px] tracking-wide text-neutral-300">
-                  {i + 1} / {pageCount}
+                  {i + 1}
                 </div>
               </div>
             ))}
 
-            {/* Gap masks: cover the "air" between pages so nothing shows through */}
+            {/* Solid gap covers (no text visible in the air) */}
             {pages.slice(0, -1).map((i) => (
               <div
                 key={`gap-${i}`}
-                className="pointer-events-none absolute left-0 bg-neutral-100"
+                className="pointer-events-none absolute bg-neutral-100"
                 style={{
-                  top: i * (spec.heightPx + PAGE_GAP) + spec.heightPx,
-                  width: spec.widthPx,
-                  height: PAGE_GAP,
-                  zIndex: 5,
+                  top: i * (spec.heightPx + PAGE_GAP) + spec.heightPx - 1,
+                  left: -32,
+                  width: spec.widthPx + 64,
+                  height: PAGE_GAP + 2,
+                  zIndex: 20,
                 }}
                 aria-hidden
               />
@@ -376,12 +380,12 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
               contentEditable={contentEditable && !hasGhost}
               suppressContentEditableWarning
               onInput={handleInput}
+              onKeyDown={handleKeyDown}
               onMouseUp={onMouseUp}
               onDoubleClick={onDoubleClick}
-              onKeyUp={() => requestAnimationFrame(applyReflow)}
               className={cn(
-                'studio-doc-editor absolute left-0 top-0 z-10 max-w-none text-neutral-900 outline-none transition-opacity',
-                'prose prose-neutral prose-p:my-2.5 prose-headings:mb-3 prose-headings:mt-5 prose-headings:font-editorial',
+                'studio-doc-editor absolute left-0 top-0 z-10 max-w-none text-neutral-900 outline-none',
+                'prose prose-neutral prose-p:my-2.5 prose-headings:mb-3 prose-headings:mt-5 prose-headings:font-inherit prose-headings:tracking-tight',
                 isLoading && 'opacity-60',
                 hasGhost && 'studio-doc-faded pointer-events-none select-none',
               )}
@@ -393,7 +397,7 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
             {hasGhost && diffOverlayHtml && (
               <div
                 ref={ghostRef}
-                className="studio-doc-editor studio-diff-layer pointer-events-none absolute left-0 top-0 z-20 max-w-none"
+                className="studio-doc-editor studio-diff-layer pointer-events-none absolute left-0 top-0 z-10 max-w-none"
                 style={contentStyle}
                 aria-hidden
                 dangerouslySetInnerHTML={{ __html: sanitizeDocumentHtml(diffOverlayHtml) }}
@@ -429,15 +433,12 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
               setHoverBtn(null);
               setLineHls([]);
               setEditVisible(false);
-              editorRef.current
-                ?.querySelectorAll('.studio-block-hover')
-                .forEach((n) => n.classList.remove('studio-block-hover'));
             }}
             onMouseDown={(e) => e.preventDefault()}
             onClick={editHovered}
             title="Editar bloque"
             className={cn(
-              'studio-edit-fab absolute z-30 flex h-10 w-10 items-center justify-center rounded-full bg-[#2c2a26] text-[#f3f1ec] shadow-lg',
+              'studio-edit-fab absolute z-30 flex h-10 w-10 items-center justify-center rounded-full bg-studio-brown text-[#f3f1ec] shadow-lg',
               editVisible ? 'studio-edit-fab-in' : 'studio-edit-fab-out',
             )}
             style={{ top: hoverBtn.top, left: hoverBtn.left }}
@@ -452,11 +453,6 @@ const PaperCanvas = forwardRef<HTMLDivElement, Props>(function PaperCanvas(
 
 export default PaperCanvas;
 
-/** Clean HTML for parent (AI / export / history) */
 export function readCleanEditorHtml(el: HTMLDivElement | null): string {
   return serializeEditorHtml(el);
-}
-
-export function clearPageBreaks(el: HTMLDivElement | null): void {
-  if (el) stripBreaks(el);
 }

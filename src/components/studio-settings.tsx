@@ -79,7 +79,9 @@ export default function StudioSettings({
     <div
       className={cn(
         'fixed inset-0 z-[80] flex items-center justify-center p-4 transition-all duration-300',
-        visible ? 'bg-black/40 backdrop-blur-sm opacity-100' : 'bg-black/0 backdrop-blur-0 opacity-0 pointer-events-none',
+        visible
+          ? 'bg-[#3d3229]/40 backdrop-blur-sm opacity-100'
+          : 'bg-transparent backdrop-blur-0 opacity-0 pointer-events-none',
       )}
       onClick={onClose}
     >
@@ -112,7 +114,7 @@ export default function StudioSettings({
                 className={cn(
                   'mb-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium transition-colors',
                   section === s.id
-                    ? 'bg-neutral-900 text-white'
+                    ? 'bg-studio-brown text-white'
                     : 'text-neutral-600 hover:bg-neutral-200/70 hover:text-neutral-900',
                 )}
               >
@@ -138,7 +140,7 @@ export default function StudioSettings({
                       className={cn(
                         'rounded-full px-3 py-1 text-[11px] font-medium capitalize transition-colors',
                         paperSize === s
-                          ? 'bg-neutral-900 text-white'
+                          ? 'bg-studio-brown text-white'
                           : 'text-neutral-500 hover:text-neutral-900',
                       )}
                     >
@@ -171,7 +173,7 @@ export default function StudioSettings({
                   className={cn(
                     'flex w-full items-center justify-between rounded-xl border px-3.5 py-3 text-left transition-colors',
                     prefs.marginPreset === m.id
-                      ? 'border-neutral-900 bg-neutral-50'
+                      ? 'border-studio-brown bg-neutral-50'
                       : 'border-neutral-200 hover:border-neutral-300',
                   )}
                 >
@@ -183,7 +185,7 @@ export default function StudioSettings({
                     className={cn(
                       'h-4 w-4 rounded-full border-2',
                       prefs.marginPreset === m.id
-                        ? 'border-neutral-900 bg-neutral-900'
+                        ? 'border-studio-brown bg-studio-brown'
                         : 'border-neutral-300',
                     )}
                   />
@@ -271,7 +273,7 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
       onClick={() => onChange(!on)}
       className={cn(
         'relative h-6 w-11 rounded-full transition-colors',
-        on ? 'bg-neutral-900' : 'bg-neutral-200',
+        on ? 'bg-studio-brown' : 'bg-neutral-200',
       )}
     >
       <span

@@ -19,7 +19,9 @@ import SelectionPrompt from '@/components/selection-prompt';
 import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileText } from 'lucide-react';
+import { Download, FileText, History, MessageSquareText, PanelRightClose } from 'lucide-react';
+import FloatingComposer from '@/components/floating-composer';
+import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
 import type { PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
 import {
@@ -31,7 +33,7 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
-import { applyHtmlWithCascade, paintStreamingHtml } from '@/lib/cascade';
+import { applyHtmlWithCascade, applyFirstDraftReveal } from '@/lib/cascade';
 import { serializeEditorHtml, stripBreaks } from '@/lib/page-layout';
 import CanvasReviewBar from '@/components/canvas-review-bar';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
@@ -94,6 +96,11 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [chatInput, setChatInput] = useState('');
   const [activity, setActivity] = useState<ActivityStep[]>([]);
   const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
+  const [activeEditId, setActiveEditId] = useState<string | null>(null);
+  const [chatWidth, setChatWidth] = useState(360);
+  /** Default: panel collapsed — floating composer on canvas */
+  const [chatCollapsed, setChatCollapsed] = useState(true);
+  const resizingChat = useRef(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
@@ -103,6 +110,32 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const lastLocalNotify = useRef(0);
 
   useEffect(() => setIsClient(true), []);
+
+  // Resize chat panel (drag) — collapse below threshold
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!resizingChat.current) return;
+      const w = window.innerWidth - e.clientX;
+      if (w < 220) {
+        setChatCollapsed(true);
+        setChatWidth(360);
+        return;
+      }
+      setChatCollapsed(false);
+      setChatWidth(Math.min(560, Math.max(280, w)));
+    };
+    const onUp = () => {
+      resizingChat.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, []);
 
   useEffect(() => {
     // Only load brief if explicitly marked active (pre-summary with guide)
@@ -137,19 +170,30 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.key === '=' || e.key === '+') {
+      // Capture phase so contentEditable / browser zoom don't steal Ctrl+ / Ctrl-
+      const zoomIn =
+        e.key === '+' ||
+        e.key === '=' ||
+        e.code === 'Equal' ||
+        e.code === 'NumpadAdd';
+      const zoomOut = e.key === '-' || e.key === '_' || e.code === 'Minus' || e.code === 'NumpadSubtract';
+      const zoomReset = e.key === '0' || e.code === 'Digit0' || e.code === 'Numpad0';
+      if (zoomIn) {
         e.preventDefault();
+        e.stopPropagation();
         setZoom((z) => Math.min(2, Math.round((z + 0.1) * 20) / 20));
-      } else if (e.key === '-' || e.key === '_') {
+      } else if (zoomOut) {
         e.preventDefault();
+        e.stopPropagation();
         setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 20) / 20));
-      } else if (e.key === '0') {
+      } else if (zoomReset) {
         e.preventDefault();
+        e.stopPropagation();
         setZoom(1);
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, []);
 
   const pushHistory = useCallback((html: string) => {
@@ -163,7 +207,11 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   }, [historyIndex]);
 
   const applyHtml = useCallback(
-    (html: string, recordHistory = true, cascade = false) => {
+    (
+      html: string,
+      recordHistory = true,
+      mode: false | 'cascade' | 'firstReveal' = false,
+    ) => {
       const clean = sanitizeDocumentHtml(html);
       // Never store page-break spacers in history / state
       const withoutBreaks = clean.replace(
@@ -174,7 +222,12 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       if (editorRef.current) {
         skipHistory.current = true;
         stripBreaks(editorRef.current);
-        if (cascade) {
+        if (mode === 'firstReveal') {
+          applyFirstDraftReveal(editorRef.current, withoutBreaks, () => {
+            typesetEditor(editorRef.current);
+            skipHistory.current = false;
+          });
+        } else if (mode === 'cascade') {
           applyHtmlWithCascade(editorRef.current, withoutBreaks, () => {
             typesetEditor(editorRef.current);
             skipHistory.current = false;
@@ -214,10 +267,31 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   };
 
   const setActivityLabel = (label: string, state: ActivityStep['state'] = 'active') => {
+    if (state === 'done' || /^done$/i.test(label.trim())) {
+      // Hide thinking animation — clear active steps
+      setActivity((prev) => prev.map((s) => ({ ...s, state: 'done' as const })));
+      return;
+    }
     setActivity((prev) => {
       const done = prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s));
       return [...done.slice(-12), { id: uid(), label, state }];
     });
+  };
+
+  const pushToolLog = (
+    assistantId: string,
+    item: { id: string; label: string; state: 'running' | 'done' | 'error'; doneLabel?: string },
+  ) => {
+    setMessages((ms) =>
+      ms.map((m) => {
+        if (m.id !== assistantId) return m;
+        const logs = [...(m.toolLogs || [])];
+        const idx = logs.findIndex((l) => l.id === item.id);
+        if (idx >= 0) logs[idx] = { ...logs[idx], ...item };
+        else logs.push(item);
+        return { ...m, toolLogs: logs };
+      }),
+    );
   };
 
   /** Fast first draft — no diff, auto-apply + live stream preview */
@@ -259,7 +333,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         const decoder = new TextDecoder();
         let buffer = '';
         let htmlAcc = '';
-        let lastPaint = 0;
+        let lastChatPaint = 0;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -277,27 +351,25 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               continue;
             }
             if (ev.type === 'status') {
-              setActivityLabel(ev.label || 'Escribiendo…', 'active');
+              // Ignore fake Done; only real writing labels
+              const lab = ev.label || 'Escribiendo…';
+              if (/^done$/i.test(String(lab).trim())) continue;
+              setActivityLabel(lab, 'active');
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
-                    ? { ...m, draftStatus: ev.label || 'Escribiendo…', streaming: true }
+                    ? { ...m, draftStatus: lab, streaming: true }
                     : m,
                 ),
               );
             }
             if (ev.type === 'html_delta') {
+              // Real Gemini tokens — preview only in chat; canvas waits for full doc (first-time reveal)
               htmlAcc += ev.delta || '';
               const now = Date.now();
-              if (now - lastPaint > 80) {
-                lastPaint = now;
+              if (now - lastChatPaint > 100) {
+                lastChatPaint = now;
                 const clean = sanitizeDocumentHtml(htmlAcc);
-                if (editorRef.current) {
-                  skipHistory.current = true;
-                  paintStreamingHtml(editorRef.current, clean);
-                  skipHistory.current = false;
-                  if (htmlAcc.length % 400 < 40) typesetEditor(editorRef.current);
-                }
                 setMessages((ms) =>
                   ms.map((m) =>
                     m.id === assistantId
@@ -315,14 +387,14 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
             }
             if (ev.type === 'html_ready') {
               const finalHtml = sanitizeDocumentHtml(ev.html || htmlAcc);
-              applyHtml(finalHtml, true, true);
-              requestAnimationFrame(() => typesetEditor(editorRef.current));
+              // First document: full HTML already ready → vertical shine reveal (not fake streaming on canvas)
+              applyHtml(finalHtml, true, 'firstReveal');
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
                     ? {
                         ...m,
-                        content: 'Listo',
+                        content: 'Listo — el documento está en el lienzo.',
                         draftHtml: finalHtml,
                         draftStatus: 'Listo',
                         streaming: false,
@@ -453,13 +525,53 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               continue;
             }
             if (ev.type === 'thinking' || ev.type === 'status') {
-              setActivityLabel(ev.label || 'Working…', 'active');
+              const lab = ev.label || 'Trabajando…';
+              if (/^done$/i.test(String(lab).trim())) {
+                setActivityLabel(lab, 'done');
+              } else {
+                setActivityLabel(lab, 'active');
+              }
             }
-            if (ev.type === 'tool_start') setActivityLabel(ev.label || ev.name || 'Tool…', 'active');
+            if (ev.type === 'tool_start') {
+              const id = ev.id || `tool_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const label = ev.label || ev.name || 'Tool…';
+              setActivityLabel(label, 'active');
+              pushToolLog(assistantId, { id, label, state: 'running' });
+              // stash id for matching end if server reuses
+              (ev as any).__tid = id;
+            }
             if (ev.type === 'tool_end') {
+              const id = ev.id || '';
               setActivity((prev) =>
                 prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)),
               );
+              if (id) {
+                pushToolLog(assistantId, {
+                  id,
+                  label: ev.label || ev.name || 'Listo',
+                  doneLabel: ev.label || undefined,
+                  state: ev.ok === false ? 'error' : 'done',
+                });
+              } else {
+                // mark last running as done
+                setMessages((ms) =>
+                  ms.map((m) => {
+                    if (m.id !== assistantId || !m.toolLogs?.length) return m;
+                    const logs = [...m.toolLogs];
+                    for (let i = logs.length - 1; i >= 0; i--) {
+                      if (logs[i].state === 'running') {
+                        logs[i] = {
+                          ...logs[i],
+                          state: ev.ok === false ? 'error' : 'done',
+                          doneLabel: ev.label || logs[i].label,
+                        };
+                        break;
+                      }
+                    }
+                    return { ...m, toolLogs: logs };
+                  }),
+                );
+              }
             }
             if (ev.type === 'text') {
               acc += ev.delta || '';
@@ -477,13 +589,25 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                   ? `<p>${selectedTextRef.current}</p>`
                   : '';
               }
+              if (
+                !edit.beforeHtml &&
+                edit.mode === 'replace_block' &&
+                typeof edit.blockIndex === 'number' &&
+                editorRef.current
+              ) {
+                const blocks = editorRef.current.querySelectorAll(
+                  'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol',
+                );
+                const el = blocks[edit.blockIndex] as HTMLElement | undefined;
+                if (el) edit.beforeHtml = el.outerHTML;
+              }
               setPendingEdits((p) => [...p, { id: ev.id, edit, status: 'pending' }]);
-              setActivityLabel('Revisá en el lienzo', 'done');
+              setActiveEditId((cur) => cur || ev.id);
               pushEvent(
                 {
                   type: 'ai_change',
                   title: edit.title || 'Cambio propuesto',
-                  summary: 'revisá diff en el lienzo',
+                  summary: edit.summary || 'revisá diff en el lienzo',
                 },
                 true,
               );
@@ -495,11 +619,20 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: acc || ev.finalText || m.content, streaming: false }
+                    ? {
+                        ...m,
+                        content: acc || ev.finalText || m.content,
+                        streaming: false,
+                        toolLogs: (m.toolLogs || []).map((t) =>
+                          t.state === 'running'
+                            ? { ...t, state: 'done' as const, doneLabel: t.doneLabel || t.label }
+                            : t,
+                        ),
+                      }
                     : m,
                 ),
               );
-              setActivityLabel('Done', 'done');
+              setActivity([]); // hide Done shine completely
             }
           }
         }
@@ -514,6 +647,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         );
       } finally {
         setIsBusy(false);
+        setActivity([]);
       }
     },
     [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent],
@@ -529,15 +663,15 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
 
   const onEditorInput = () => {
     if (!editorRef.current || skipHistory.current) return;
+    // Lightweight: don't serialize full clone every key if possible — still needed for history
     const html = serializeEditorHtml(editorRef.current);
     setDocumentContent(html);
-    pushHistory(html);
-
-    // Re-typeset only — no spam events for every keystroke
+    // Debounce history + typeset so typing stays snappy
     if (localEditTimer.current) clearTimeout(localEditTimer.current);
     localEditTimer.current = setTimeout(() => {
+      pushHistory(html);
       if (editorRef.current) typesetEditor(editorRef.current);
-    }, 800);
+    }, 400);
   };
 
   const handleMouseUp = (e: React.MouseEvent) => {
@@ -618,7 +752,29 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     const { edit } = item;
 
     if (edit.mode === 'replace_document') {
-      applyHtml(edit.afterHtml, true, true);
+      applyHtml(edit.afterHtml, true, 'cascade');
+    } else if (edit.mode === 'replace_block' && editorRef.current && typeof edit.blockIndex === 'number') {
+      const blocks = editorRef.current.querySelectorAll(
+        'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol',
+      );
+      const target = blocks[edit.blockIndex] as HTMLElement | undefined;
+      if (target) {
+        const wrap = document.createElement('div');
+        wrap.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
+        const next = wrap.firstElementChild;
+        if (next) target.replaceWith(next);
+        else target.outerHTML = sanitizeDocumentHtml(edit.afterHtml);
+        const html = serializeEditorHtml(editorRef.current);
+        setDocumentContent(html);
+        pushHistory(html);
+        requestAnimationFrame(() => typesetEditor(editorRef.current));
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'No se encontró el bloque',
+          description: `Índice ${edit.blockIndex}`,
+        });
+      }
     } else if (edit.mode === 'replace_selection' && selectionRef.current && editorRef.current) {
       try {
         const range = selectionRef.current;
@@ -628,23 +784,31 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         const frag = document.createDocumentFragment();
         while (temp.firstChild) frag.appendChild(temp.firstChild);
         range.insertNode(frag);
-        const html = editorRef.current.innerHTML;
+        const html = serializeEditorHtml(editorRef.current);
         setDocumentContent(html);
         pushHistory(html);
         requestAnimationFrame(() => typesetEditor(editorRef.current));
       } catch {
-        applyHtml(edit.afterHtml, true, true);
+        applyHtml(edit.afterHtml, true, 'cascade');
       }
     } else if (edit.mode === 'insert_html' && editorRef.current) {
-      editorRef.current.innerHTML =
-        (readEditorHtml() || '') + sanitizeDocumentHtml(edit.afterHtml);
-      setDocumentContent(editorRef.current.innerHTML);
-      pushHistory(editorRef.current.innerHTML);
+      editorRef.current.insertAdjacentHTML(
+        'beforeend',
+        sanitizeDocumentHtml(edit.afterHtml),
+      );
+      const html = serializeEditorHtml(editorRef.current);
+      setDocumentContent(html);
+      pushHistory(html);
     } else {
-      applyHtml(edit.afterHtml, true, true);
+      applyHtml(edit.afterHtml, true, 'cascade');
     }
 
     setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'accepted' } : e)));
+    setActiveEditId((cur) => {
+      if (cur !== id) return cur;
+      const next = pendingEdits.find((e) => e.id !== id && e.status === 'pending');
+      return next?.id ?? null;
+    });
     pushEvent(
       {
         type: 'ai_applied',
@@ -659,6 +823,11 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const rejectEdit = (id: string) => {
     const item = pendingEdits.find((p) => p.id === id);
     setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'rejected' } : e)));
+    setActiveEditId((cur) => {
+      if (cur !== id) return cur;
+      const next = pendingEdits.find((e) => e.id !== id && e.status === 'pending');
+      return next?.id ?? null;
+    });
     pushEvent(
       {
         type: 'local_edit',
@@ -667,6 +836,16 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       },
       true,
     );
+  };
+
+  const acceptAllEdits = () => {
+    const ids = pendingEdits.filter((e) => e.status === 'pending').map((e) => e.id);
+    ids.forEach((id) => acceptEdit(id));
+  };
+
+  const rejectAllEdits = () => {
+    const ids = pendingEdits.filter((e) => e.status === 'pending').map((e) => e.id);
+    ids.forEach((id) => rejectEdit(id));
   };
 
   const handleExportPdf = async () => {
@@ -852,36 +1031,67 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     );
   }
 
-  const exportBtn = (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 rounded-md border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
-        >
-          Export
-          <Download className="ml-1.5 h-3.5 w-3.5" strokeWidth={1.5} />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={handleExportPdf}>
-          <FileText className="mr-2 h-4 w-4" /> PDF
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => void handleExportWord()}>
-          <FileText className="mr-2 h-4 w-4" /> Word (.docx)
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+  const chatTopBar = (
+    <>
+      <button
+        type="button"
+        title="Cerrar panel"
+        onClick={() => setChatCollapsed(true)}
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-600 shadow-sm hover:bg-neutral-50"
+      >
+        <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        title="Historial de cambios"
+        onClick={() => setHistoryOpen(true)}
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-300 bg-white text-neutral-700 shadow-sm hover:bg-neutral-50"
+      >
+        <History className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 rounded-md border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+          >
+            Export
+            <Download className="ml-1.5 h-3.5 w-3.5" strokeWidth={1.5} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={handleExportPdf}>
+            <FileText className="mr-2 h-4 w-4" /> PDF
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => void handleExportWord()}>
+            <FileText className="mr-2 h-4 w-4" /> Word (.docx)
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
   );
 
-  const pending = pendingEdits.find((e) => e.status === 'pending');
+  const pendingList = pendingEdits.filter((e) => e.status === 'pending');
+  const pending =
+    pendingList.find((e) => e.id === activeEditId) || pendingList[0] || null;
+
+  // Compact status for floating composer (latest assistant text, short)
+  const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && !m.isDraftStream);
+  const floatingLogs = lastAssistant?.toolLogs || [];
+  const floatingStatus =
+    !isBusy && lastAssistant?.content
+      ? lastAssistant.content.replace(/\s+/g, ' ').trim().slice(0, 90) +
+        (lastAssistant.content.length > 90 ? '…' : '')
+      : isBusy
+        ? activity.find((a) => a.state === 'active')?.label || 'Trabajando…'
+        : null;
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
-      <div className="grid h-full min-h-0 min-w-0 flex-1 grid-cols-1 overflow-hidden md:grid-cols-[minmax(0,1fr)_minmax(300px,380px)]">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
-          className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-neutral-200"
+          className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           ref={paperHostRef}
         >
           <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -948,36 +1158,98 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               onAction={handleToolsAction}
             />
 
-            {/* Zoom like Word — bottom right of canvas (left of tools dock) */}
-            <div className="pointer-events-none absolute bottom-4 right-24 z-40">
+            {/* Zoom — also Ctrl+ / Ctrl- / Ctrl0 (capture phase) */}
+            <div
+              className={cn(
+                'pointer-events-none absolute z-40',
+                chatCollapsed ? 'bottom-28 right-6' : 'bottom-4 right-24',
+              )}
+            >
               <ZoomControl zoom={zoom} onZoom={setZoom} />
             </div>
 
-            {pending && (
+            {/* Floating composer when panel collapsed */}
+            {chatCollapsed && (
+              <FloatingComposer
+                value={chatInput}
+                onChange={setChatInput}
+                onSend={() => void runChat(chatInput)}
+                busy={isBusy}
+                toolLogs={floatingLogs}
+                statusLine={floatingStatus}
+                onOpenPanel={() => {
+                  setChatCollapsed(false);
+                  setChatWidth((w) => Math.max(w, 360));
+                }}
+              />
+            )}
+
+            {/* Open panel (icon only) when collapsed — top right */}
+            {chatCollapsed && (
+              <button
+                type="button"
+                onClick={() => {
+                  setChatCollapsed(false);
+                  setChatWidth((w) => Math.max(w, 360));
+                }}
+                className="absolute right-3 top-3 z-40 flex h-10 w-10 items-center justify-center rounded-full border border-[#c9bfb2] bg-white text-[#3d3229] shadow-md transition hover:bg-[#f3efe8] hover:scale-105"
+                title="Abrir panel de chat"
+              >
+                <MessageSquareText className="h-4.5 w-4.5" strokeWidth={1.75} />
+              </button>
+            )}
+
+            {pendingList.length > 0 && (
               <CanvasReviewBar
-                edit={pending.edit}
-                onAccept={() => acceptEdit(pending.id)}
-                onReject={() => rejectEdit(pending.id)}
+                items={pendingList}
+                activeId={pending?.id}
+                onSelect={setActiveEditId}
+                onAccept={acceptEdit}
+                onReject={rejectEdit}
+                onAcceptAll={acceptAllEdits}
+                onRejectAll={rejectAllEdits}
               />
             )}
           </div>
         </div>
 
-        <StudioChat
-          messages={messages}
-          activity={activity}
-          pendingEdits={pendingEdits}
-          input={chatInput}
-          onInputChange={setChatInput}
-          onSend={() => runChat(chatInput)}
-          onAcceptEdit={acceptEdit}
-          onRejectEdit={rejectEdit}
-          isBusy={isBusy}
-          onQuickAction={(p) => void runChat(p)}
-          exportSlot={exportBtn}
-          historyCount={changeLog.length}
-          onOpenHistory={() => setHistoryOpen(true)}
-        />
+        {/* Drag handle to resize / collapse chat */}
+        {!chatCollapsed && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            title="Arrastrá para redimensionar · más a la derecha colapsa"
+            onMouseDown={() => {
+              resizingChat.current = true;
+              document.body.style.cursor = 'col-resize';
+              document.body.style.userSelect = 'none';
+            }}
+            className="group relative z-30 w-1.5 shrink-0 cursor-col-resize bg-neutral-100 hover:bg-[#c9bfb2]"
+          >
+            <div className="absolute inset-y-0 -left-1 -right-1" />
+          </div>
+        )}
+
+        {!chatCollapsed && (
+          <div
+            className="studio-chat-panel flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-neutral-200"
+            style={{ width: chatWidth, maxWidth: 'min(560px, 48vw)' }}
+          >
+            <StudioChat
+              messages={messages}
+              activity={activity}
+              pendingEdits={pendingEdits}
+              input={chatInput}
+              onInputChange={setChatInput}
+              onSend={() => runChat(chatInput)}
+              onAcceptEdit={acceptEdit}
+              onRejectEdit={rejectEdit}
+              isBusy={isBusy}
+              onQuickAction={(p) => void runChat(p)}
+              topBar={chatTopBar}
+            />
+          </div>
+        )}
       </div>
 
       <StudioSettings

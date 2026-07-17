@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { STUDIO_TOOL_DEFINITIONS } from '@/lib/doc-tools';
+import { STUDIO_TOOL_DEFINITIONS, extractHtmlBlocks } from '@/lib/doc-tools';
 import { STUDIO_MODELS, DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
 
 export const runtime = 'nodejs';
@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
       try {
         send({ type: 'thinking', label: 'Pensando…' });
 
-        const system = `You are Studio, a document copilot for academic and professional writing in Spanish or English (match the user).
+        const system = `You are Studio, a document copilot. Match the user language (Spanish/English).
 
 Document title: ${documentTitle}
 Paper size: ${paperSize}
@@ -115,16 +115,17 @@ CURRENT DOCUMENT HTML:
 ${(documentHtml || '').slice(0, 32000)}
 """
 
-RULES:
-1. Be direct. NO multi-step plans/checklists. set_status only for short labels.
-2. Greetings or small talk ("hola", "hi"): just reply briefly in chat. NEVER invent a document, NEVER use assignment context for that.
-3. ONLY use propose_edit when the user asked to change/write content. Never claim the doc changed without it.
-4. Selection rewrites: replace_selection + intensity if given.
-5. Full rewrites of non-empty docs: replace_document + beforeHtml = current.
-6. changeList: max 4 short bullets.
-7. HTML: h1-h3, p, ul/ol/li, table, pre/code, strong, em. Math: \\( \\) and \\[ \\]. No markdown fences.
-8. Empty doc + user not asking for a document: answer in text only, do not propose a full paper.
-9. NEVER reuse old workshop/Gauss context unless it appears in CURRENT DOCUMENT HTML or the user message.
+BEHAVIOR (REAL, not simulated):
+1. Speak in first person about what you will do BEFORE calling tools, when useful: e.g. "Primero leo el documento y después edito los párrafos que pediste."
+2. ALWAYS call read_document before edit_paragraph so you know block indices.
+3. For point edits (one or a few paragraphs): use edit_paragraph once per block. Prefer several edit_paragraph over one replace_document.
+4. For selection rewrites: propose_edit mode=replace_selection with intensity if given.
+5. For full-doc rewrite only when the user clearly asked for a full rewrite: propose_edit mode=replace_document + beforeHtml = current HTML.
+6. NEVER claim the document is already updated. Changes are PROPOSALS — user Accept/Reject.
+7. After tools, write a REAL closing message: what you proposed (titles + which blocks), and ask them to Accept/Reject on the canvas. No empty "Listo, decime cómo seguimos" without substance.
+8. Greetings only → short reply, no tools, no document.
+9. HTML fragments only: h1-h3,p,ul,ol,li,table,pre,code,strong,em. No markdown fences.
+10. set_status labels must be concrete in user language ("Leyendo…", "Editando párrafo 3…").
 `;
 
         const contents: any[] = [
@@ -133,7 +134,7 @@ RULES:
             role: 'model',
             parts: [
               {
-                text: 'Listo. Usaré set_status y propose_edit para cambios en documentos existentes.',
+                text: 'Entendido. Voy a narrar lo que hago, usar read_document + edit_paragraph para cambios puntuales, y proponer edits para que el usuario acepte o rechace.',
               },
             ],
           },
@@ -175,12 +176,13 @@ RULES:
         for (let round = 0; round < MAX_ROUNDS; round++) {
           let data: any = null;
 
+          // Real model calls only — no "Connecting gemini-…" spam (was just fallback loop noise)
+          if (round === 0) {
+            send({ type: 'thinking', label: 'Pensando…' });
+          }
+
           for (const mid of modelCandidates) {
             try {
-              send({
-                type: 'status',
-                label: round === 0 ? `Connecting ${mid}…` : `Tool round ${round + 1} · ${mid}`,
-              });
               const res = await callGemini({
                 apiKey,
                 model: mid,
@@ -223,10 +225,17 @@ RULES:
 
           if (textBits.length) {
             finalTextParts = textBits;
+            // Real narration as the model speaks (before / between tools)
+            for (const t of textBits) {
+              if (t?.trim()) {
+                streamedLive = true;
+                send({ type: 'text', delta: t });
+              }
+            }
+            if (functionCalls.length) send({ type: 'text', delta: '\n' });
           }
 
           if (!functionCalls.length) {
-            // No tools — stream final text with streamGenerateContent if we only have text
             break;
           }
 
@@ -237,11 +246,12 @@ RULES:
             const args = parseArgs(p.functionCall?.args);
 
             if (name === 'set_status') {
-              const label = args.label || 'Working…';
+              const label = args.label || 'Trabajando…';
+              const tid = `st_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               send({ type: 'thinking', label });
               send({ type: 'status', label });
-              send({ type: 'tool_start', name, label });
-              send({ type: 'tool_end', name, ok: true });
+              send({ type: 'tool_start', name, label, id: tid });
+              send({ type: 'tool_end', name, ok: true, label, id: tid });
               fnResponses.push({
                 functionResponse: {
                   name,
@@ -252,7 +262,6 @@ RULES:
             }
 
             if (name === 'set_plan') {
-              // Plan UI removed — acknowledge and skip noise
               fnResponses.push({
                 functionResponse: {
                   name,
@@ -262,11 +271,126 @@ RULES:
               continue;
             }
 
+            if (name === 'read_document') {
+              const tid = `rd_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const focus = args.focus ? String(args.focus) : '';
+              send({
+                type: 'tool_start',
+                name,
+                label: focus ? `Leyendo (${focus})…` : 'Leyendo el documento…',
+                id: tid,
+              });
+              const blocks = extractHtmlBlocks(documentHtml || '');
+              const lines = blocks.map(
+                (b) =>
+                  `[${b.index}] <${b.tag}> ${b.preview}${b.preview.length >= 140 ? '…' : ''}`,
+              );
+              const listing =
+                lines.length > 0
+                  ? lines.join('\n')
+                  : '(documento vacío o sin bloques parseables)';
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `Leído · ${blocks.length} bloque(s)`,
+                id: tid,
+              });
+              fnResponses.push({
+                functionResponse: {
+                  name,
+                  response: {
+                    ok: true,
+                    blockCount: blocks.length,
+                    blocks: blocks.map((b) => ({
+                      index: b.index,
+                      tag: b.tag,
+                      preview: b.preview,
+                    })),
+                    listing,
+                    note: 'Use blockIndex with edit_paragraph for targeted changes.',
+                  },
+                },
+              });
+              continue;
+            }
+
+            if (name === 'edit_paragraph') {
+              proposedSomething = true;
+              const tid = `ep_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const blockIndex = Number(args.blockIndex);
+              const title = args.title || `Editar bloque ${blockIndex}`;
+              const blocks = extractHtmlBlocks(documentHtml || '');
+              const block = Number.isFinite(blockIndex) ? blocks[blockIndex] : undefined;
+              send({
+                type: 'tool_start',
+                name,
+                label: `Editando bloque ${Number.isFinite(blockIndex) ? blockIndex : '?'}…`,
+                id: tid,
+              });
+              if (!block) {
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: `Bloque ${blockIndex} no encontrado`,
+                  id: tid,
+                });
+                fnResponses.push({
+                  functionResponse: {
+                    name,
+                    response: {
+                      ok: false,
+                      error: `blockIndex ${blockIndex} out of range (0..${Math.max(0, blocks.length - 1)})`,
+                    },
+                  },
+                });
+                continue;
+              }
+              const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              const beforeHtml = args.beforeHtml || block.html;
+              const afterHtml = args.afterHtml || '';
+              send({
+                type: 'propose_edit',
+                id,
+                edit: {
+                  title,
+                  summary: args.summary || `Cambio en bloque ${blockIndex} (<${block.tag}>)`,
+                  mode: 'replace_block',
+                  blockIndex,
+                  afterHtml,
+                  beforeHtml,
+                  selectionHint: block.preview,
+                  changeList: [`Bloque ${blockIndex} (<${block.tag}>)`],
+                },
+              });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `Bloque ${blockIndex} propuesto · aceptá o rechazá`,
+                id: tid,
+              });
+              fnResponses.push({
+                functionResponse: {
+                  name,
+                  response: {
+                    ok: true,
+                    id,
+                    blockIndex,
+                    note: 'Pending user Accept/Reject. Do NOT claim applied.',
+                  },
+                },
+              });
+              continue;
+            }
+
             if (name === 'propose_edit') {
               proposedSomething = true;
-              const title = args.title || 'Document change';
-              send({ type: 'status', label: `Proposing: ${title}` });
-              send({ type: 'tool_start', name, label: title });
+              const title = args.title || 'Cambio de documento';
+              const tid = `pe_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'status', label: `Proponiendo: ${title}` });
+              send({ type: 'tool_start', name, label: `Proponiendo: ${title}`, id: tid });
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const beforeHtml =
                 args.beforeHtml ??
@@ -276,7 +400,7 @@ RULES:
                 id,
                 edit: {
                   title,
-                  summary: args.summary || 'AI proposed an update',
+                  summary: args.summary || 'Cambio propuesto',
                   mode: args.mode || 'replace_document',
                   afterHtml: args.afterHtml || '',
                   beforeHtml,
@@ -286,22 +410,29 @@ RULES:
                     : undefined,
                 },
               });
-              send({ type: 'tool_end', name, ok: true });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `Propuesto: ${title} · aceptá o rechazá`,
+                id: tid,
+              });
               fnResponses.push({
                 functionResponse: {
                   name,
                   response: {
                     ok: true,
                     id,
-                    note: 'Shown to user as pending. Wait for Accept/Reject. Do not claim applied.',
+                    note: 'Pending user Accept/Reject. Do NOT claim applied.',
                   },
                 },
               });
               continue;
             }
 
-            send({ type: 'tool_start', name: name || 'unknown', label: name || 'unknown' });
-            send({ type: 'tool_end', name: name || 'unknown', ok: false });
+            const tid = `uk_${Date.now()}`;
+            send({ type: 'tool_start', name: name || 'unknown', label: name || 'unknown', id: tid });
+            send({ type: 'tool_end', name: name || 'unknown', ok: false, label: 'Tool desconocida', id: tid });
             fnResponses.push({
               functionResponse: {
                 name: name || 'unknown',
@@ -326,17 +457,14 @@ RULES:
           }
         }
 
-        // Stream assistant text (real SSE if possible, else chunked)
+        // Prefer real model text; never invent a fake "how do we continue"
         let finalText = finalTextParts.join('\n').trim();
-        if (!finalText && proposedSomething) {
-          finalText =
-            'Listo. Revisá el cambio propuesto: podés aceptar o rechazar antes de aplicarlo al documento.';
-        }
-        if (!finalText) {
-          // Try a pure streaming text completion
+
+        // Always ask model for a concrete closing if we only ran tools
+        if (!finalText || (proposedSomething && finalText.length < 20)) {
           try {
-            send({ type: 'status', label: 'Writing reply…' });
-            const streamRes = await callGemini({
+            send({ type: 'thinking', label: 'Escribiendo respuesta…' });
+            const closeRes = await callGemini({
               apiKey,
               model: activeModel || usedModel,
               contents: [
@@ -345,22 +473,24 @@ RULES:
                   role: 'user',
                   parts: [
                     {
-                      text: 'Respond briefly to the user now (no tools). Confirm next steps.',
+                      text: proposedSomething
+                        ? 'Tools finished. In the user language, write 2–4 short sentences: (1) what you actually proposed (titles / which blocks), (2) that nothing is applied until they Accept/Reject on the canvas. No tools. Be specific, not generic.'
+                        : 'In the user language, answer the user now in 1–3 short sentences. No tools. No filler like "decime cómo seguimos" without content.',
                     },
                   ],
                 },
               ],
               stream: true,
             });
-            if (streamRes.ok && streamRes.body) {
-              const reader = streamRes.body.getReader();
+            if (closeRes.ok && closeRes.body) {
+              finalText = '';
+              const reader = closeRes.body.getReader();
               const decoder = new TextDecoder();
               let buf = '';
               while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 buf += decoder.decode(value, { stream: true });
-                // SSE lines
                 const lines = buf.split('\n');
                 buf = lines.pop() || '';
                 for (const line of lines) {
@@ -378,7 +508,7 @@ RULES:
                       }
                     }
                   } catch {
-                    /* ignore partial */
+                    /* ignore */
                   }
                 }
               }
@@ -390,21 +520,15 @@ RULES:
 
         if (!finalText) {
           finalText = proposedSomething
-            ? 'Listo. Aceptá o rechazá el cambio en la tarjeta.'
-            : 'Listo. Decime cómo seguimos.';
+            ? 'Propuse cambios en el lienzo (ghost). Nada se aplicó todavía: aceptá o rechazá cada uno.'
+            : 'No pude completar la respuesta. ¿Lo intentamos de nuevo con más detalle?';
         }
 
+        // Real stream only — if we already streamed tokens from the model, don't fake-chunk
         if (!streamedLive && finalText) {
-          send({ type: 'status', label: 'Writing reply…' });
-          const chunk = 18;
-          for (let i = 0; i < finalText.length; i += chunk) {
-            send({ type: 'text', delta: finalText.slice(i, i + chunk) });
-            await new Promise((r) => setTimeout(r, 10));
-          }
+          send({ type: 'text', delta: finalText });
         }
 
-        send({ type: 'status', label: 'Done' });
-        send({ type: 'thinking', label: 'Done' });
         send({ type: 'done', finalText, model: usedModel });
       } catch (e: any) {
         send({ type: 'error', message: e?.message || 'Chat failed' });

@@ -39,7 +39,9 @@ export default function HistoryDrawer({ open, onClose, items }: Props) {
     <div
       className={cn(
         'fixed inset-0 z-[80] flex items-center justify-center p-4 transition-all duration-300',
-        visible ? 'bg-black/40 backdrop-blur-sm opacity-100' : 'pointer-events-none opacity-0',
+        visible
+          ? 'bg-[#3d3229]/40 backdrop-blur-sm opacity-100'
+          : 'pointer-events-none opacity-0',
       )}
       onClick={onClose}
     >

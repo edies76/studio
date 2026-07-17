@@ -40,7 +40,8 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        send({ type: 'status', label: 'Drafting…' });
+        // Real status only — no "Connecting model…" theatre
+        send({ type: 'status', label: 'Escribiendo…' });
 
         const system = `You write complete academic/professional HTML documents FAST.
 Output ONLY an HTML fragment (no markdown fences, no html/body).
@@ -51,10 +52,10 @@ Language: match user (${language || 'auto'}). Spanish if user writes Spanish.
 Structure: clear title + sections. Be complete but concise (good for ~3–6 pages).
 NO meta commentary. Start directly with <h1>...`;
 
-        const models = [
-          modelId(preferredModel),
-          ...STUDIO_MODELS.map((m) => modelId(m.id)),
-        ].filter((v, i, a) => a.indexOf(v) === i);
+        // Prefer preferred/default first; only 1 fallback to cut latency
+        const preferred = modelId(preferredModel);
+        const fallbacks = STUDIO_MODELS.map((m) => modelId(m.id)).filter((id) => id !== preferred);
+        const models = [preferred, fallbacks[0]].filter(Boolean) as string[];
 
         let text = '';
         let used = models[0];
@@ -63,7 +64,7 @@ NO meta commentary. Start directly with <h1>...`;
         for (const mid of models) {
           used = mid;
           try {
-            // Prefer streaming SSE
+            // Real SSE stream from Gemini — deltas are live tokens
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${mid}:streamGenerateContent?alt=sse&key=${apiKey}`;
             const res = await fetch(url, {
               method: 'POST',
@@ -83,7 +84,8 @@ NO meta commentary. Start directly with <h1>...`;
             });
 
             if (!res.ok || !res.body) {
-              // fallback non-stream
+              lastErr = res.statusText || `HTTP ${res.status}`;
+              // non-stream fallback only if stream endpoint fails
               const url2 = `https://generativelanguage.googleapis.com/v1beta/models/${mid}:generateContent?key=${apiKey}`;
               const res2 = await fetch(url2, {
                 method: 'POST',
@@ -106,7 +108,11 @@ NO meta commentary. Start directly with <h1>...`;
               text =
                 data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') ||
                 '';
-              if (text) break;
+              // One real delta (not fake micro-chunks)
+              if (text) {
+                send({ type: 'html_delta', delta: text });
+                break;
+              }
               lastErr = 'empty';
               continue;
             }
@@ -130,11 +136,12 @@ NO meta commentary. Start directly with <h1>...`;
                   for (const p of parts) {
                     if (p.text) {
                       text += p.text;
+                      // Real token stream from the API
                       send({ type: 'html_delta', delta: p.text });
                     }
                   }
                 } catch {
-                  /* partial */
+                  /* partial json */
                 }
               }
             }
@@ -159,7 +166,6 @@ NO meta commentary. Start directly with <h1>...`;
         }
 
         send({ type: 'html_ready', html, model: used });
-        send({ type: 'status', label: 'Done' });
         send({ type: 'done' });
       } catch (e: any) {
         send({ type: 'error', message: e?.message || 'Draft failed' });

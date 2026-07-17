@@ -23,6 +23,8 @@ import { GAUSS_TALLER_RAW } from '@/lib/gauss-solver';
 import { cn } from '@/lib/utils';
 import BrandMark from '@/components/brand-mark';
 import SignalField from '@/components/signal-field';
+import DocumentCanvasPreview from '@/components/document-canvas-preview';
+import GithubRepoCard from '@/components/github-repo-card';
 
 type RevealProps = {
   children: React.ReactNode;
@@ -79,16 +81,30 @@ export default function PreSummaryPage() {
   const [briefName, setBriefName] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [landingTheme, setLandingTheme] = useState<'paper' | 'signal'>('paper');
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const briefInputRef = useRef<HTMLInputElement>(null);
   const topicRef = useRef<HTMLTextAreaElement>(null);
   const { toast } = useToast();
 
+  useEffect(() => {
+    const theme = new URLSearchParams(window.location.search).get('theme');
+    if (theme === 'signal') setLandingTheme('signal');
+  }, []);
+
   const focusTopic = useCallback(() => {
     document.getElementById('start')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     window.setTimeout(() => topicRef.current?.focus(), 420);
   }, []);
+
+  const openBlankDocument = useCallback(() => {
+    sessionStorage.removeItem('studioAssignment');
+    sessionStorage.removeItem('studioBriefRaw');
+    sessionStorage.removeItem('studioBriefActive');
+    sessionStorage.removeItem('uploadedDocumentContent');
+    router.push('/');
+  }, [router]);
 
   const readFileText = async (file: File): Promise<string> => {
     if (file.type.startsWith('image/')) {
@@ -202,7 +218,7 @@ export default function PreSummaryPage() {
   }, []);
 
   return (
-    <div className="landing-page">
+    <div className="landing-page" data-theme={landingTheme}>
       <div className="landing-noise" aria-hidden="true" />
 
       <header className="landing-nav">
@@ -213,9 +229,9 @@ export default function PreSummaryPage() {
         </a>
 
         <nav className="landing-nav__links" aria-label="Page sections">
-          <a href="#method">Method</a>
-          <a href="#canvas">Canvas</a>
-          <a href="#context">Context</a>
+          <a href="#method">How it works</a>
+          <a href="#features">Features</a>
+          <a href="#repo">Source</a>
         </nav>
 
         <button type="button" className="landing-nav__cta" onClick={focusTopic}>
@@ -231,30 +247,47 @@ export default function PreSummaryPage() {
               <Reveal>
                 <div className="landing-eyebrow">
                   <span className="landing-eyebrow__mark" aria-hidden="true" />
-                  Documents, with a signal
+                  Docs Studio · an AI document workspace
                 </div>
               </Reveal>
 
               <Reveal delay={60}>
                 <h1 id="hero-heading">
-                  Make the blank
+                  Turn the brief
                   <br />
-                  <span className="landing-heading-accent">page useful.</span>
+                  <span className="landing-heading-accent">into a document.</span>
                 </h1>
               </Reveal>
 
               <Reveal delay={120}>
                 <p className="landing-hero__lede">
-                  Docs Studio turns a topic or professor&apos;s brief into a document you can shape, review, and export.
+                  Docs Studio turns a topic or professor&apos;s brief into a live, multi-page document. Draft with chat, edit on paper, review every proposed change, and export when it is ready.
                 </p>
+              </Reveal>
+
+              <Reveal delay={150}>
+                <div className="landing-hero__facts" aria-label="What Docs Studio helps you do">
+                  <div>
+                    <span>Start with</span>
+                    <strong>Topic or brief</strong>
+                  </div>
+                  <div>
+                    <span>Review with</span>
+                    <strong>Diff + Accept</strong>
+                  </div>
+                  <div>
+                    <span>Leave with</span>
+                    <strong>PDF or .docx</strong>
+                  </div>
+                </div>
               </Reveal>
 
               <Reveal delay={180}>
                 <div className="landing-start-card" id="start">
                   <div className="landing-start-card__topline">
-                    <span>Start with what you have</span>
+                    <span>Start with a topic, brief, or file</span>
                     <span className="landing-start-card__state" aria-live="polite">
-                      {parsing ? 'Preparing workspace' : 'Ready when you are'}
+                      {parsing ? 'Preparing workspace' : 'Your call, every step'}
                     </span>
                   </div>
 
@@ -356,6 +389,11 @@ export default function PreSummaryPage() {
                     + Add extra context files
                   </button>
 
+                  <button type="button" className="landing-blank-button" onClick={openBlankDocument}>
+                    Open a blank document
+                    <ArrowUpRight size={13} strokeWidth={1.8} />
+                  </button>
+
                   <input
                     ref={briefInputRef}
                     type="file"
@@ -379,25 +417,31 @@ export default function PreSummaryPage() {
             </div>
 
             <Reveal className="landing-hero__visual" delay={120}>
-              <div className="signal-frame">
-                <SignalField />
-                <div className="signal-frame__topline">
-                  <span>Interactive field</span>
-                  <span>Pointer responsive</span>
-                </div>
-                <div className="signal-frame__caption">
-                  <div>
-                    <span className="signal-frame__caption-label">Structure, before polish</span>
-                    <strong>Ideas become visible when they have a shape.</strong>
+              {landingTheme === 'signal' ? (
+                <div className="signal-frame">
+                  <SignalField />
+                  <div className="signal-frame__topline">
+                    <span>Interactive field</span>
+                    <span>Pointer responsive</span>
                   </div>
-                  <MousePointer2 size={17} strokeWidth={1.45} aria-hidden="true" />
+                  <div className="signal-frame__caption">
+                    <div>
+                      <span className="signal-frame__caption-label">Structure, before polish</span>
+                      <strong>Ideas become visible when they have a shape.</strong>
+                    </div>
+                    <MousePointer2 size={17} strokeWidth={1.45} aria-hidden="true" />
+                  </div>
+                  <div className="signal-frame__legend" aria-label="Document transformation stages">
+                    <span><i className="signal-legend__line signal-legend__line--acid" />Topic</span>
+                    <span><i className="signal-legend__line signal-legend__line--coral" />Structure</span>
+                    <span><i className="signal-legend__line signal-legend__line--white" />Voice</span>
+                  </div>
                 </div>
-                <div className="signal-frame__legend" aria-label="Document transformation stages">
-                  <span><i className="signal-legend__line signal-legend__line--acid" />Topic</span>
-                  <span><i className="signal-legend__line signal-legend__line--coral" />Structure</span>
-                  <span><i className="signal-legend__line signal-legend__line--white" />Voice</span>
+              ) : (
+                <div className="document-frame">
+                  <DocumentCanvasPreview />
                 </div>
-              </div>
+              )}
             </Reveal>
           </div>
 
@@ -414,9 +458,9 @@ export default function PreSummaryPage() {
             </Reveal>
             <Reveal delay={70}>
               <div className="landing-section-heading landing-section-heading--wide">
-                <h2 id="method-heading">Structure appears before the prose.</h2>
+                <h2 id="method-heading">A clearer path to a finished document.</h2>
                 <p>
-                  The work stays legible from the first prompt to the last export. You can always see what changed and why.
+                  The first draft streams onto real paper. Later requests become visible proposals, so the document never changes behind your back.
                 </p>
               </div>
             </Reveal>
@@ -425,22 +469,22 @@ export default function PreSummaryPage() {
               {[
                 {
                   title: 'Capture',
-                  text: 'Paste a topic, drop a brief, or start empty. Context is optional.',
+                  text: 'Paste a topic, upload a DOCX/PDF/TXT brief, or add an image as context.',
                   icon: ScanSearch,
                 },
                 {
                   title: 'Shape',
-                  text: 'A first draft arrives in the canvas, section by section.',
+                  text: 'The first draft streams directly onto a paginated Letter or Legal canvas.',
                   icon: Layers3,
                 },
                 {
                   title: 'Direct',
-                  text: 'Ask for a rewrite, then accept or reject the exact change.',
+                  text: 'Select text or use chat: Improve, Shorter, Expand, Grammar, or Academic.',
                   icon: PenLine,
                 },
                 {
                   title: 'Export',
-                  text: 'Take the finished document to PDF or Word when it is ready.',
+                  text: 'Set margins, insert math or tables, then export PDF or server-generated .docx.',
                   icon: ArrowUpRight,
                 },
               ].map(({ title, text, icon: Icon }, index) => (
@@ -463,9 +507,9 @@ export default function PreSummaryPage() {
           <div className="landing-wrap landing-canvas-story__grid">
             <Reveal className="landing-canvas-story__copy">
               <div className="landing-micro-label">The canvas is the source of truth</div>
-              <h2 id="canvas-heading">Every suggestion has a paper trail.</h2>
+              <h2 id="canvas-heading">A document, not a chat transcript.</h2>
               <p>
-                The document stays in view while the conversation works beside it. Drafts land in the canvas. Rewrites arrive as visible proposals.
+                The editor stays in view while chat works beside it. The canvas has real pages, a Word-like toolbar, selection tools, zoom, undo/redo, and a history drawer for consequential changes.
               </p>
               <a className="landing-inline-link" href="#context">
                 See what stays under your control
@@ -485,23 +529,23 @@ export default function PreSummaryPage() {
                 </div>
                 <div className="landing-paper__content">
                   <span className="landing-paper__kicker">Working draft</span>
-                  <h3>The impact of clear structure</h3>
+                  <h3>A first draft with the brief in view</h3>
                   <p>
-                    A useful document does not hide its logic. It lets the reader feel the order of the argument before asking them to carry its weight.
+                    The canvas keeps headings, equations, tables, and page breaks together while you work.
                   </p>
                   <p>
-                    In this canvas, the model can suggest a stronger turn. The author still decides whether that turn belongs.
+                    Ask chat to rewrite a selection and the proposal arrives here before it touches the document.
                   </p>
                   <div className="landing-paper__proposal">
                     <div className="landing-paper__proposal-line" aria-hidden="true" />
                     <div>
                       <span>Proposed rewrite</span>
-                      <strong>Make the next sentence do less work.</strong>
+                      <strong>Turn the row operation into a numbered step.</strong>
                     </div>
                     <Check size={16} strokeWidth={1.75} aria-label="Proposal can be accepted" />
                   </div>
                   <p className="landing-paper__faded">
-                    The result is a draft that can be challenged, edited, and made yours.
+                    Accept it, reject it, or keep writing yourself.
                   </p>
                 </div>
               </article>
@@ -530,16 +574,16 @@ export default function PreSummaryPage() {
               <SectionRule>Bring the messy part</SectionRule>
               <h2 id="context-heading">The brief can stay imperfect.</h2>
               <p>
-                Attach the rubric, source file, or screenshot. The topic can stay short. Docs Studio uses the context you already have without making you format it first.
+                Attach a professor&apos;s brief, source file, rubric, or screenshot. The parser extracts tasks, objectives, constraints, and rubric weights so the draft starts with the assignment in view.
               </p>
               <div className="context-list">
                 <div>
                   <Check size={14} strokeWidth={2} />
-                  <span>Optional professor brief parsing</span>
+                  <span>Tasks, objectives, constraints, and rubric parsing</span>
                 </div>
                 <div>
                   <Check size={14} strokeWidth={2} />
-                  <span>Math-aware document editing</span>
+                  <span>MathJax equations and editable tables</span>
                 </div>
                 <div>
                   <Check size={14} strokeWidth={2} />
@@ -554,12 +598,12 @@ export default function PreSummaryPage() {
           </div>
         </section>
 
-        <section className="landing-section landing-principles" aria-labelledby="principles-heading">
+        <section id="features" className="landing-section landing-principles" aria-labelledby="principles-heading">
           <div className="landing-wrap">
             <Reveal>
               <div className="landing-section-heading landing-section-heading--compact">
-                <h2 id="principles-heading">The useful parts are visible.</h2>
-                <p>Small decisions add up to a document that feels like work, not a black box.</p>
+                <h2 id="principles-heading">Built for the work after “generate”.</h2>
+                <p>Docs Studio keeps authorship in the loop: draft quickly, inspect the change, then decide what belongs in the final file.</p>
               </div>
             </Reveal>
 
@@ -567,23 +611,37 @@ export default function PreSummaryPage() {
               <Reveal className="principle-card principle-card--large">
                 <div className="principle-card__number">01</div>
                 <div>
-                  <h3>Direct edits</h3>
-                  <p>No silent rewrites. Proposed changes stay visible until you accept them.</p>
+                  <h3>Reviewable edits</h3>
+                  <p>Later AI changes arrive as a red/green canvas diff with a clear Accept or Reject decision.</p>
                 </div>
                 <div className="principle-card__line" aria-hidden="true" />
               </Reveal>
               <Reveal className="principle-card principle-card--small" delay={80}>
                 <div className="principle-card__icon" aria-hidden="true"><MousePointer2 size={18} strokeWidth={1.5} /></div>
-                <h3>Human control</h3>
-                <p>The prompt starts the work. Your judgment finishes it.</p>
+                <h3>Selection tools</h3>
+                <p>Select a passage and ask for a tighter, longer, cleaner, or more academic version at the intensity you choose.</p>
               </Reveal>
               <Reveal className="principle-card principle-card--tall" delay={140}>
                 <div className="principle-card__icon" aria-hidden="true"><Sparkles size={18} strokeWidth={1.5} /></div>
-                <h3>Math that survives export</h3>
-                <p>Keep formulas legible as the document moves from canvas to final file.</p>
+                <h3>Ready to take out</h3>
+                <p>Keep formulas and page structure legible as the document moves from canvas to PDF or Word.</p>
                 <span className="principle-card__formula" aria-hidden="true">∑ f(x) → PDF</span>
               </Reveal>
             </div>
+          </div>
+        </section>
+
+        <section id="repo" className="landing-section landing-repo" aria-labelledby="repo-heading">
+          <div className="landing-wrap">
+            <Reveal>
+              <div className="landing-section-heading landing-section-heading--compact">
+                <h2 id="repo-heading">The product is the proof.</h2>
+                <p>Open the source, inspect the document loop, or skip the brief and start writing on a clean page.</p>
+              </div>
+            </Reveal>
+            <Reveal delay={100}>
+              <GithubRepoCard onOpenBlankDocument={openBlankDocument} />
+            </Reveal>
           </div>
         </section>
 
@@ -592,8 +650,8 @@ export default function PreSummaryPage() {
           <div className="landing-wrap landing-final__content">
             <Reveal>
               <span className="landing-final__label">No perfect starting point required</span>
-              <h2 id="final-heading">Start with one clear sentence.</h2>
-              <p>A title, a question, or a professor&apos;s brief is enough to begin.</p>
+              <h2 id="final-heading">Bring the brief. Keep the decision.</h2>
+              <p>A topic, a professor&apos;s file, or a blank page is enough to start a document you can actually finish.</p>
               <button type="button" className="landing-primary-button landing-primary-button--large" onClick={focusTopic}>
                 Begin a document
                 <span aria-hidden="true"><ArrowUpRight size={17} strokeWidth={1.8} /></span>

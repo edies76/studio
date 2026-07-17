@@ -87,7 +87,7 @@ export default function SelectionPrompt({ top, left, busy, snippet, onSubmit, on
             disabled={busy || !prompt.trim()}
             onMouseDown={(e) => e.preventDefault()}
             onClick={send}
-            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-neutral-900 text-white disabled:opacity-30"
+            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-studio-brown text-white disabled:opacity-30"
           >
             {busy ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -1,5 +1,40 @@
-/** Cascade / waterfall animation when injecting HTML into the paper */
+/** Animations when injecting HTML into the paper */
 
+/** First-document reveal: full HTML is in the DOM, hidden; vertical shine sweeps top→bottom and reveals with opacity */
+export function applyFirstDraftReveal(
+  el: HTMLDivElement,
+  html: string,
+  onDone?: () => void,
+): void {
+  el.innerHTML = html;
+  el.classList.remove('studio-first-reveal', 'studio-cascade-host');
+  // force reflow so animation restarts
+  void el.offsetHeight;
+  el.classList.add('studio-first-reveal');
+
+  // Scan line sibling (full page width of the paper column)
+  const host = el.parentElement;
+  let scan: HTMLDivElement | null = null;
+  if (host) {
+    host.querySelectorAll('.studio-reveal-scan').forEach((n) => n.remove());
+    scan = document.createElement('div');
+    scan.className = 'studio-reveal-scan';
+    scan.setAttribute('aria-hidden', 'true');
+    // match editor width/position
+    scan.style.width = `${el.offsetWidth}px`;
+    scan.style.left = `${el.offsetLeft}px`;
+    host.appendChild(scan);
+  }
+
+  const DURATION = 2200;
+  window.setTimeout(() => {
+    el.classList.remove('studio-first-reveal');
+    scan?.remove();
+    onDone?.();
+  }, DURATION);
+}
+
+/** Stagger cascade (secondary; block-by-block) */
 export function applyHtmlWithCascade(
   el: HTMLDivElement,
   html: string,
@@ -29,19 +64,7 @@ export function applyHtmlWithCascade(
   }, total);
 }
 
-/** Progressive paint while streaming: only animate newly completed top-level blocks */
+/** Progressive paint while streaming live tokens (real deltas only) */
 export function paintStreamingHtml(el: HTMLDivElement, html: string): void {
-  const prevCount = el.children.length;
   el.innerHTML = html;
-  const kids = Array.from(el.children) as HTMLElement[];
-  // Soft-land only new blocks so stream feels alive without thrashing
-  kids.forEach((child, i) => {
-    if (i < prevCount) return;
-    child.classList.add('studio-cascade-item');
-    child.style.animationDelay = '0ms';
-    window.setTimeout(() => {
-      child.classList.remove('studio-cascade-item');
-      child.style.animationDelay = '';
-    }, 380);
-  });
 }

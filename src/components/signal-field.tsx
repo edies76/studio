@@ -194,6 +194,7 @@ export default function SignalField({ className, label = 'Live signal field' }: 
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
       const scale = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, Math.floor(rect.width * scale));
       canvas.height = Math.max(1, Math.floor(rect.height * scale));
@@ -222,6 +223,7 @@ export default function SignalField({ className, label = 'Live signal field' }: 
 
     const onPointerMove = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
       state.targetPointer[0] = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       state.targetPointer[1] = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
     };
@@ -232,7 +234,8 @@ export default function SignalField({ className, label = 'Live signal field' }: 
     };
 
     const resizeObserver = new ResizeObserver(resize);
-    resizeObserver.observe(canvas);
+    resizeObserver.observe(canvas.parentElement || canvas);
+    window.addEventListener('resize', resize, { passive: true });
     canvas.addEventListener('pointermove', onPointerMove, { passive: true });
     canvas.addEventListener('pointerleave', onPointerLeave, { passive: true });
     resize();
@@ -240,6 +243,7 @@ export default function SignalField({ className, label = 'Live signal field' }: 
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener('resize', resize);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerleave', onPointerLeave);
       cancelAnimationFrame(state.frame);

@@ -70,7 +70,7 @@ export default function SelectionToolbar({
           e.stopPropagation();
           onOpen();
         }}
-        className="absolute z-50 flex h-8 w-8 items-center justify-center rounded-full border border-[#c9c4ba] bg-[#2c2a26] text-[#f3f1ec] shadow-sm transition hover:scale-105 active:scale-95"
+        className="absolute z-50 flex h-8 w-8 items-center justify-center rounded-full border border-[#c9c4ba] bg-studio-brown text-[#f3f1ec] shadow-sm transition hover:scale-105 active:scale-95"
         title="AI tools"
       >
         <Type className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -152,7 +152,7 @@ export default function SelectionToolbar({
             onAction('custom', custom.trim());
             setCustom('');
           }}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-[#2c2a26] text-[#f3f1ec] disabled:opacity-40"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-studio-brown text-[#f3f1ec] disabled:opacity-40"
         >
           <ArrowUp className="h-3.5 w-3.5" strokeWidth={2} />
         </button>

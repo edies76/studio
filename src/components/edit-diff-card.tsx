@@ -75,7 +75,7 @@ export default function EditDiffCard({ id, edit, onAccept, onReject }: Props) {
                 className={cn(
                   'rounded-md px-2.5 py-1 text-[11px] font-medium',
                   tab === t
-                    ? 'bg-[#2c2a26] text-[#f3f1ec]'
+                    ? 'bg-studio-brown text-[#f3f1ec]'
                     : 'text-[#5c5952] hover:bg-[#f3f1ec]',
                 )}
               >
@@ -118,7 +118,7 @@ export default function EditDiffCard({ id, edit, onAccept, onReject }: Props) {
             <button
               type="button"
               onClick={() => onAccept(id)}
-              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-[#2c2a26] py-1.5 text-xs font-semibold text-[#f3f1ec] hover:bg-[#1c1b19]"
+              className="flex flex-1 items-center justify-center gap-1 rounded-md bg-studio-brown py-1.5 text-xs font-semibold text-[#f3f1ec] hover:bg-studio-brown-hover"
             >
               <Check className="h-3.5 w-3.5" strokeWidth={2} />
               Accept

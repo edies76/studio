@@ -141,7 +141,7 @@ export default function OrbitSelectionMenu({ top, left, busy, onSubmit, onClose 
             step={5}
             value={intensity}
             onChange={(e) => setIntensity(Number(e.target.value))}
-            className="w-full accent-neutral-900"
+            className="w-full accent-[#3d3229]"
           />
           <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
             <span>Subtle</span>
@@ -161,10 +161,10 @@ export default function OrbitSelectionMenu({ top, left, busy, onSubmit, onClose 
           className={cn(
             'flex h-11 w-11 items-center justify-center rounded-full border shadow-lg transition-all duration-200',
             action
-              ? 'border-neutral-900 bg-neutral-900 text-white hover:bg-neutral-800 hover:scale-105'
+              ? 'border-studio-brown bg-studio-brown text-white hover:bg-studio-brown-hover hover:scale-105'
               : open
-                ? 'border-neutral-300 bg-white text-neutral-800 ring-4 ring-neutral-900/5'
-                : 'border-neutral-900 bg-neutral-900 text-white hover:scale-105',
+                ? 'border-neutral-300 bg-white text-neutral-800 ring-4 ring-[#3d3229]/10'
+                : 'border-studio-brown bg-studio-brown text-white hover:scale-105',
             busy && 'opacity-50',
           )}
           title={action ? 'Send' : 'AI tools'}
