@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
-import PaperCanvas from '@/components/paper-canvas';
+import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
 import StudioChat, {
   type ActivityStep,
   type ChatMessage,
@@ -33,13 +33,14 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
-import { applyHtmlWithCascade, applyFirstDraftReveal } from '@/lib/cascade';
-import { serializeEditorHtml, stripBreaks } from '@/lib/page-layout';
 import CanvasReviewBar from '@/components/canvas-review-bar';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
 import ZoomControl from '@/components/zoom-control';
 import jsPDF from 'jspdf';
+import mammoth from 'mammoth';
+
+const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
 const DEFAULT_FONT = 'Inter, Segoe UI, system-ui, sans-serif';
 
@@ -102,12 +103,51 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const resizingChat = useRef(false);
 
-  const editorRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<PaperCanvasHandle>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const didAuto = useRef(false);
   const skipHistory = useRef(false);
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
+
+  /** Active page body under caret / selection, else last page */
+  const getActiveBody = useCallback((): HTMLElement | null => {
+    const bodies = canvasRef.current?.getBodies() || [];
+    if (!bodies.length) return null;
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae) {
+      for (const b of bodies) {
+        if (b === ae || b.contains(ae)) return b;
+      }
+    }
+    const sel = window.getSelection();
+    if (sel?.anchorNode) {
+      for (const b of bodies) {
+        if (b.contains(sel.anchorNode)) return b;
+      }
+    }
+    return bodies[bodies.length - 1] || null;
+  }, []);
+
+  const typesetAll = useCallback(() => {
+    const bodies = canvasRef.current?.getBodies() || [];
+    if (!bodies.length) return;
+    bodies.forEach((b) => typesetEditor(b));
+  }, []);
+
+  const queryAllBlocks = useCallback((): HTMLElement[] => {
+    const out: HTMLElement[] = [];
+    for (const b of canvasRef.current?.getBodies() || []) {
+      b.querySelectorAll(BLOCK_QUERY).forEach((el) => out.push(el as HTMLElement));
+    }
+    return out;
+  }, []);
+
+  const selectionInCanvas = useCallback((node: Node | null) => {
+    if (!node) return false;
+    return (canvasRef.current?.getBodies() || []).some((b) => b === node || b.contains(node));
+  }, []);
 
   useEffect(() => setIsClient(true), []);
 
@@ -219,33 +259,35 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         '',
       );
       setDocumentContent(withoutBreaks);
-      if (editorRef.current) {
-        skipHistory.current = true;
-        stripBreaks(editorRef.current);
-        if (mode === 'firstReveal') {
-          applyFirstDraftReveal(editorRef.current, withoutBreaks, () => {
-            typesetEditor(editorRef.current);
-            skipHistory.current = false;
-          });
-        } else if (mode === 'cascade') {
-          applyHtmlWithCascade(editorRef.current, withoutBreaks, () => {
-            typesetEditor(editorRef.current);
-            skipHistory.current = false;
-          });
-        } else {
-          editorRef.current.innerHTML = withoutBreaks;
-          requestAnimationFrame(() => typesetEditor(editorRef.current));
-          skipHistory.current = false;
+      skipHistory.current = true;
+      // Multi-page pack: canvas splits into fixed Word-like sheets
+      canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
+      requestAnimationFrame(() => {
+        // Light cascade on first page blocks after pack
+        if (mode === 'cascade') {
+          const first = canvasRef.current?.getBodies()?.[0];
+          if (first) {
+            Array.from(first.children).forEach((child, i) => {
+              const el = child as HTMLElement;
+              el.classList.add('studio-cascade-item');
+              el.style.animationDelay = `${Math.min(i * 48, 900)}ms`;
+              window.setTimeout(() => {
+                el.classList.remove('studio-cascade-item');
+                el.style.animationDelay = '';
+              }, Math.min(i * 48, 900) + 420);
+            });
+          }
         }
-      }
+        typesetAll();
+        skipHistory.current = false;
+      });
       if (recordHistory) pushHistory(withoutBreaks);
     },
-    [pushHistory],
+    [pushHistory, typesetAll],
   );
 
-  /** Always strip page-break spacers before AI / history / export */
-  const readEditorHtml = () =>
-    serializeEditorHtml(editorRef.current) || documentContent;
+  /** Full document HTML from multi-page canvas (or React state fallback) */
+  const readEditorHtml = () => canvasRef.current?.getHtml() || documentContent;
 
   const undo = () => {
     if (historyIndex <= 0) return;
@@ -592,13 +634,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               if (
                 !edit.beforeHtml &&
                 edit.mode === 'replace_block' &&
-                typeof edit.blockIndex === 'number' &&
-                editorRef.current
+                typeof edit.blockIndex === 'number'
               ) {
-                const blocks = editorRef.current.querySelectorAll(
-                  'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol',
-                );
-                const el = blocks[edit.blockIndex] as HTMLElement | undefined;
+                const el = queryAllBlocks()[edit.blockIndex];
                 if (el) edit.beforeHtml = el.outerHTML;
               }
               setPendingEdits((p) => [...p, { id: ev.id, edit, status: 'pending' }]);
@@ -650,7 +688,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         setActivity([]);
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks],
   );
 
   useEffect(() => {
@@ -662,15 +700,14 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   }, [topic, isClient]);
 
   const onEditorInput = () => {
-    if (!editorRef.current || skipHistory.current) return;
-    // Lightweight: don't serialize full clone every key if possible — still needed for history
-    const html = serializeEditorHtml(editorRef.current);
+    if (!canvasRef.current || skipHistory.current) return;
+    const html = readEditorHtml();
     setDocumentContent(html);
     // Debounce history + typeset so typing stays snappy
     if (localEditTimer.current) clearTimeout(localEditTimer.current);
     localEditTimer.current = setTimeout(() => {
       pushHistory(html);
-      if (editorRef.current) typesetEditor(editorRef.current);
+      typesetAll();
     }, 400);
   };
 
@@ -679,13 +716,13 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     if ((e.target as HTMLElement).closest('[data-block-edit]')) return;
     requestAnimationFrame(() => {
       const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || !sel.rangeCount || !editorRef.current) {
+      if (!sel || sel.isCollapsed || !sel.rangeCount || !canvasRef.current) {
         setSelOpen(false);
         setHasSelection(false);
         selectedTextRef.current = '';
         return;
       }
-      if (!editorRef.current.contains(sel.anchorNode)) {
+      if (!selectionInCanvas(sel.anchorNode)) {
         setSelOpen(false);
         setHasSelection(false);
         return;
@@ -753,21 +790,17 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
 
     if (edit.mode === 'replace_document') {
       applyHtml(edit.afterHtml, true, 'cascade');
-    } else if (edit.mode === 'replace_block' && editorRef.current && typeof edit.blockIndex === 'number') {
-      const blocks = editorRef.current.querySelectorAll(
-        'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol',
-      );
-      const target = blocks[edit.blockIndex] as HTMLElement | undefined;
+    } else if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
+      const target = queryAllBlocks()[edit.blockIndex];
       if (target) {
         const wrap = document.createElement('div');
         wrap.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
         const next = wrap.firstElementChild;
         if (next) target.replaceWith(next);
         else target.outerHTML = sanitizeDocumentHtml(edit.afterHtml);
-        const html = serializeEditorHtml(editorRef.current);
-        setDocumentContent(html);
-        pushHistory(html);
-        requestAnimationFrame(() => typesetEditor(editorRef.current));
+        // Re-pack pages after DOM mutation
+        const html = readEditorHtml();
+        applyHtml(html, true);
       } else {
         toast({
           variant: 'destructive',
@@ -775,7 +808,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           description: `Índice ${edit.blockIndex}`,
         });
       }
-    } else if (edit.mode === 'replace_selection' && selectionRef.current && editorRef.current) {
+    } else if (edit.mode === 'replace_selection' && selectionRef.current) {
       try {
         const range = selectionRef.current;
         range.deleteContents();
@@ -784,21 +817,19 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         const frag = document.createDocumentFragment();
         while (temp.firstChild) frag.appendChild(temp.firstChild);
         range.insertNode(frag);
-        const html = serializeEditorHtml(editorRef.current);
-        setDocumentContent(html);
-        pushHistory(html);
-        requestAnimationFrame(() => typesetEditor(editorRef.current));
+        const html = readEditorHtml();
+        applyHtml(html, true);
       } catch {
         applyHtml(edit.afterHtml, true, 'cascade');
       }
-    } else if (edit.mode === 'insert_html' && editorRef.current) {
-      editorRef.current.insertAdjacentHTML(
-        'beforeend',
-        sanitizeDocumentHtml(edit.afterHtml),
-      );
-      const html = serializeEditorHtml(editorRef.current);
-      setDocumentContent(html);
-      pushHistory(html);
+    } else if (edit.mode === 'insert_html') {
+      const body = getActiveBody();
+      if (body) {
+        body.insertAdjacentHTML('beforeend', sanitizeDocumentHtml(edit.afterHtml));
+        applyHtml(readEditorHtml(), true);
+      } else {
+        applyHtml(edit.afterHtml, true, 'cascade');
+      }
     } else {
       applyHtml(edit.afterHtml, true, 'cascade');
     }
@@ -817,7 +848,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       },
       true,
     );
-    requestAnimationFrame(() => typesetEditor(editorRef.current));
+    requestAnimationFrame(() => typesetAll());
   };
 
   const rejectEdit = (id: string) => {
@@ -849,17 +880,18 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   };
 
   const handleExportPdf = async () => {
-    if (!editorRef.current) return;
+    if (!canvasRef.current) return;
     setIsBusy(true);
     try {
-      typesetEditor(editorRef.current);
+      typesetAll();
       await new Promise((r) => setTimeout(r, 200));
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'pt',
         format: paperSize === 'legal' ? [612, 1008] : 'letter',
       });
-      const clone = editorRef.current.cloneNode(true) as HTMLElement;
+      const clone = document.createElement('div');
+      clone.innerHTML = sanitizeDocumentHtml(readEditorHtml());
       document.body.appendChild(clone);
       clone.style.background = 'white';
       clone.style.color = 'black';
@@ -883,9 +915,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   };
 
   const handleExportWord = async () => {
-    if (!editorRef.current) return;
+    if (!canvasRef.current) return;
     try {
-      typesetEditor(editorRef.current);
+      typesetAll();
       await new Promise((r) => setTimeout(r, 120));
       const html = readEditorHtml();
       const title = documentTitle || 'Docs Studio';
@@ -911,7 +943,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       }
 
       // Fallback: Word-compatible HTML .doc
-      const docHtml = htmlForWordExport(editorRef.current, title);
+      const tmp = document.createElement('div');
+      tmp.innerHTML = sanitizeDocumentHtml(html);
+      const docHtml = htmlForWordExport(tmp, title);
       const blob = new Blob(['\ufeff', docHtml], { type: 'application/msword' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -926,25 +960,71 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     }
   };
 
+  const handleImportWord = async (file: File) => {
+    if (!file) return;
+    const name = file.name || '';
+    if (!/\.docx$/i.test(name) && file.type !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      toast({
+        variant: 'destructive',
+        title: 'Formato no soportado',
+        description: 'Importá un archivo .docx (Word).',
+      });
+      return;
+    }
+    setIsBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const result = await mammoth.convertToHtml({ arrayBuffer: buf });
+      const html = sanitizeDocumentHtml(result.value || '<p><br></p>');
+      const base = name.replace(/\.docx$/i, '').trim() || 'Documento importado';
+      setDocumentTitle(base.slice(0, 80));
+      applyHtml(html, true, 'cascade');
+      toast({
+        title: 'Word importado',
+        description: result.messages?.length
+          ? `${result.messages.length} avisos de conversión`
+          : 'Listo para editar en el lienzo',
+      });
+      pushEvent(
+        {
+          type: 'local_edit',
+          title: 'Import .docx',
+          summary: base.slice(0, 48),
+        },
+        true,
+      );
+    } catch (e: any) {
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo importar',
+        description: e?.message || 'Error leyendo el .docx',
+      });
+    } finally {
+      setIsBusy(false);
+      if (importInputRef.current) importInputRef.current.value = '';
+    }
+  };
+
   const countWords = () => {
-    const plain = (editorRef.current?.innerText || documentContent || '')
+    const plain = (canvasRef.current?.getBodies() || [])
+      .map((b) => b.innerText || '')
+      .join(' ')
       .replace(/\s+/g, ' ')
-      .trim();
+      .trim() || (documentContent || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
     if (!plain) return 0;
     return plain.split(/\s+/).filter(Boolean).length;
   };
 
   const handleInsertMath = () => {
-    if (!editorRef.current) return;
+    const body = getActiveBody();
+    if (!body) return;
     const tex = window.prompt('LaTeX (inline). Ej: x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 'E = mc^2');
     if (tex == null || !tex.trim()) return;
     const display = window.confirm('¿Fórmula en bloque (centrada)?\nOK = bloque · Cancelar = inline');
     skipHistory.current = true;
-    insertMathAtSelection(editorRef.current, tex.trim(), display);
+    insertMathAtSelection(body, tex.trim(), display);
     skipHistory.current = false;
-    const html = editorRef.current.innerHTML;
-    setDocumentContent(html);
-    pushHistory(html);
+    applyHtml(readEditorHtml(), true);
     pushEvent({
       type: 'local_edit',
       title: 'Fórmula insertada',
@@ -953,13 +1033,12 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   };
 
   const handleInsertTable = () => {
-    if (!editorRef.current) return;
+    const body = getActiveBody();
+    if (!body) return;
     skipHistory.current = true;
-    insertTableAtSelection(editorRef.current, 3, 3);
+    insertTableAtSelection(body, 3, 3);
     skipHistory.current = false;
-    const html = editorRef.current.innerHTML;
-    setDocumentContent(html);
-    pushHistory(html);
+    applyHtml(readEditorHtml(), true);
     pushEvent({
       type: 'local_edit',
       title: 'Tabla insertada',
@@ -973,7 +1052,8 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     const math =
       (t.closest('mjx-container') as HTMLElement | null) ||
       (t.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null);
-    if (!math || !editorRef.current) return;
+    const body = getActiveBody();
+    if (!math || !body) return;
     e.preventDefault();
     const src = getMathSource(math) || '';
     const display =
@@ -986,12 +1066,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       math.remove();
     } else {
       skipHistory.current = true;
-      replaceMathNode(editorRef.current, math, next.trim(), display);
+      replaceMathNode(body, math, next.trim(), display);
       skipHistory.current = false;
     }
-    const html = editorRef.current.innerHTML;
-    setDocumentContent(html);
-    pushHistory(html);
+    applyHtml(readEditorHtml(), true);
     pushEvent({
       type: 'local_edit',
       title: 'Fórmula actualizada',
@@ -1061,11 +1139,14 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
+            <FileText className="mr-2 h-4 w-4" /> Importar Word (.docx)
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={handleExportPdf}>
             <FileText className="mr-2 h-4 w-4" /> PDF
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => void handleExportWord()}>
-            <FileText className="mr-2 h-4 w-4" /> Word (.docx)
+            <FileText className="mr-2 h-4 w-4" /> Exportar Word (.docx)
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -1096,7 +1177,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         >
           <div className="relative min-h-0 flex-1 overflow-hidden">
             <PaperCanvas
-              ref={editorRef}
+              ref={canvasRef}
               paperSize={paperSize}
               onPaperSizeChange={setPaperSize}
               fontFamily={fontFamily}
@@ -1114,6 +1195,16 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               zoom={zoom}
               marginPreset={prefs.marginPreset}
               showEditButton={prefs.showEditButton}
+            />
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImportWord(f);
+              }}
             />
 
             {/* Floating format toolbar */}
@@ -1136,6 +1227,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                   wordCount={countWords()}
                   onInsertMath={handleInsertMath}
                   onInsertTable={handleInsertTable}
+                  onImportWord={() => importInputRef.current?.click()}
                   onOpenSettings={() => setSettingsOpen(true)}
                 />
               </div>

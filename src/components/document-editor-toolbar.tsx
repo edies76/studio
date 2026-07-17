@@ -30,6 +30,7 @@ import {
   Sigma,
   Table2,
   Settings2,
+  FileUp,
 } from 'lucide-react';
 function ensureEditMode() {
   try {
@@ -76,6 +77,7 @@ type Props = {
   onInsertMath?: () => void;
   onInsertTable?: () => void;
   onOpenSettings?: () => void;
+  onImportWord?: () => void;
 };
 
 /** Clean white Word-style toolbar (restored look) */
@@ -94,6 +96,7 @@ export default function DocumentEditorToolbar({
   onInsertMath,
   onInsertTable,
   onOpenSettings,
+  onImportWord,
 }: Props) {
   const applyFont = (value: string, name: string) => {
     onFontFamily(value);
@@ -239,6 +242,17 @@ export default function DocumentEditorToolbar({
       </DropdownMenu>
 
       <div className="mx-1 h-5 w-px bg-neutral-200" />
+      {onImportWord && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className={btn}
+          onClick={onImportWord}
+          title="Importar Word (.docx)"
+        >
+          <FileUp className="h-4 w-4" strokeWidth={1.5} />
+        </Button>
+      )}
       {onOpenSettings && (
         <Button
           variant="ghost"

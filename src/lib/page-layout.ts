@@ -1,247 +1,225 @@
 /**
- * Word-like pagination (continuous contentEditable).
- *
- * Rules (like Word):
- * - Start with 1 page.
- * - A new page appears only when real content overflows the current page band.
- * - Empty trailing pages are never kept.
- * - Page count NEVER comes from scrollHeight/minHeight (that caused 40–400 phantoms).
- * - Break spacers = visual gap + margins so text never sits in the “air” between sheets.
+ * Word-like multi-page packing.
+ * Content is split into page HTML fragments. Each page is a fixed-height sheet;
+ * blocks never sit in the inter-page gap because they live inside a page body.
  */
-
-export const BREAK_ATTR = 'data-studio-break';
 
 export type PageMetrics = {
   pageHeight: number;
   margin: number;
   pageGap: number;
   usableHeight: number;
-  breakHeight: number;
+  contentWidth: number;
 };
 
 export function pageMetrics(
   pageHeight: number,
   margin: number,
   pageGap: number,
+  contentWidth: number,
 ): PageMetrics {
-  const usableHeight = Math.max(200, pageHeight - margin * 2);
   return {
     pageHeight,
     margin,
     pageGap,
-    usableHeight,
-    breakHeight: pageGap + margin * 2,
+    usableHeight: Math.max(200, pageHeight - margin * 2),
+    contentWidth: Math.max(200, contentWidth - margin * 2),
   };
 }
 
-export function isBreakEl(el: Element | null | undefined): boolean {
-  return Boolean(el && el.getAttribute?.(BREAK_ATTR) === '1');
-}
-
-export function stripBreaks(root: HTMLElement): void {
-  root.querySelectorAll(`[${BREAK_ATTR}]`).forEach((n) => n.remove());
-}
-
-function createBreak(height: number): HTMLDivElement {
-  const br = document.createElement('div');
-  br.setAttribute(BREAK_ATTR, '1');
-  br.contentEditable = 'false';
-  br.className = 'studio-page-break';
-  br.setAttribute('aria-hidden', 'true');
-  br.style.cssText = [
-    `height:${height}px`,
-    'width:100%',
-    'margin:0',
-    'padding:0',
-    'border:0',
-    'outline:none',
-    'user-select:none',
-    'pointer-events:none',
-    'display:block',
-    'clear:both',
-  ].join(';');
-  return br;
-}
-
-function outerH(el: HTMLElement): number {
+function blockOuterHeight(el: HTMLElement): number {
   void el.offsetHeight;
-  const h = el.offsetHeight || 0;
   const cs = window.getComputedStyle(el);
-  return Math.ceil(h + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0));
+  return Math.ceil(
+    (el.offsetHeight || 0) +
+      (parseFloat(cs.marginTop) || 0) +
+      (parseFloat(cs.marginBottom) || 0),
+  );
 }
 
-function isEmptyBlock(el: HTMLElement): boolean {
-  if (isBreakEl(el)) return true;
+function isVisuallyEmpty(el: HTMLElement): boolean {
   const t = (el.textContent || '').replace(/\u00a0/g, ' ').trim();
   if (t) return false;
-  // empty p/div with only br
-  return !el.querySelector('img, table, svg, mjx-container, canvas, video');
+  return !el.querySelector('img, table, svg, mjx-container, canvas, video, hr');
 }
 
-/** Drop trailing empty paragraphs (Word doesn't keep empty pages) */
-export function trimTrailingEmpty(root: HTMLElement): void {
-  // Keep at least one block so caret has a home
-  while (root.children.length > 1) {
-    const last = root.lastElementChild as HTMLElement;
-    if (!last) break;
-    if (isBreakEl(last) || isEmptyBlock(last)) {
-      last.remove();
-      continue;
+/** Normalize incoming HTML into top-level block list */
+export function htmlToBlockHtmls(html: string): string[] {
+  const cleaned = (html || '')
+    .replace(/<\/?(html|head|body)[^>]*>/gi, '')
+    .replace(/<div[^>]*data-studio-break[^>]*>[\s\S]*?<\/div>/gi, '')
+    .trim();
+  if (!cleaned) return ['<p><br></p>'];
+
+  const host = document.createElement('div');
+  host.innerHTML = cleaned;
+
+  // Unwrap bare text nodes
+  const blocks: string[] = [];
+  Array.from(host.childNodes).forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = (node.textContent || '').trim();
+      if (t) blocks.push(`<p>${t}</p>`);
+      return;
     }
-    break;
-  }
-  // Also strip trailing breaks
-  while (root.lastElementChild && isBreakEl(root.lastElementChild)) {
-    root.lastElementChild.remove();
-  }
-  if (!root.children.length) {
-    const p = document.createElement('p');
-    p.innerHTML = '<br>';
-    root.appendChild(p);
-  }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'div' && !el.className) {
+      // flatten simple wrappers
+      if (el.children.length) {
+        Array.from(el.children).forEach((c) => blocks.push((c as HTMLElement).outerHTML));
+      } else if ((el.textContent || '').trim()) {
+        blocks.push(`<p>${el.innerHTML}</p>`);
+      }
+      return;
+    }
+    blocks.push(el.outerHTML);
+  });
+
+  return blocks.length ? blocks : ['<p><br></p>'];
 }
 
 /**
- * Insert page breaks between blocks. Returns page count (≥1).
- * Safe to call often if debounced by caller.
+ * Pack block HTML strings into pages that fit usableHeight.
+ * Measures in an off-screen container matching content width + font.
  */
-export function reflowPageBreaks(root: HTMLElement, m: PageMetrics): number {
-  const sel = typeof window !== 'undefined' ? window.getSelection() : null;
-  let selPath: { start: number; end: number } | null = null;
-  if (sel && sel.rangeCount && root.contains(sel.anchorNode)) {
-    try {
-      const r = sel.getRangeAt(0);
-      const pre = r.cloneRange();
-      pre.selectNodeContents(root);
-      pre.setEnd(r.startContainer, r.startOffset);
-      const start = pre.toString().length;
-      selPath = { start, end: start + r.toString().length };
-    } catch {
-      selPath = null;
-    }
+export function packBlocksIntoPages(
+  blockHtmls: string[],
+  m: PageMetrics,
+  style?: { fontFamily?: string; fontSize?: string },
+): string[] {
+  if (typeof document === 'undefined') {
+    return [blockHtmls.join('') || '<p><br></p>'];
   }
 
-  stripBreaks(root);
-  trimTrailingEmpty(root);
-  void root.offsetHeight;
+  const measure = document.createElement('div');
+  measure.style.cssText = [
+    'position:absolute',
+    'left:-10000px',
+    'top:0',
+    `width:${m.contentWidth}px`,
+    'visibility:hidden',
+    'pointer-events:none',
+    `font-family:${style?.fontFamily || 'Inter, Segoe UI, sans-serif'}`,
+    `font-size:${style?.fontSize || '12px'}`,
+    'line-height:1.65',
+    'box-sizing:border-box',
+  ].join(';');
+  measure.className = 'prose prose-neutral';
+  document.body.appendChild(measure);
 
-  const blocks = Array.from(root.children) as HTMLElement[];
-  if (!blocks.length) {
-    restoreSelection(root, selPath);
-    return 1;
-  }
-
-  // Pure content? (single empty p)
-  if (blocks.length === 1 && isEmptyBlock(blocks[0])) {
-    restoreSelection(root, selPath);
-    return 1;
-  }
-
+  const pages: string[][] = [[]];
   let used = 0;
-  let pages = 1;
-  const inserts: { before: HTMLElement; h: number }[] = [];
 
-  for (const block of blocks) {
-    const h = Math.max(1, outerH(block));
-    // Empty trailing-ish blocks: don't force new pages alone
-    if (isEmptyBlock(block) && used === 0) {
-      used += Math.min(h, 24);
-      continue;
-    }
+  const pushPage = () => {
+    pages.push([]);
+    used = 0;
+  };
 
-    if (used > 0 && used + h > m.usableHeight + 1) {
-      // Whole block goes to next page (Word: avoid orphaning mid-block when possible)
-      inserts.push({ before: block, h: m.breakHeight });
-      pages += 1;
-      used = Math.min(h, m.usableHeight);
-    } else {
+  try {
+    for (const raw of blockHtmls) {
+      measure.innerHTML = raw;
+      const el = measure.firstElementChild as HTMLElement | null;
+      if (!el) continue;
+      const h = Math.max(1, blockOuterHeight(el));
+
+      // Empty trailing fillers don't force new pages alone
+      if (isVisuallyEmpty(el) && pages[pages.length - 1].length === 0) {
+        pages[pages.length - 1].push(raw);
+        used += Math.min(h, 28);
+        continue;
+      }
+
+      if (used > 0 && used + h > m.usableHeight + 0.5) {
+        pushPage();
+      }
+      pages[pages.length - 1].push(raw);
       used += h;
       if (used > m.usableHeight) used = m.usableHeight;
     }
+  } finally {
+    measure.remove();
   }
 
-  for (let i = inserts.length - 1; i >= 0; i--) {
-    const { before, h } = inserts[i];
-    if (before.isConnected) before.parentNode?.insertBefore(createBreak(h), before);
+  // Drop empty trailing pages (keep at least one)
+  while (pages.length > 1) {
+    const last = pages[pages.length - 1];
+    const joined = last.join('');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = joined;
+    const empty = Array.from(tmp.children).every((c) => isVisuallyEmpty(c as HTMLElement));
+    if (empty || !joined.trim()) pages.pop();
+    else break;
   }
 
-  // Never end with a break (would create empty last page)
-  while (root.lastElementChild && isBreakEl(root.lastElementChild)) {
-    root.lastElementChild.remove();
-    pages = Math.max(1, pages - 1);
-  }
-
-  // Recount from DOM
-  const n = root.querySelectorAll(`[${BREAK_ATTR}]`).length + 1;
-  restoreSelection(root, selPath);
-  return Math.min(80, Math.max(1, n));
+  return pages.map((p) => (p.length ? p.join('') : '<p><br></p>'));
 }
 
-function restoreSelection(
-  root: HTMLElement,
-  selPath: { start: number; end: number } | null,
-) {
-  if (!selPath || typeof window === 'undefined') return;
-  const sel = window.getSelection();
-  if (!sel) return;
-  try {
-    const range = document.createRange();
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    let pos = 0;
-    let startNode: Node | null = null;
-    let startOff = 0;
-    let endNode: Node | null = null;
-    let endOff = 0;
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      const len = (node.textContent || '').length;
-      if (!startNode && pos + len >= selPath.start) {
-        startNode = node;
-        startOff = selPath.start - pos;
-      }
-      if (!endNode && pos + len >= selPath.end) {
-        endNode = node;
-        endOff = selPath.end - pos;
-        break;
-      }
-      pos += len;
-    }
-    if (startNode) {
-      range.setStart(startNode, Math.min(startOff, (startNode.textContent || '').length));
-      if (endNode) range.setEnd(endNode, Math.min(endOff, (endNode.textContent || '').length));
-      else range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-    }
-  } catch {
-    /* ignore */
-  }
+export function distributeHtmlToPages(
+  html: string,
+  m: PageMetrics,
+  style?: { fontFamily?: string; fontSize?: string },
+): string[] {
+  return packBlocksIntoPages(htmlToBlockHtmls(html), m, style);
+}
+
+/** Join page HTMLs into one document HTML (for AI / export / history) */
+export function joinPageHtmls(pages: string[]): string {
+  const parts = pages
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .filter((p) => {
+      const d = document.createElement('div');
+      d.innerHTML = p;
+      return !Array.from(d.children).every((c) => isVisuallyEmpty(c as HTMLElement)) || pages.length === 1;
+    });
+  if (!parts.length) return '<p><br></p>';
+  // If only empties kept for caret on page 1
+  return parts.join('') || '<p><br></p>';
+}
+
+/**
+ * After editing page `idx`, re-pack from that page forward.
+ * Returns new pages array.
+ */
+export function rebalanceFromPage(
+  pages: string[],
+  idx: number,
+  m: PageMetrics,
+  style?: { fontFamily?: string; fontSize?: string },
+): string[] {
+  const head = pages.slice(0, idx);
+  const tailHtml = pages.slice(idx).join('');
+  const tailBlocks = htmlToBlockHtmls(tailHtml);
+  const packedTail = packBlocksIntoPages(tailBlocks, m, style);
+  const next = [...head, ...packedTail];
+  // Ensure at least one page
+  return next.length ? next : ['<p><br></p>'];
 }
 
 export function serializeEditorHtml(root: HTMLElement | null): string {
   if (!root) return '';
-  const clone = root.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll(`[${BREAK_ATTR}]`).forEach((n) => n.remove());
-  // trim empty tails for AI
-  while (clone.lastElementChild) {
-    const last = clone.lastElementChild as HTMLElement;
-    const t = (last.textContent || '').replace(/\u00a0/g, ' ').trim();
-    if (!t && !last.querySelector('img,table,svg')) {
-      last.remove();
-      continue;
-    }
-    break;
+  // Multi-page root: each [data-page-body]
+  const bodies = root.querySelectorAll('[data-page-body]');
+  if (bodies.length) {
+    return joinPageHtmls(Array.from(bodies).map((b) => (b as HTMLElement).innerHTML));
   }
-  return clone.innerHTML;
+  return root.innerHTML;
 }
 
-export function htmlWithoutBreaks(html: string): string {
-  if (!html) return html;
-  return html.replace(/<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi, '');
+/** @deprecated break-spacer API removed — kept as no-ops for safe imports */
+export const BREAK_ATTR = 'data-studio-break';
+export function stripBreaks(_root?: HTMLElement | null) {
+  /* no-op: multi-page model has no spacers */
 }
-
-/** Place caret at end of editor (Word-like click on empty page area) */
-export function placeCaretAtEnd(root: HTMLElement): void {
+export function reflowPageBreaks(_root: HTMLElement, _m: unknown): number {
+  return 1;
+}
+export function trimTrailingEmpty(_root: HTMLElement) {
+  /* no-op */
+}
+export function placeCaretAtEnd(root: HTMLElement) {
   root.focus();
   const sel = window.getSelection();
   if (!sel) return;
@@ -250,4 +228,7 @@ export function placeCaretAtEnd(root: HTMLElement): void {
   range.collapse(false);
   sel.removeAllRanges();
   sel.addRange(range);
+}
+export function htmlWithoutBreaks(html: string): string {
+  return (html || '').replace(/<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi, '');
 }
