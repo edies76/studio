@@ -6,16 +6,21 @@ import { cn } from '@/lib/utils';
 type Props = {
   zoom: number;
   onZoom: (z: number) => void;
+  className?: string;
 };
 
-export default function ZoomControl({ zoom, onZoom }: Props) {
+/** Clean white zoom capsule (right rail, next to tools) */
+export default function ZoomControl({ zoom, onZoom, className }: Props) {
   const pct = Math.round(zoom * 100);
   const set = (z: number) => onZoom(Math.min(2, Math.max(0.5, Math.round(z * 20) / 20)));
 
   return (
     <div
       data-selection-ui
-      className="pointer-events-auto flex items-center gap-0.5 rounded-full border border-neutral-200 bg-white/95 px-1 py-1 shadow-lg backdrop-blur"
+      className={cn(
+        'pointer-events-auto flex items-center gap-0.5 rounded-full border border-neutral-200/90 bg-white px-1 py-1 shadow-md shadow-black/5',
+        className,
+      )}
     >
       <button
         type="button"
@@ -30,7 +35,7 @@ export default function ZoomControl({ zoom, onZoom }: Props) {
         title="100%"
         onClick={() => set(1)}
         className={cn(
-          'min-w-[3rem] px-1 text-center font-mono text-[11px] font-medium tabular-nums',
+          'min-w-[2.75rem] px-1 text-center font-mono text-[11px] font-medium tabular-nums',
           pct === 100 ? 'text-neutral-900' : 'text-neutral-500',
         )}
       >

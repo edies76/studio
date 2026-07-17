@@ -19,7 +19,7 @@ import {
 } from 'react';
 import { cn } from '@/lib/utils';
 import type { PaperSize } from '@/lib/doc-tools';
-import { sanitizeDocumentHtml } from '@/lib/math-html';
+import { sanitizeDocumentHtml, typesetEditor } from '@/lib/math-html';
 import { buildCanvasDiffHtml } from '@/lib/canvas-diff';
 import { placeCaretAtEnd } from '@/lib/page-layout';
 import { Pencil } from 'lucide-react';
@@ -99,6 +99,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
   const skipInput = useRef(false);
   const lastExternalHtml = useRef<string | null>(null);
   const pageNotify = useRef(1);
@@ -116,18 +117,33 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
   const diffOverlayHtml = useMemo(() => {
     if (!hasGhost) return null;
-    if (ghostBeforeHtml?.trim()) return buildCanvasDiffHtml(ghostBeforeHtml, ghostHtml || '');
-    return buildCanvasDiffHtml('', ghostHtml || '');
+    // Prefer current live editor as "before" if beforeHtml missing (full-doc edits)
+    const before =
+      ghostBeforeHtml?.trim() ||
+      (typeof document !== 'undefined' ? editorRef.current?.innerHTML || '' : '') ||
+      '';
+    return buildCanvasDiffHtml(before, ghostHtml || '');
   }, [hasGhost, ghostHtml, ghostBeforeHtml]);
 
   const measurePages = useCallback(() => {
-    const el = editorRef.current;
+    // When reviewing a proposal, size pages from the ghost (del+add stacked)
+    const el = hasGhost && ghostRef.current ? ghostRef.current : editorRef.current;
     if (!el) return;
     void el.offsetHeight;
     const contentH = Math.max(el.scrollHeight, el.offsetHeight, 1);
     const n = Math.max(1, Math.ceil(contentH / spec.heightPx));
     setPageCount((prev) => (prev === n ? prev : n));
-  }, [spec.heightPx]);
+  }, [spec.heightPx, hasGhost]);
+
+  // Typeset MathJax on structural ghost so LaTeX stays rendered
+  useEffect(() => {
+    if (!hasGhost || !ghostRef.current) return;
+    const el = ghostRef.current;
+    requestAnimationFrame(() => {
+      typesetEditor(el);
+      measurePages();
+    });
+  }, [hasGhost, diffOverlayHtml, measurePages]);
 
   const getHtml = useCallback(() => {
     const el = editorRef.current;
@@ -355,6 +371,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 </div>
               ))}
 
+              {/* Live document — faded under ghost (keeps real caret/DOM until accept) */}
               <div
                 ref={editorRef}
                 data-page-body
@@ -374,9 +391,14 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 style={{
                   boxSizing: 'border-box',
                   width: '100%',
-                  minHeight: paperHeight,
-                  padding: margin,
-                  paddingBottom: margin + 32,
+                  minHeight: hasGhost ? 0 : paperHeight,
+                  // Collapse live height while ghost is shown so pages size from ghost
+                  ...(hasGhost
+                    ? { height: 0, overflow: 'hidden', padding: 0, margin: 0, opacity: 0 }
+                    : {
+                        padding: margin,
+                        paddingBottom: margin + 32,
+                      }),
                   fontFamily,
                   fontSize,
                   lineHeight: 1.65,
@@ -384,9 +406,14 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 }}
               />
 
+              {/*
+                Structural ghost: real HTML blocks (h1/p/table/math) stacked.
+                del then add share document flow — not the same absolute box.
+              */}
               {hasGhost && diffOverlayHtml && (
                 <div
-                  className="studio-doc-editor studio-diff-layer pointer-events-none absolute left-0 top-0 z-20 max-w-none"
+                  ref={ghostRef}
+                  className="studio-doc-editor studio-diff-layer relative z-20 max-w-none"
                   style={{
                     width: '100%',
                     minHeight: paperHeight,

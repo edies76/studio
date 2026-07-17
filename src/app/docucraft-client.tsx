@@ -629,16 +629,17 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
             }
             if (ev.type === 'propose_edit') {
               const edit = ev.edit as ProposeEditPayload;
-              if (!edit.beforeHtml && edit.mode === 'replace_document') {
+              // Always anchor "before" to the live canvas so structural diffs
+              // keep real HTML (headings, LaTeX, tables) instead of model guesses.
+              if (edit.mode === 'replace_document') {
                 edit.beforeHtml = readEditorHtml();
-              }
-              if (!edit.beforeHtml && edit.mode === 'replace_selection') {
-                edit.beforeHtml = selectedTextRef.current
-                  ? `<p>${selectedTextRef.current}</p>`
-                  : '';
-              }
-              if (
-                !edit.beforeHtml &&
+              } else if (edit.mode === 'replace_selection') {
+                if (!edit.beforeHtml) {
+                  edit.beforeHtml = selectedTextRef.current
+                    ? `<p>${selectedTextRef.current}</p>`
+                    : '';
+                }
+              } else if (
                 edit.mode === 'replace_block' &&
                 typeof edit.blockIndex === 'number'
               ) {

@@ -229,41 +229,64 @@
     transform: scale(0.85);
   }
 
-  /* Canvas diff: green = kept/added, soft red underline = removed */
+  /* Structural canvas diff — preserves h1/p/table/math markup */
   .studio-diff-layer .studio-diff-root {
     font-size: inherit;
     line-height: 1.65;
   }
+  .studio-diff-layer .studio-diff-block {
+    position: relative;
+    margin: 0.4em 0;
+    border-radius: 8px;
+    /* each block is its own flow slot — never absolute-stack on same y */
+  }
+  .studio-diff-layer .studio-diff-block > * {
+    margin-top: 0.15em;
+    margin-bottom: 0.15em;
+  }
+  /* Removed: soft red, keeps real size/typography/math */
   .studio-diff-layer .studio-diff-del {
-    margin: 0.35em 0;
+    background: rgba(254, 226, 226, 0.55);
+    box-shadow: inset 3px 0 0 rgba(239, 68, 68, 0.55);
+    padding: 0.35em 0.65em 0.35em 0.75em;
+    opacity: 0.92;
   }
-  .studio-diff-layer .studio-diff-del-text {
-    color: #b91c1c;
-    background: rgba(254, 202, 202, 0.45);
+  .studio-diff-layer .studio-diff-del,
+  .studio-diff-layer .studio-diff-del * {
+    color: #991b1b !important;
+  }
+  .studio-diff-layer .studio-diff-del {
+    text-decoration: none;
+  }
+  .studio-diff-layer .studio-diff-del > *:not(table):not(ul):not(ol):not(pre) {
     text-decoration: underline;
-    text-decoration-color: rgba(248, 113, 113, 0.85);
-    text-decoration-thickness: 1.5px;
+    text-decoration-color: rgba(248, 113, 113, 0.7);
+    text-decoration-thickness: 1.25px;
     text-underline-offset: 2px;
-    border-radius: 2px;
-    padding: 0 0.12em;
   }
+  /* Added / will keep: soft green, real render */
   .studio-diff-layer .studio-diff-add {
-    margin: 0.35em 0;
+    background: rgba(209, 250, 229, 0.65);
+    box-shadow: inset 3px 0 0 rgba(16, 185, 129, 0.65);
+    padding: 0.35em 0.65em 0.35em 0.75em;
   }
-  .studio-diff-layer .studio-diff-add-text {
-    color: #065f46;
-    background: rgba(167, 243, 208, 0.55);
-    border-radius: 2px;
-    padding: 0 0.12em;
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
+  .studio-diff-layer .studio-diff-add,
+  .studio-diff-layer .studio-diff-add * {
+    color: #065f46 !important;
   }
+  /* Unchanged blocks — full contrast, no tint */
   .studio-diff-layer .studio-diff-same {
-    margin: 0.25em 0;
-    color: #525252;
+    background: transparent;
+    padding: 0;
+    opacity: 1;
   }
-  .studio-diff-layer .studio-diff-badge {
-    display: none;
+  .studio-diff-layer .studio-diff-same,
+  .studio-diff-layer .studio-diff-same * {
+    color: inherit;
+  }
+  /* MathJax inside diffs stays readable */
+  .studio-diff-layer mjx-container {
+    text-decoration: none !important;
   }
 
   /* Floating composer grow/shrink */
@@ -279,33 +302,7 @@
     100% { transform: scale(1); }
   }
 
-  .studio-zoom-range {
-    -webkit-appearance: none;
-    appearance: none;
-    height: 3px;
-    border-radius: 999px;
-    background: #d4d4d4;
-    outline: none;
-  }
-  .studio-zoom-range::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    background: #3d3229;
-    cursor: pointer;
-    border: 2px solid #faf8f5;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-  }
-  .studio-zoom-range::-moz-range-thumb {
-    width: 12px;
-    height: 12px;
-    border-radius: 999px;
-    background: #3d3229;
-    cursor: pointer;
-    border: 2px solid #faf8f5;
-  }
+
 
   .studio-doc-faded {
     opacity: 0.12 !important;

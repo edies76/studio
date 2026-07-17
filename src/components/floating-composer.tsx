@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { ToolLogItem } from '@/components/tool-log';
 import type { ProposeEditPayload } from '@/lib/doc-tools';
+import ZoomControl from '@/components/zoom-control';
 
 export type FloatingReview = {
   id: string;
@@ -44,10 +45,10 @@ type Props = {
   onRejectReview?: (id: string) => void;
   onAcceptAll?: () => void;
   onRejectAll?: () => void;
-  /** Zoom slider under the pill */
+  /** Zoom control (white capsule, right of tools) */
   zoom?: number;
   onZoom?: (z: number) => void;
-  /** Slot for tools dock (left of pill) */
+  /** Slot for tools dock (right of composer, with zoom) */
   toolsSlot?: ReactNode;
   className?: string;
   /** Increment to force-expand (e.g. after text selection) */
@@ -146,8 +147,6 @@ export default function FloatingComposer({
 
   const wide = focused || value.trim().length > 0 || busy || pending.length > 0;
 
-  const pct = Math.round(zoom * 100);
-
   return (
     <div
       className={cn(
@@ -157,7 +156,7 @@ export default function FloatingComposer({
     >
       <div
         ref={rootRef}
-        className="pointer-events-auto flex flex-col items-center"
+        className="pointer-events-auto flex w-full max-w-5xl flex-col items-center"
         onMouseEnter={() => {
           if (hoverTimer.current) clearTimeout(hoverTimer.current);
           if (!expanded) {
@@ -278,36 +277,35 @@ export default function FloatingComposer({
           )}
         </div>
 
-        {/* —— Tools + composer row —— */}
-        <div className="flex items-end gap-2">
-          {/* Tools dock to the LEFT */}
+        {/* —— Composer center · tools + white zoom on the RIGHT —— */}
+        <div className="relative flex w-full items-end justify-center gap-3 px-2">
+          {/* Spacer so composer stays optically centered when right rail is present */}
           <div
             className={cn(
-              'transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-              expanded ? 'translate-x-0 scale-100 opacity-100' : 'pointer-events-none w-0 scale-75 opacity-0',
+              'hidden shrink-0 sm:block',
+              expanded ? 'w-[7.5rem]' : 'w-0',
             )}
-          >
-            {toolsSlot}
-          </div>
+            aria-hidden
+          />
 
-          <div className="flex flex-col items-center">
-            {/* Main pill — grows/shrinks from center */}
+          <div className="flex min-w-0 flex-col items-center">
+            {/* Main pill — white / neutral (less brown) */}
             <div
               className={cn(
                 'floating-composer-shell relative origin-center overflow-hidden',
-                'border border-[#c9bfb2]/90 bg-[linear-gradient(180deg,#faf8f5_0%,#f4f0ea_100%)]',
-                'shadow-[0_8px_32px_rgba(61,50,41,0.12)]',
+                'border border-neutral-200 bg-white',
+                'shadow-[0_8px_28px_rgba(0,0,0,0.08)]',
                 'transition-all duration-350 ease-[cubic-bezier(0.22,1,0.36,1)]',
                 expanded
                   ? cn(
                       'rounded-full',
-                      wide ? 'w-[min(28rem,88vw)]' : 'w-[min(20rem,78vw)]',
+                      wide ? 'w-[min(28rem,72vw)]' : 'w-[min(20rem,68vw)]',
                       'scale-100 opacity-100',
                     )
                   : 'h-3 w-16 cursor-pointer rounded-full opacity-90 hover:w-20 hover:opacity-100',
-                focused && expanded && 'border-[#3d3229]/30 shadow-[0_12px_40px_rgba(61,50,41,0.16)]',
+                focused && expanded && 'border-neutral-300 shadow-[0_12px_36px_rgba(0,0,0,0.1)]',
                 sentPulse && 'floating-composer-sent',
-                busy && expanded && 'ring-2 ring-blue-400/25',
+                busy && expanded && 'ring-2 ring-blue-400/30',
               )}
               onClick={() => {
                 if (!expanded) expand();
@@ -317,11 +315,10 @@ export default function FloatingComposer({
             >
               {expanded && (
                 <div className="flex items-center gap-1.5 px-2 py-1.5">
-                  {/* Soft sparkle / busy indicator */}
                   <span
                     className={cn(
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                      busy ? 'text-blue-500' : 'text-[#8a7e72]',
+                      busy ? 'text-blue-500' : 'text-neutral-400',
                     )}
                   >
                     {busy ? (
@@ -339,7 +336,7 @@ export default function FloatingComposer({
                     <div className="flex min-w-0 flex-1 flex-col justify-center">
                       {hasSelection && (
                         <div className="mb-0.5 flex items-center gap-1 px-0.5">
-                          <span className="rounded-full bg-[#3d3229]/8 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-[#3d3229]">
+                          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-neutral-600">
                             Selección
                           </span>
                           {selectionPreview && (
@@ -387,12 +384,11 @@ export default function FloatingComposer({
                             ? 'Qué querés hacer con la selección…'
                             : 'Escribí al agente…'
                         }
-                        className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-[#2a221c] outline-none placeholder:text-[#9a9086]"
+                        className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-neutral-900 outline-none placeholder:text-neutral-400"
                       />
                     </div>
                   )}
 
-                  {/* Minimal chat panel opener — inside the pill */}
                   {onOpenPanel && !busy && (
                     <button
                       type="button"
@@ -401,7 +397,7 @@ export default function FloatingComposer({
                         e.stopPropagation();
                         onOpenPanel();
                       }}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#6b6258] transition hover:bg-[#3d3229]/8 hover:text-[#3d3229]"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800"
                     >
                       <MessageSquare className="h-3.5 w-3.5" strokeWidth={1.75} />
                     </button>
@@ -429,7 +425,7 @@ export default function FloatingComposer({
                       disabled={busy || !value.trim()}
                       className={cn(
                         'flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all',
-                        'bg-[#3d3229] text-[#f3f1ec] shadow-md hover:bg-[#2a221c]',
+                        'bg-neutral-900 text-white shadow-md hover:bg-neutral-800',
                         'disabled:opacity-30',
                         sentPulse && 'scale-90',
                       )}
@@ -442,35 +438,24 @@ export default function FloatingComposer({
               )}
             </div>
 
-            {/* Idle status under pill (short) */}
             {expanded && !busy && statusLine && !pending.length && (
               <p className="mt-1.5 max-w-[16rem] truncate text-center text-[10px] text-neutral-400">
                 {statusLine}
               </p>
             )}
+          </div>
 
-            {/* Zoom as a thin slidable line under the composer */}
-            {expanded && onZoom && (
-              <div
-                data-selection-ui
-                className="mt-2 flex w-full max-w-[14rem] items-center gap-2 px-1 opacity-70 transition hover:opacity-100"
-              >
-                <span className="font-mono text-[9px] text-neutral-400">−</span>
-                <input
-                  type="range"
-                  min={50}
-                  max={200}
-                  step={5}
-                  value={pct}
-                  onChange={(e) => onZoom(Number(e.target.value) / 100)}
-                  className="studio-zoom-range h-1 w-full cursor-pointer appearance-none rounded-full bg-neutral-300 accent-[#3d3229]"
-                  title={`Zoom ${pct}%`}
-                />
-                <span className="min-w-[2rem] text-right font-mono text-[9px] tabular-nums text-neutral-400">
-                  {pct}%
-                </span>
-              </div>
+          {/* RIGHT rail: tools + white zoom */}
+          <div
+            className={cn(
+              'flex shrink-0 flex-col items-center gap-2 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
+              expanded
+                ? 'translate-x-0 scale-100 opacity-100'
+                : 'pointer-events-none w-0 scale-75 overflow-hidden opacity-0',
             )}
+          >
+            {toolsSlot}
+            {onZoom && <ZoomControl zoom={zoom} onZoom={onZoom} />}
           </div>
         </div>
       </div>

@@ -1,59 +1,148 @@
-import { diffPlain, htmlToPlain, type DiffLine } from '@/lib/html-diff';
+import { htmlToPlain, type DiffLine } from '@/lib/html-diff';
 
-/** Build canvas overlay: light-red underline removals + green keep/additions */
-export function buildCanvasDiffHtml(beforeHtml: string, afterHtml: string): string {
-  const lines = diffPlain(htmlToPlain(beforeHtml || ''), htmlToPlain(afterHtml || ''));
-  if (!lines.length) {
-    return afterHtml || '';
+/**
+ * Structural HTML diff for the paper ghost.
+ * Diffs top-level blocks so LaTeX, headings and tables keep their tags.
+ * Layout: del and add are sequential in document flow (never same box).
+ */
+
+const BLOCK_TAGS = new Set([
+  'p',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'li',
+  'blockquote',
+  'pre',
+  'table',
+  'hr',
+  'figure',
+  'section',
+  'div',
+]);
+
+export type DiffBlock = {
+  type: 'same' | 'add' | 'del';
+  html: string;
+};
+
+/** Split document HTML into top-level block outerHTMLs */
+export function htmlToBlockList(html: string): string[] {
+  if (typeof document === 'undefined') {
+    const cleaned = (html || '').trim();
+    return cleaned ? [cleaned] : [];
+  }
+  const host = document.createElement('div');
+  host.innerHTML = (html || '')
+    .replace(/<\/?(html|head|body)[^>]*>/gi, '')
+    .trim();
+
+  const blocks: string[] = [];
+  Array.from(host.childNodes).forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = (node.textContent || '').trim();
+      if (t) blocks.push(`<p>${escapeText(t)}</p>`);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const el = node as HTMLElement;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'div' && !el.className && el.children.length > 0) {
+      Array.from(el.children).forEach((c) => blocks.push((c as HTMLElement).outerHTML));
+      return;
+    }
+    if (BLOCK_TAGS.has(tag) || el.outerHTML.trim()) {
+      blocks.push(el.outerHTML);
+    }
+  });
+  return blocks;
+}
+
+function blockKey(html: string): string {
+  return htmlToPlain(html)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 400);
+}
+
+/** LCS block alignment */
+export function diffHtmlBlocks(beforeHtml: string, afterHtml: string): DiffBlock[] {
+  const a = htmlToBlockList(beforeHtml || '');
+  const b = htmlToBlockList(afterHtml || '');
+  if (!a.length && !b.length) return [];
+  if (!a.length) return b.map((html) => ({ type: 'add' as const, html }));
+  if (!b.length) return a.map((html) => ({ type: 'del' as const, html }));
+
+  const ka = a.map(blockKey);
+  const kb = b.map(blockKey);
+  const n = ka.length;
+  const m = kb.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      if (ka[i] && ka[i] === kb[j]) dp[i][j] = 1 + dp[i + 1][j + 1];
+      else dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
   }
 
-  const parts: string[] = [];
-  let bufDel: string[] = [];
-  let bufAdd: string[] = [];
-  let bufSame: string[] = [];
-
-  const flushSame = () => {
-    if (!bufSame.length) return;
-    // Unchanged stays readable (kept)
-    parts.push(`<p class="studio-diff-same">${escape(bufSame.join(' '))}</p>`);
-    bufSame = [];
-  };
-  const flushChange = () => {
-    if (bufDel.length) {
-      // Soft red + underline = will be removed
-      parts.push(
-        `<p class="studio-diff-del"><span class="studio-diff-del-text">${escape(bufDel.join(' '))}</span></p>`,
-      );
-      bufDel = [];
-    }
-    if (bufAdd.length) {
-      // Green highlight = will remain / be added
-      parts.push(
-        `<p class="studio-diff-add"><span class="studio-diff-add-text">${escape(bufAdd.join(' '))}</span></p>`,
-      );
-      bufAdd = [];
-    }
-  };
-
-  for (const l of lines) {
-    if (l.type === 'same') {
-      flushChange();
-      bufSame.push(l.text);
-    } else if (l.type === 'del') {
-      flushSame();
-      bufDel.push(l.text);
+  const out: DiffBlock[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (ka[i] && ka[i] === kb[j]) {
+      out.push({ type: 'same', html: b[j] || a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push({ type: 'del', html: a[i] });
+      i++;
     } else {
-      flushSame();
-      bufAdd.push(l.text);
+      out.push({ type: 'add', html: b[j] });
+      j++;
     }
   }
-  flushChange();
-  flushSame();
+  while (i < n) out.push({ type: 'del', html: a[i++] });
+  while (j < m) out.push({ type: 'add', html: b[j++] });
+  return out;
+}
 
+/**
+ * Ghost HTML with original block markup preserved (h1, math delimiters, tables).
+ * Del sits in its own vertical slot; add follows below — no absolute overlap.
+ */
+export function buildCanvasDiffHtml(beforeHtml: string, afterHtml: string): string {
+  const blocks = diffHtmlBlocks(beforeHtml || '', afterHtml || '');
+  if (!blocks.length) {
+    if (afterHtml?.trim()) {
+      return wrapBlocks(
+        htmlToBlockList(afterHtml).map((html) => ({ type: 'add' as const, html })),
+      );
+    }
+    return '';
+  }
+  return wrapBlocks(blocks);
+}
+
+function wrapBlocks(blocks: DiffBlock[]): string {
+  const parts = blocks.map((b) => {
+    if (b.type === 'same') {
+      return `<div class="studio-diff-block studio-diff-same" data-diff="same">${b.html}</div>`;
+    }
+    if (b.type === 'del') {
+      return `<div class="studio-diff-block studio-diff-del" data-diff="del" aria-label="Se quitará">${b.html}</div>`;
+    }
+    return `<div class="studio-diff-block studio-diff-add" data-diff="add" aria-label="Se dejará">${b.html}</div>`;
+  });
   return `<div class="studio-diff-root">${parts.join('')}</div>`;
 }
 
-function escape(s: string) {
+function escapeText(s: string) {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
