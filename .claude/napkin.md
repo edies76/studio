@@ -30,5 +30,8 @@
    Do instead: Real SSE deltas only; tool logs from actual events.
 
 ## User Directives
-1. **[2026-07-17] Fix pages HARD + import Word**
+1. **[2026-07-17] Pushes constantes — nunca dejar al usuario “en vacío”**
+   Do instead: After every meaningful work chunk: commit + `git push origin main`. Ship `docs-studio` too (orphan force if non-ff). If push fails, retry/orphan and report; never end a turn with unpushed work if push is possible.
+
+2. **[2026-07-17] Fix pages HARD + import Word**
    Do instead: Multi-page pack model + mammoth import; commit/push docs-studio often without asking.
