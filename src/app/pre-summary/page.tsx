@@ -231,6 +231,7 @@ export default function PreSummaryPage() {
         <nav className="landing-nav__links" aria-label="Page sections">
           <a href="#method">How it works</a>
           <a href="#features">Features</a>
+          <a href="/mcp">MCP surface</a>
           <a href="#repo">Source</a>
         </nav>
 

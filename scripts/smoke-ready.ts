@@ -19,7 +19,7 @@ async function main() {
   );
   const s1 = gaussianElimination(GAUSS_TALLER_SYSTEMS[0].A, GAUSS_TALLER_SYSTEMS[0].b);
   if (s1.kind !== 'unique' || !s1.solution) fail(`Gauss s1 unexpected: ${s1.kind}`);
-  ok(`Gauss s1 unique [${s1.solution.map((x) => x.toFixed(2)).join(', ')}]`);
+  ok(`Gauss s1 unique [${(s1.solution || []).map((x) => x.toFixed(2)).join(', ')}]`);
 
   const s2 = gaussianElimination(GAUSS_TALLER_SYSTEMS[1].A, GAUSS_TALLER_SYSTEMS[1].b);
   const s3 = gaussianElimination(GAUSS_TALLER_SYSTEMS[2].A, GAUSS_TALLER_SYSTEMS[2].b);

@@ -72,6 +72,19 @@ src/app/api/draft|chat|export-docx
 
 ---
 
+## MCP integration
+
+Docs Studio now exposes the document loop to external AI clients through an official MCP server:
+
+```bash
+npm run mcp:stdio   # local stdio client
+npm run mcp:http    # Streamable HTTP at http://localhost:8787/mcp
+```
+
+The surface includes `create_document`, `parse_brief`, `draft_document`, `read_document`, `chat_document`, reviewable `propose_edit` / `accept_edit` / `reject_edit`, math/table insertion, history, and HTML/DOCX/PDF export. Full setup, client config, resources, prompts, and honest integration boundaries live in [`docs/mcp/README.md`](./docs/mcp/README.md). The visual guide is available at [`/mcp`](http://localhost:9003/mcp).
+
+---
+
 ## License / contact
 
 Hackathon build for Bamba / Spark. Founder context: bambalunar.app.

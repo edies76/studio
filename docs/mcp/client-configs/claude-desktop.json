@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "docs-studio": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/server.ts"],
+      "cwd": "/absolute/path/to/studio",
+      "env": {
+        "DOCS_STUDIO_URL": "http://localhost:9003"
+      }
+    }
+  }
+}
