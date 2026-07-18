@@ -26,7 +26,7 @@ export default function GithubRepoCard({ onOpenBlankDocument }: GithubRepoCardPr
         <div className="repo-card__eyebrow">SOURCE / OPEN BUILD</div>
         <h3>The product is visible in the repository.</h3>
         <p>
-          Inspect the actual canvas, streaming draft route, review state, MathJax, importers, and export paths that make Docs Studio a workspace instead of a prompt box.
+          Canvas real, draft SSE, Accept/Reject, MathJax MATH-SAFE, import DOCX y export — workspace académico, no un prompt box.
         </p>
 
         <div className="repo-card__features">

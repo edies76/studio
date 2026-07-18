@@ -206,7 +206,7 @@ export default function DocsStudioClient({
   }, []);
 
   useEffect(() => {
-    // Only load brief if explicitly marked active (pre-summary with guide)
+    // Only load brief if explicitly marked active (landing `/` with guide)
     try {
       if (sessionStorage.getItem('studioBriefActive') !== '1') {
         sessionStorage.removeItem('studioAssignment');
@@ -1673,7 +1673,7 @@ export default function DocsStudioClient({
                 href="/home"
                 className="pointer-events-auto flex h-9 shrink-0 items-center rounded-full border border-neutral-200 bg-white/95 px-3 text-[11px] font-semibold text-neutral-600 shadow-sm backdrop-blur-md hover:bg-white hover:text-neutral-900"
               >
-                Inicio
+                Biblioteca
               </a>
               {docId && (
                 <span className="pointer-events-none hidden rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 font-mono text-[10px] text-neutral-400 sm:inline">

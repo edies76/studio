@@ -1,44 +1,46 @@
 # Docs Studio
 
-**AI document generator & editor** for university workshops (APA / talleres) and professional writing.
+**Promesa:** workspace académico, no un chat genérico.
 
-Chat → draft streams onto the paper → later edits show as **red/green canvas diff** → Accept / Reject → export PDF / Word (`.docx`).
+El papel (lienzo Letter/Legal) es la fuente de verdad. El agente propone; vos aceptás o rechazás. Normas APA/IEEE/MLA, ecuaciones MATH-SAFE, import DOCX y export PDF/Word.
 
-**Live app (dev):** `http://localhost:9003`
-
----
-
-## Origin / honesty note (Spark)
-
-This was **not** built from an empty folder.
-
-| | |
-|--|--|
-| **Base** | https://github.com/edies76/studio (Firebase Studio / Genkit Next prototype) |
-| **Submission** | https://github.com/edies76/docs-studio |
-| **Not the base** | `esta.zip` / generador-documentos-ai (Flask + Vite) — same hash as a discarded experiment |
-
-We kept a thin technical base (Next, Genkit parse-brief, PDF libs) and **rewrote** the product loop, UI, pagination, and agent tools during the hackathon window. Full day-by-day log: [`docs/HACKATHON_CHANGES.md`](./docs/HACKATHON_CHANGES.md).
+**Dev:** `http://localhost:9003`
 
 ---
 
-## What it does **now** (2026-07-16/17)
+## Rutas de la app
 
-| Area | Feature |
+| Ruta | Rol |
+|------|-----|
+| `/` | Landing — promesa del producto + arranque con tema/guía |
+| `/home` | Biblioteca de documentos (autosave local o Google) |
+| `/studio` | Workspace — lienzo + agente + Tools + export |
+| `/login` | Google OAuth (opcional) |
+| `/mcp` | Superficie MCP para agentes externos |
+| `/pre-summary` | Redirect legacy → `/` |
+
+Legacy: `/?doc=` y `/?topic=` redirigen a `/studio` (middleware).
+
+---
+
+## Qué hace de verdad
+
+| Área | Feature |
 |------|---------|
-| Canvas | **Real multi-page Letter/Legal** — page-break spacers so text never sits in the gap between sheets |
-| Draft | `/api/draft` SSE stream → auto-apply + cascade (no Accept on first create) |
-| Edits | Propose → **− red / + green** on paper + floating Accept/Reject |
-| Tools | White dock (icons only) + intensity dots; selection prompt bubble |
-| Settings | Modal: paper size, margins, images, edit-button toggle |
-| Zoom | Ctrl + / − / 0 + Word-like control |
-| Chat | Segoe-style medium weight; history drawer instead of spam |
-| Export | PDF + **server** `.docx` (`docx` package never on the client) |
-| Math | MathJax + Σ insert; double-click formula to edit |
+| Canvas | Lienzo multi-página Letter/Legal (no transcript de chat) |
+| Draft | `/api/draft` SSE → primer borrador en el papel |
+| Edits | Propose → diff rojo/verde → Accept / Reject |
+| Normas | Tools → Aplicar normas: APA → IEEE → MLA → Simple → Mínimo |
+| Math | MATH-SAFE: `list/edit/insert_equation` + protector server-side |
+| Tools | Improve / shorter / expand / grammar / academic / normas |
+| Export | PDF + `.docx` generado en servidor |
+| Biblioteca | `/home` + autosave |
 
-### What we **removed** from base
+---
 
-Student Tools (flashcards/quiz/mind map), B.A.M.B.A.I branding, generic plan/checklist UI, dead Genkit one-shot flows, unused shadcn bulk.
+## Origin (honestidad)
+
+Base: [edies76/studio](https://github.com/edies76/studio). Submission: [edies76/docs-studio](https://github.com/edies76/docs-studio). Log: [`docs/HACKATHON_CHANGES.md`](./docs/HACKATHON_CHANGES.md).
 
 ---
 

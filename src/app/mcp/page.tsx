@@ -71,7 +71,7 @@ export default function McpPage() {
   return (
     <div className="mcp-page">
       <header className="mcp-nav">
-        <Link href="/pre-summary" className="mcp-brand" aria-label="Docs Studio home">
+        <Link href="/" className="mcp-brand" aria-label="Docs Studio home">
           <BrandMark size={30} />
           <span>Docs Studio</span>
           <small>/ MCP</small>
@@ -80,7 +80,7 @@ export default function McpPage() {
           <a href="#surface">Surface</a>
           <a href="#connect">Connect</a>
           <a href="#boundaries">Boundaries</a>
-          <Link href="/pre-summary">Product page ↗</Link>
+          <Link href="/">Producto ↗</Link>
         </nav>
       </header>
 
@@ -94,7 +94,7 @@ export default function McpPage() {
             </p>
             <div className="mcp-hero__actions">
               <a className="mcp-button mcp-button--dark" href="#connect">Connect the server <span>↓</span></a>
-              <Link className="mcp-button mcp-button--quiet" href="/">Open a blank document <span>↗</span></Link>
+              <Link className="mcp-button mcp-button--quiet" href="/studio">Abrir /studio <span>↗</span></Link>
             </div>
             <p className="mcp-hero__note">Built on the official TypeScript SDK · stdio + Streamable HTTP · Zod-validated inputs</p>
           </div>
@@ -223,15 +223,15 @@ export default function McpPage() {
           </div>
           <div className="mcp-final__actions">
             <a className="mcp-button mcp-button--dark" href="https://github.com/edies76/docs-studio" target="_blank" rel="noreferrer">Open GitHub <span>↗</span></a>
-            <Link className="mcp-button mcp-button--quiet" href="/pre-summary">Open Docs Studio <span>↗</span></Link>
+            <Link className="mcp-button mcp-button--quiet" href="/">Producto ↗</Link>
           </div>
         </section>
       </main>
 
       <footer className="mcp-footer">
-        <Link href="/pre-summary"><BrandMark size={24} /> Docs Studio</Link>
-        <span>MCP docs / server contract / 2026</span>
-        <Link href="/">Blank document ↗</Link>
+        <Link href="/"><BrandMark size={24} /> Docs Studio</Link>
+        <span>MCP · workspace académico / 2026</span>
+        <Link href="/studio">/studio ↗</Link>
       </footer>
     </div>
   );

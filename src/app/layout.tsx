@@ -21,9 +21,9 @@ const monoFont = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Docs Studio | Write from the brief',
+  title: 'Docs Studio | Workspace académico',
   description:
-    'Turn a topic or brief into a document you can shape, review, and export.',
+    'Workspace académico, no un chat genérico: lienzo papel, normas APA/IEEE, ecuaciones MATH-SAFE, Accept/Reject y export PDF/Word.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

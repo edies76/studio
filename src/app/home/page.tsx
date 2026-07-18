@@ -79,7 +79,7 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'create failed');
-      router.push(`/?doc=${data.doc.id}`);
+      router.push(`/studio?doc=${data.doc.id}`);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -107,10 +107,12 @@ export default function HomePage() {
       {/* Top bar — minimal Docs-like */}
       <header className="sticky top-0 z-20 border-b border-neutral-200/80 bg-[#f7f6f3]/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-2.5">
+          <a href="/" className="flex items-center gap-2.5 no-underline">
             <BrandMark size={28} />
-            <span className="text-[15px] font-semibold tracking-tight">Docs Studio</span>
-          </div>
+            <span className="text-[15px] font-semibold tracking-tight text-neutral-900">
+              Docs Studio
+            </span>
+          </a>
           <div className="flex items-center gap-2">
             {status === 'authenticated' && session?.user ? (
               <>
@@ -152,15 +154,15 @@ export default function HomePage() {
         <div className="mb-8 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              Biblioteca
+              /home · Biblioteca
             </p>
             <h1 className="mt-1 text-[28px] font-semibold tracking-tight text-neutral-900">
               Tus documentos
             </h1>
             <p className="mt-1 text-[13px] text-neutral-500">
               {guest
-                ? 'Modo local — los docs se guardan en este servidor (.data).'
-                : `Hola, ${userLabel.split(' ')[0]}`}
+                ? 'Modo local — se guardan en este servidor. Abrí cada doc en /studio.'
+                : `Hola, ${userLabel.split(' ')[0]} · workspace en /studio`}
             </p>
           </div>
           <button
@@ -197,17 +199,17 @@ export default function HomePage() {
           </button>
           <button
             type="button"
-            onClick={() => router.push('/pre-summary')}
+            onClick={() => router.push('/')}
             className="group flex flex-col items-start rounded-2xl border border-neutral-200 bg-white p-5 text-left shadow-sm transition hover:shadow-md"
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
               <FileText className="h-5 w-5" />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">Desde un tema</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">Brief → primer borrador IA</span>
+            <span className="mt-3 text-[14px] font-semibold">Desde una guía</span>
+            <span className="mt-0.5 text-[12px] text-neutral-500">Landing → parse brief → /studio</span>
           </button>
           <a
-            href="/?doc=new"
+            href="/studio"
             onClick={(e) => {
               e.preventDefault();
               void createDoc('Import / editar');
@@ -217,8 +219,8 @@ export default function HomePage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
               <MoreHorizontal className="h-5 w-5" />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">Abrir en el lienzo</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">Importá .docx desde el editor</span>
+            <span className="mt-3 text-[14px] font-semibold">Abrir en /studio</span>
+            <span className="mt-0.5 text-[12px] text-neutral-500">Importá .docx en el lienzo</span>
           </a>
         </div>
 
@@ -243,7 +245,7 @@ export default function HomePage() {
               <div className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-neutral-50/80 sm:px-5">
                 <button
                   type="button"
-                  onClick={() => router.push(`/?doc=${d.id}`)}
+                  onClick={() => router.push(`/studio?doc=${d.id}`)}
                   className="flex min-w-0 flex-1 items-start gap-3 text-left"
                 >
                   <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600">

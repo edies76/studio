@@ -2,10 +2,23 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
 /**
- * Soft gate: if AUTH is configured and FORCE_AUTH=1, protect /home and editor.
- * Default: allow guest local mode so dev works without Google OAuth.
+ * Soft gate: if AUTH is configured and FORCE_AUTH=1, protect /home and /studio.
+ * Landing `/` stays public. Default: guest local mode without OAuth.
  */
 export function middleware(req: NextRequest) {
+  const path = req.nextUrl.pathname;
+
+  // Legacy: editor used to live at `/` with ?doc= / ?topic=
+  if (path === '/') {
+    const doc = req.nextUrl.searchParams.get('doc');
+    const topic = req.nextUrl.searchParams.get('topic');
+    if (doc || topic) {
+      const url = req.nextUrl.clone();
+      url.pathname = '/studio';
+      return NextResponse.redirect(url);
+    }
+  }
+
   const force = process.env.FORCE_AUTH === '1';
   if (!force) return NextResponse.next();
 
@@ -14,10 +27,9 @@ export function middleware(req: NextRequest) {
     (process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET);
   if (!hasGoogle) return NextResponse.next();
 
-  const path = req.nextUrl.pathname;
   const isProtected =
     path.startsWith('/home') ||
-    path === '/' ||
+    path.startsWith('/studio') ||
     path.startsWith('/api/docs');
 
   if (!isProtected) return NextResponse.next();
@@ -44,5 +56,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/home', '/', '/api/docs/:path*'],
+  matcher: ['/', '/home', '/home/:path*', '/studio', '/studio/:path*', '/api/docs/:path*', '/pre-summary'],
 };

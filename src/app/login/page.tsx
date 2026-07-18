@@ -20,7 +20,7 @@ function LoginInner() {
             Docs Studio
           </h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500">
-            Entrá con Google para guardar documentos, chat y autosave en tu cuenta.
+            Workspace académico: guardá documentos del lienzo, autosave y biblioteca en tu cuenta.
           </p>
         </div>
 
