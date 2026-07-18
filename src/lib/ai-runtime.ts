@@ -1,10 +1,15 @@
 /**
- * Server-only Gemini calls: multi-model fallback + backoff on 429/503.
+ * Server-only AI: DeepSeek primary (OpenAI-compatible).
  * Do NOT import this file from client components.
  */
 
 import 'server-only';
-import { ai } from '@/ai/genkit';
+import {
+  deepseekApiKey,
+  deepseekChat,
+  modelFallbackList,
+  resolveModelId,
+} from '@/lib/deepseek';
 import { DEFAULT_STUDIO_MODEL, STUDIO_MODELS } from '@/lib/studio-models';
 
 export { STUDIO_MODELS, DEFAULT_STUDIO_MODEL };
@@ -14,46 +19,53 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function isTransient(err: unknown): boolean {
   const msg = String((err as Error)?.message || err || '');
-  return /503|429|high demand|quota|UNAVAILABLE|rate.?limit|try again/i.test(msg);
+  return /503|429|high demand|quota|UNAVAILABLE|rate.?limit|try again|timeout|ECONNRESET/i.test(
+    msg,
+  );
 }
 
 export async function generateTextWithFallback(opts: {
   prompt: string;
   preferredModel?: string;
   maxAttemptsPerModel?: number;
+  system?: string;
 }): Promise<{ text: string; modelUsed: string }> {
-  const preferred =
-    opts.preferredModel || process.env.GEMINI_MODEL || DEFAULT_STUDIO_MODEL;
-  // Prefer real AI Studio model ids first; aliases as fallback
-  const fallbackOrder = [
-    'googleai/gemini-3.5-flash',
-    'googleai/gemini-flash-lite-latest',
-    'googleai/gemini-flash-latest',
-    'googleai/gemini-2.0-flash',
-    ...STUDIO_MODELS.map((m) => m.id),
-  ];
-  const ordered = [
-    preferred,
-    ...fallbackOrder.filter((id, i, arr) => id !== preferred && arr.indexOf(id) === i),
-  ];
+  const apiKey = deepseekApiKey();
+  if (!apiKey) {
+    throw new Error('Missing DEEPSEEK_API_KEY');
+  }
+
+  const ordered = modelFallbackList(opts.preferredModel || resolveModelId());
   const maxAttempts = opts.maxAttemptsPerModel ?? 2;
   let lastError: unknown;
 
   for (const model of ordered) {
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        const result = await ai.generate({
-          model: model as any,
-          prompt: opts.prompt,
+        const messages: { role: 'system' | 'user'; content: string }[] = [];
+        if (opts.system) messages.push({ role: 'system', content: opts.system });
+        messages.push({ role: 'user', content: opts.prompt });
+
+        const res = await deepseekChat({
+          apiKey,
+          model,
+          messages,
+          stream: false,
+          temperature: 0.55,
+          maxTokens: 8192,
         });
-        const text = result.text?.trim() || '';
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data?.error?.message || res.statusText || `HTTP ${res.status}`);
+        }
+        const text = String(data?.choices?.[0]?.message?.content || '').trim();
         if (!text) throw new Error('Empty model response');
         return { text, modelUsed: model };
       } catch (err) {
         lastError = err;
         console.error(`[studio-ai] model=${model} attempt=${attempt + 1}`, err);
         if (isTransient(err) && attempt < maxAttempts - 1) {
-          await sleep(800 * Math.pow(2, attempt));
+          await sleep(600 * Math.pow(2, attempt));
           continue;
         }
         break;
@@ -62,7 +74,7 @@ export async function generateTextWithFallback(opts: {
   }
 
   throw new Error(
-    `Studio AI unavailable after trying fallback models. ${String((lastError as Error)?.message || lastError)}`,
+    `Studio AI unavailable. ${String((lastError as Error)?.message || lastError)}`,
   );
 }
 
@@ -84,7 +96,6 @@ export function stripToHtml(text: string): string {
       })
       .join('');
   }
-  // Soft-normalize math escapes so MathJax sees real \( \)
   raw = raw.replace(/\\\\([()[\]])/g, '\\$1');
   return raw;
 }

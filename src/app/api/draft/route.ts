@@ -1,18 +1,21 @@
 import { NextRequest } from 'next/server';
-import { DEFAULT_STUDIO_MODEL, STUDIO_MODELS } from '@/lib/studio-models';
+import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
+import {
+  deepseekApiKey,
+  deepseekChat,
+  iterateOpenAiSse,
+  modelFallbackList,
+  resolveModelId,
+} from '@/lib/deepseek';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-function modelId(raw?: string) {
-  return (raw || process.env.GEMINI_MODEL || DEFAULT_STUDIO_MODEL).replace(/^googleai\//, '');
-}
 
 function encode(ev: object) {
   return `data: ${JSON.stringify(ev)}\n\n`;
 }
 
-/** Fast path: stream a full HTML document — no tool loop, auto-apply on client */
+/** Fast path: stream a full HTML document — real DeepSeek token deltas */
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const { prompt = '', model: preferredModel, language } = body as {
@@ -21,9 +24,9 @@ export async function POST(req: NextRequest) {
     language?: string;
   };
 
-  const apiKey = process.env.GOOGLE_API_KEY;
+  const apiKey = deepseekApiKey();
   if (!apiKey) {
-    return new Response(encode({ type: 'error', message: 'Missing GOOGLE_API_KEY' }), {
+    return new Response(encode({ type: 'error', message: 'Missing DEEPSEEK_API_KEY' }), {
       status: 500,
       headers: { 'Content-Type': 'text/event-stream' },
     });
@@ -40,7 +43,6 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        // Real status only — no "Connecting model…" theatre
         send({ type: 'status', label: 'Escribiendo…' });
 
         const system = `You write complete academic/professional HTML documents FAST.
@@ -52,11 +54,7 @@ Language: match user (${language || 'auto'}). Spanish if user writes Spanish.
 Structure: clear title + sections. Be complete but concise (good for ~3–6 pages).
 NO meta commentary. Start directly with <h1>...`;
 
-        // Prefer preferred/default first; only 1 fallback to cut latency
-        const preferred = modelId(preferredModel);
-        const fallbacks = STUDIO_MODELS.map((m) => modelId(m.id)).filter((id) => id !== preferred);
-        const models = [preferred, fallbacks[0]].filter(Boolean) as string[];
-
+        const models = modelFallbackList(preferredModel || resolveModelId(DEFAULT_STUDIO_MODEL));
         let text = '';
         let used = models[0];
         let lastErr = '';
@@ -64,52 +62,41 @@ NO meta commentary. Start directly with <h1>...`;
         for (const mid of models) {
           used = mid;
           try {
-            // Real SSE stream from Gemini — deltas are live tokens
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${mid}:streamGenerateContent?alt=sse&key=${apiKey}`;
-            const res = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [
-                  {
-                    role: 'user',
-                    parts: [{ text: `${system}\n\nUSER REQUEST:\n${prompt}` }],
-                  },
-                ],
-                generationConfig: {
-                  temperature: 0.55,
-                  maxOutputTokens: 8192,
-                },
-              }),
+            const res = await deepseekChat({
+              apiKey,
+              model: mid,
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: String(prompt || '') },
+              ],
+              stream: true,
+              temperature: 0.55,
+              maxTokens: 8192,
             });
 
             if (!res.ok || !res.body) {
-              lastErr = res.statusText || `HTTP ${res.status}`;
-              // non-stream fallback only if stream endpoint fails
-              const url2 = `https://generativelanguage.googleapis.com/v1beta/models/${mid}:generateContent?key=${apiKey}`;
-              const res2 = await fetch(url2, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  contents: [
-                    {
-                      role: 'user',
-                      parts: [{ text: `${system}\n\nUSER REQUEST:\n${prompt}` }],
-                    },
-                  ],
-                  generationConfig: { temperature: 0.55, maxOutputTokens: 8192 },
-                }),
+              const errBody = await res.text().catch(() => '');
+              lastErr = errBody || res.statusText || `HTTP ${res.status}`;
+              // Non-stream fallback for this model
+              const res2 = await deepseekChat({
+                apiKey,
+                model: mid,
+                messages: [
+                  { role: 'system', content: system },
+                  { role: 'user', content: String(prompt || '') },
+                ],
+                stream: false,
+                temperature: 0.55,
+                maxTokens: 8192,
               });
               const data = await res2.json();
               if (!res2.ok) {
-                lastErr = data?.error?.message || res2.statusText;
+                lastErr = data?.error?.message || res2.statusText || lastErr;
                 continue;
               }
-              text =
-                data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('') ||
-                '';
-              // One real delta (not fake micro-chunks)
+              text = String(data?.choices?.[0]?.message?.content || '');
               if (text) {
+                // Real content once (not fake micro-chunks)
                 send({ type: 'html_delta', delta: text });
                 break;
               }
@@ -117,34 +104,14 @@ NO meta commentary. Start directly with <h1>...`;
               continue;
             }
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buf = '';
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              buf += decoder.decode(value, { stream: true });
-              const lines = buf.split('\n');
-              buf = lines.pop() || '';
-              for (const line of lines) {
-                if (!line.startsWith('data:')) continue;
-                const payload = line.slice(5).trim();
-                if (!payload || payload === '[DONE]') continue;
-                try {
-                  const json = JSON.parse(payload);
-                  const parts = json?.candidates?.[0]?.content?.parts || [];
-                  for (const p of parts) {
-                    if (p.text) {
-                      text += p.text;
-                      // Real token stream from the API
-                      send({ type: 'html_delta', delta: p.text });
-                    }
-                  }
-                } catch {
-                  /* partial json */
-                }
+            // Real SSE token stream from DeepSeek
+            for await (const chunk of iterateOpenAiSse(res.body)) {
+              if (chunk.content) {
+                text += chunk.content;
+                send({ type: 'html_delta', delta: chunk.content });
               }
             }
+
             if (text.trim()) break;
             lastErr = 'empty stream';
           } catch (e: any) {
@@ -159,7 +126,6 @@ NO meta commentary. Start directly with <h1>...`;
           return;
         }
 
-        // Clean fences if any
         let html = text.trim();
         if (html.startsWith('```')) {
           html = html.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '');

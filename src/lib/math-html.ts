@@ -16,6 +16,10 @@ const SAFE_IMAGE_STYLE_PROPERTIES = new Set([
   'margin-left',
   'vertical-align',
   'object-fit',
+  'position',
+  'left',
+  'top',
+  'z-index',
 ]);
 
 function sanitizeImageStyle(raw: string): string {

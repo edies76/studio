@@ -12,7 +12,8 @@ export async function GET(request: Request) {
 
   const checks: Record<string, unknown> = {
     ok: true,
-    hasApiKey: Boolean(process.env.GOOGLE_API_KEY),
+    hasApiKey: Boolean(process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
+    provider: process.env.DEEPSEEK_API_KEY ? 'deepseek' : process.env.GOOGLE_API_KEY ? 'gemini' : 'none',
     timestamp: new Date().toISOString(),
   };
 

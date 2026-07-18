@@ -193,6 +193,19 @@
     cursor: move;
   }
 
+  /* Word-style floating image: removed from text flow, but still anchored to
+     the paper so its position survives serialization and undo/redo. */
+  .studio-doc-editor img[data-studio-wrap='behind'] {
+    position: absolute !important;
+    z-index: 0;
+    margin: 0 !important;
+    cursor: move;
+  }
+
+  .studio-doc-editor img[data-studio-wrap='behind'][data-studio-image-selected='1'] {
+    z-index: 3;
+  }
+
   .studio-doc-editor p,
   .studio-doc-editor li,
   .studio-doc-editor h1,

@@ -52,7 +52,7 @@ export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
 
 const BLOCK_SEL = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table';
 
-type ImageWrapMode = 'inline' | 'left' | 'right' | 'center' | 'break';
+type ImageWrapMode = 'inline' | 'left' | 'right' | 'center' | 'break' | 'behind';
 
 const IMAGE_WRAP_OPTIONS: { value: ImageWrapMode; label: string }[] = [
   { value: 'inline', label: 'En línea' },
@@ -60,6 +60,7 @@ const IMAGE_WRAP_OPTIONS: { value: ImageWrapMode; label: string }[] = [
   { value: 'right', label: 'Ajuste derecha' },
   { value: 'center', label: 'Centrada' },
   { value: 'break', label: 'Texto arriba y abajo' },
+  { value: 'behind', label: 'Detrás del texto · mover libre' },
 ];
 
 type ImageToolsRect = {
@@ -77,9 +78,17 @@ type ResizeSession = {
   ratio: number;
 };
 
+type DragSession = {
+  image: HTMLImageElement;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+};
+
 function getImageWrapMode(image: HTMLImageElement): ImageWrapMode {
   const explicit = image.dataset.studioWrap as ImageWrapMode | undefined;
-  if (explicit && ['inline', 'left', 'right', 'center', 'break'].includes(explicit)) return explicit;
+  if (explicit && ['inline', 'left', 'right', 'center', 'break', 'behind'].includes(explicit)) return explicit;
   if (image.style.float === 'left') return 'left';
   if (image.style.float === 'right') return 'right';
   if (image.style.display === 'inline-block') return 'inline';
@@ -87,13 +96,32 @@ function getImageWrapMode(image: HTMLImageElement): ImageWrapMode {
   return 'break';
 }
 
-function applyImageWrapMode(image: HTMLImageElement, mode: ImageWrapMode): void {
+function applyImageWrapMode(image: HTMLImageElement, mode: ImageWrapMode, editor?: HTMLElement | null): void {
+  const previousRect = image.getBoundingClientRect();
+  const editorRect = editor?.getBoundingClientRect();
   image.dataset.studioWrap = mode;
   image.style.maxWidth = '100%';
   image.style.height = 'auto';
   image.style.float = mode === 'left' || mode === 'right' ? mode : 'none';
   image.style.display = mode === 'inline' ? 'inline-block' : 'block';
   image.style.verticalAlign = mode === 'inline' ? 'middle' : '';
+
+  if (mode === 'behind') {
+    image.style.position = 'absolute';
+    image.style.zIndex = '0';
+    image.style.margin = '0';
+    if (editorRect) {
+      const scale = editorRect.width ? editorRect.width / Math.max(editor?.offsetWidth || editorRect.width, 1) : 1;
+      image.style.left = `${Math.max(0, (previousRect.left - editorRect.left) / Math.max(scale, 0.01))}px`;
+      image.style.top = `${Math.max(0, (previousRect.top - editorRect.top) / Math.max(scale, 0.01))}px`;
+    }
+    return;
+  }
+
+  image.style.position = '';
+  image.style.left = '';
+  image.style.top = '';
+  image.style.zIndex = '';
 
   if (mode === 'inline') image.style.margin = '0 0.3em';
   if (mode === 'left') image.style.margin = '0.25em 1.1em 0.6em 0';
@@ -119,6 +147,8 @@ type Props = {
   contentEditable: boolean;
   isLoading?: boolean;
   onInput: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onMouseUp: (e: React.MouseEvent) => void;
   onDoubleClick?: (e: React.MouseEvent) => void;
   onEditBlock?: (html: string, plain: string) => void;
@@ -141,6 +171,8 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     contentEditable,
     isLoading,
     onInput,
+    onUndo,
+    onRedo,
     onMouseUp,
     onDoubleClick,
     onEditBlock,
@@ -186,8 +218,52 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
   const [imageTools, setImageTools] = useState<ImageToolsRect | null>(null);
   const resizeSession = useRef<ResizeSession | null>(null);
+  const dragSession = useRef<DragSession | null>(null);
 
   const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
+
+  /**
+   * Filler paragraphs are editor chrome, not document content. Keep them out
+   * of the serialized HTML and make them disposable so a page can disappear
+   * after its content is deleted.
+   */
+  const padEditorToPage = useCallback(
+    (el: HTMLElement, targetH: number) => {
+      if (skipInput.current || hasGhost) return;
+      el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => n.remove());
+      let guard = 0;
+      while (el.scrollHeight < targetH - 8 && guard < 160) {
+        const p = document.createElement('p');
+        p.setAttribute('data-studio-pad', '1');
+        p.innerHTML = '<br>';
+        el.appendChild(p);
+        guard++;
+      }
+    },
+    [hasGhost],
+  );
+
+  const countContentPages = useCallback(
+    (el: HTMLElement) => {
+      const editorRect = el.getBoundingClientRect();
+      const realChildren = Array.from(el.children).filter(
+        (child) => (child as HTMLElement).getAttribute('data-studio-pad') !== '1',
+      ) as HTMLElement[];
+      const contentBottom = realChildren.reduce(
+        (bottom, child) => Math.max(bottom, child.getBoundingClientRect().bottom),
+        editorRect.top + margin + 40,
+      );
+      // Absolutely positioned images do not contribute to their paragraph's
+      // flow height, but they still occupy a page in the visual document.
+      const floatingImageBottom = Array.from(
+        el.querySelectorAll<HTMLImageElement>('img[data-studio-wrap="behind"]'),
+      ).reduce((bottom, image) => Math.max(bottom, image.getBoundingClientRect().bottom), contentBottom);
+      const contentHeight = Math.max(1, floatingImageBottom - editorRect.top + 8);
+      return Math.max(1, Math.ceil(contentHeight / spec.heightPx));
+    },
+    [margin, spec.heightPx],
+  );
+
   const diffOverlayHtml = useMemo(() => {
     if (!hasGhost) return null;
     // Prefer current live editor as "before" if beforeHtml missing (full-doc edits)
@@ -203,10 +279,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     const el = hasGhost && ghostRef.current ? ghostRef.current : editorRef.current;
     if (!el) return;
     void el.offsetHeight;
-    const contentH = Math.max(el.scrollHeight, el.offsetHeight, 1);
-    const n = Math.max(1, Math.ceil(contentH / spec.heightPx));
+    const n = hasGhost
+      ? Math.max(1, Math.ceil(Math.max(el.scrollHeight, el.offsetHeight, 1) / spec.heightPx))
+      : countContentPages(el);
     setPageCount((prev) => (prev === n ? prev : n));
-  }, [spec.heightPx, hasGhost]);
+  }, [countContentPages, hasGhost, spec.heightPx]);
 
   // Typeset MathJax on structural ghost so LaTeX stays rendered
   useEffect(() => {
@@ -318,6 +395,17 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     });
   }, []);
 
+  const syncPageGeometry = useCallback(
+    (el: HTMLElement) => {
+      if (skipInput.current || hasGhost) return;
+      promoteRealContentBlocks(el);
+      const pages = countContentPages(el);
+      setPageCount((prev) => (prev === pages ? prev : pages));
+      padEditorToPage(el, pages * spec.heightPx);
+    },
+    [countContentPages, hasGhost, padEditorToPage, promoteRealContentBlocks, spec.heightPx],
+  );
+
   useImperativeHandle(
     ref,
     () => ({
@@ -344,7 +432,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           file.name.replace(/\.[^.]+$/, '') || 'Inserted image',
           lastSelection.current,
         );
-        applyImageWrapMode(image, 'break');
+        applyImageWrapMode(image, 'break', el);
         setSelectedImage(image);
         promoteRealContentBlocks(el);
         requestAnimationFrame(() => {
@@ -392,33 +480,17 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     padEditorToPage(el, paperHeight);
   }, [paperHeight]);
 
-  /**
-   * Append empty paragraphs so the editable surface fills the sheet.
-   * Prevents the "click empty bottom → caret jumps to last text" flicker.
-   */
-  const padEditorToPage = (el: HTMLElement, targetH: number) => {
-    if (skipInput.current || hasGhost) return;
-    // Remove old pads first
-    el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => n.remove());
-    let guard = 0;
-    while (el.scrollHeight < targetH - 8 && guard < 80) {
-      const p = document.createElement('p');
-      p.setAttribute('data-studio-pad', '1');
-      p.innerHTML = '<br>';
-      el.appendChild(p);
-      guard++;
-    }
-  };
-
   const commitImageMutation = useCallback(() => {
     const editor = editorRef.current;
     if (!editor) return;
     promoteRealContentBlocks(editor);
-    padEditorToPage(editor, Math.max(paperHeight, editor.scrollHeight));
+    const pages = countContentPages(editor);
+    setPageCount((prev) => (prev === pages ? prev : pages));
+    padEditorToPage(editor, pages * spec.heightPx);
     measurePages();
     requestAnimationFrame(() => updateImageTools());
     onInput();
-  }, [measurePages, onInput, paperHeight, promoteRealContentBlocks, updateImageTools]);
+  }, [countContentPages, measurePages, onInput, padEditorToPage, promoteRealContentBlocks, spec.heightPx, updateImageTools]);
 
   const updateImageWidth = useCallback(
     (nextWidth: number) => {
@@ -487,7 +559,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const changeImageWrap = useCallback(
     (mode: ImageWrapMode) => {
       if (!selectedImage) return;
-      applyImageWrapMode(selectedImage, mode);
+      applyImageWrapMode(selectedImage, mode, editorRef.current);
       commitImageMutation();
     },
     [commitImageMutation, selectedImage],
@@ -508,8 +580,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       rememberSelection();
       if (selectedImage && !el.contains(selectedImage)) setSelectedImage(null);
       // User typed into a pad paragraph → promote to real content
-      promoteRealContentBlocks(el);
-      padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
+      syncPageGeometry(el);
     }
     measurePages();
     onInput();
@@ -533,11 +604,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             reader.readAsDataURL(file);
           });
           const image = insertImageAtSelection(el, src, 'Pasted image', lastSelection.current);
-          applyImageWrapMode(image, 'break');
+          applyImageWrapMode(image, 'break', el);
           setSelectedImage(image);
-          promoteRealContentBlocks(el);
+          syncPageGeometry(el);
           requestAnimationFrame(() => {
-            promoteRealContentBlocks(el);
+            syncPageGeometry(el);
             measurePages();
             onInput();
           });
@@ -552,8 +623,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       const el = editorRef.current;
       if (el) {
         rememberSelection();
-        promoteRealContentBlocks(el);
-        padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
+        syncPageGeometry(el);
         measurePages();
       }
       onInput();
@@ -561,6 +631,20 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.shiftKey) onRedo?.();
+      else onUndo?.();
+      return;
+    }
+    if (modifier && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      event.stopPropagation();
+      onRedo?.();
+      return;
+    }
     if (event.key === 'Enter') {
       const sel = window.getSelection();
       const anchor = sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement;
@@ -571,6 +655,57 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     }
     rememberSelection();
   };
+
+  const handleEditorPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!contentEditable || hasGhost) return;
+      const el = editorRef.current;
+      const target = event.target as HTMLElement;
+      const image = target.closest('img') as HTMLImageElement | null;
+      if (!el || !image || !el.contains(image) || getImageWrapMode(image) !== 'behind') return;
+
+      const editorRect = el.getBoundingClientRect();
+      const imageRect = image.getBoundingClientRect();
+      const scale = editorRect.width / Math.max(el.offsetWidth, 1);
+      dragSession.current = {
+        image,
+        startX: event.clientX,
+        startY: event.clientY,
+        startLeft: (imageRect.left - editorRect.left) / Math.max(scale, 0.01),
+        startTop: (imageRect.top - editorRect.top) / Math.max(scale, 0.01),
+      };
+      setSelectedImage(image);
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [contentEditable, hasGhost],
+  );
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const session = dragSession.current;
+      if (!session) return;
+      const editor = editorRef.current;
+      if (!editor) return;
+      event.preventDefault();
+      const editorRect = editor.getBoundingClientRect();
+      const scale = editorRect.width / Math.max(editor.offsetWidth, 1);
+      session.image.style.left = `${Math.max(0, session.startLeft + (event.clientX - session.startX) / Math.max(scale, 0.01))}px`;
+      session.image.style.top = `${Math.max(0, session.startTop + (event.clientY - session.startY) / Math.max(scale, 0.01))}px`;
+      updateImageTools();
+    };
+    const onPointerUp = () => {
+      if (!dragSession.current) return;
+      dragSession.current = null;
+      commitImageMutation();
+    };
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [commitImageMutation, updateImageTools]);
 
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'));
@@ -592,11 +727,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         file.name.replace(/\.[^.]+$/, '') || 'Dropped image',
         lastSelection.current,
       );
-      applyImageWrapMode(image, 'break');
+      applyImageWrapMode(image, 'break', el);
       setSelectedImage(image);
-      promoteRealContentBlocks(el);
+      syncPageGeometry(el);
       requestAnimationFrame(() => {
-        promoteRealContentBlocks(el);
+        syncPageGeometry(el);
         measurePages();
         onInput();
       });
@@ -644,8 +779,16 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     const y = e.clientY;
     const x = e.clientX;
 
-    // Ensure enough pad for this click Y
-    padEditorToPage(el, paperHeight);
+    // Convert the click to document coordinates. This lets a click in the
+    // lower half of a sheet create a caret at that line instead of snapping
+    // to the last real paragraph.
+    const editorRect = el.getBoundingClientRect();
+    const scale = editorRect.width / Math.max(el.offsetWidth, 1);
+    const localY = Math.max(0, (y - editorRect.top) / Math.max(scale, 0.01));
+    const requestedPages = Math.max(1, Math.ceil((localY + margin + 32) / spec.heightPx));
+    const targetPages = Math.max(pageCount, requestedPages);
+    setPageCount((prev) => Math.max(prev, targetPages));
+    padEditorToPage(el, targetPages * spec.heightPx);
     const last = el.lastElementChild as HTMLElement | null;
     if (last) {
       const lr = last.getBoundingClientRect();
@@ -834,6 +977,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 onInput={handleInput}
                 onPaste={handlePaste}
                 onKeyDown={handleKeyDown}
+                onPointerDown={handleEditorPointerDown}
                 onMouseDown={handleEditorMouseDown}
                 onMouseUp={handleEditorMouseUp}
                 onDragOver={handleDragOver}

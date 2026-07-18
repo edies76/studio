@@ -19,18 +19,16 @@ type Props = {
   busy?: boolean;
   hasSelection?: boolean;
   onAction: (action: OrbitAction, intensity: number) => void;
-  /** Open the ephemeral agent input */
   onOpenAgent?: () => void;
-  /** Show "open agent" in the orbit menu */
   showAgentOption?: boolean;
 };
 
 const ACTIONS: { id: OrbitAction; label: string; sendLabel: string; icon: ReactNode }[] = [
-  { id: 'improve', label: 'Improve', sendLabel: 'Send improve', icon: <Wand2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'shorter', label: 'Shorter', sendLabel: 'Send shorter', icon: <Minimize2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'expand', label: 'Expand', sendLabel: 'Send expand', icon: <Maximize2 className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'grammar', label: 'Grammar', sendLabel: 'Send grammar', icon: <SpellCheck className="h-4 w-4" strokeWidth={1.75} /> },
-  { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-4 w-4" strokeWidth={1.75} /> },
+  { id: 'improve', label: 'Improve', sendLabel: 'Send improve', icon: <Wand2 className="h-5 w-5" strokeWidth={1.75} /> },
+  { id: 'shorter', label: 'Shorter', sendLabel: 'Send shorter', icon: <Minimize2 className="h-5 w-5" strokeWidth={1.75} /> },
+  { id: 'expand', label: 'Expand', sendLabel: 'Send expand', icon: <Maximize2 className="h-5 w-5" strokeWidth={1.75} /> },
+  { id: 'grammar', label: 'Grammar', sendLabel: 'Send grammar', icon: <SpellCheck className="h-5 w-5" strokeWidth={1.75} /> },
+  { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-5 w-5" strokeWidth={1.75} /> },
 ];
 
 const LEVELS = [
@@ -41,11 +39,7 @@ const LEVELS = [
   { value: 10, tip: 'Muy poco' },
 ];
 
-/**
- * Floating white tools capsule (bottom-right).
- * Opens with staggered options; closes with reverse collapse animation.
- * After picking an action → main icon becomes blue arrow "Send {action}".
- */
+/** Floating tools capsule — fat main button, full-size hover hit area */
 export default function ToolsDock({
   busy,
   hasSelection,
@@ -57,13 +51,10 @@ export default function ToolsDock({
   const [action, setAction] = useState<OrbitAction | null>(null);
   const [intensity, setIntensity] = useState(50);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
-  /** Animate panel in/out without unmounting mid-close */
   const [panelVisible, setPanelVisible] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const expanded = open || Boolean(action);
-  const showPanel = panelVisible || expanded;
 
   const reset = () => {
     setAction(null);
@@ -73,15 +64,14 @@ export default function ToolsDock({
     setPanelVisible(false);
   };
 
-  // Sync open → panelVisible for enter; exit animates then hides
   useEffect(() => {
     if (expanded) {
-      if (closeTimer.current) clearTimeout(closeTimer.current);
       requestAnimationFrame(() => setPanelVisible(true));
     } else if (panelVisible) {
       setPanelVisible(false);
     }
-  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -108,11 +98,19 @@ export default function ToolsDock({
   };
 
   const selected = ACTIONS.find((a) => a.id === action);
-  const cell =
-    'relative flex h-11 w-11 shrink-0 items-center justify-center text-neutral-800 transition-all duration-200 ease-out';
 
-  const optionCount = (showAgentOption && onOpenAgent ? 1 : 0) + (action ? LEVELS.length : ACTIONS.length);
-  const maxH = action ? 280 : Math.min(420, 56 + optionCount * 44);
+  // Fat cells: button and hover disc share the same box (no inset shrink)
+  const cell =
+    'relative flex h-14 w-14 shrink-0 items-center justify-center text-neutral-800 transition-colors duration-150 ease-out';
+  const hoverDisc = (active: boolean) =>
+    cn(
+      'absolute inset-0 rounded-full transition-colors duration-150',
+      active ? 'bg-neutral-100' : 'bg-transparent',
+    );
+
+  const optionCount =
+    (showAgentOption && onOpenAgent ? 1 : 0) + (action ? LEVELS.length : ACTIONS.length);
+  const maxH = action ? 360 : Math.min(520, 64 + optionCount * 56);
 
   return (
     <div
@@ -123,23 +121,17 @@ export default function ToolsDock({
     >
       <div
         className={cn(
-          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-xl shadow-black/10 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-          expanded || panelVisible ? 'rounded-[28px]' : 'rounded-full',
+          'pointer-events-auto flex flex-col items-center overflow-hidden border border-neutral-200 bg-white text-neutral-800 shadow-xl shadow-black/10 transition-all duration-300 ease-out',
+          expanded || panelVisible ? 'rounded-[36px]' : 'rounded-full',
         )}
       >
-        {/* Options panel — opens AND closes with height/opacity animation */}
         <div
           className={cn(
-            'flex flex-col items-center overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
-            panelVisible && expanded
-              ? 'opacity-100'
-              : 'pointer-events-none opacity-0',
+            'flex flex-col items-center overflow-hidden transition-all duration-300 ease-out',
+            panelVisible && expanded ? 'opacity-100' : 'pointer-events-none opacity-0',
           )}
-          style={{
-            maxHeight: panelVisible && expanded ? maxH : 0,
-          }}
+          style={{ maxHeight: panelVisible && expanded ? maxH : 0 }}
         >
-          {/* Open agent — no intensity */}
           {showAgentOption && onOpenAgent && !action && open && (
             <button
               type="button"
@@ -154,21 +146,16 @@ export default function ToolsDock({
               }}
               className={cn(cell, busy && 'opacity-40')}
             >
-              <span
-                className={cn(
-                  'absolute inset-1 rounded-full transition-all duration-200 ease-out',
-                  hoverKey === 'agent' ? 'scale-100 bg-neutral-100' : 'scale-90 bg-transparent',
-                )}
-              />
+              <span className={hoverDisc(hoverKey === 'agent')} />
               <span className="relative z-10">
-                <MessageSquarePlus className="h-4 w-4" strokeWidth={1.75} />
+                <MessageSquarePlus className="h-5 w-5" strokeWidth={1.75} />
               </span>
             </button>
           )}
 
           {!action &&
             open &&
-            ACTIONS.map((a, idx) => (
+            ACTIONS.map((a) => (
               <button
                 key={a.id}
                 type="button"
@@ -182,16 +169,8 @@ export default function ToolsDock({
                   setIntensity(50);
                 }}
                 className={cn(cell, busy && 'opacity-40')}
-                style={{
-                  transitionDelay: panelVisible ? `${idx * 30}ms` : '0ms',
-                }}
               >
-                <span
-                  className={cn(
-                    'absolute inset-1 rounded-full transition-all duration-200 ease-out',
-                    hoverKey === a.id ? 'scale-100 bg-neutral-100' : 'scale-90 bg-transparent',
-                  )}
-                />
+                <span className={hoverDisc(hoverKey === a.id)} />
                 <span className="relative z-10">{a.icon}</span>
               </button>
             ))}
@@ -211,16 +190,11 @@ export default function ToolsDock({
                   onClick={() => setIntensity(lv.value)}
                   className={cell}
                 >
+                  <span className={hoverDisc(hoverKey === `i-${lv.value}` || active)} />
                   <span
                     className={cn(
-                      'absolute inset-1 rounded-full transition-all duration-200',
-                      hoverKey === `i-${lv.value}` || active ? 'bg-neutral-100' : 'bg-transparent',
-                    )}
-                  />
-                  <span
-                    className={cn(
-                      'relative z-10 rounded-full bg-neutral-800 transition-all duration-200',
-                      active ? 'h-3 w-3' : 'h-1.5 w-1.5 opacity-40',
+                      'relative z-10 rounded-full bg-neutral-800 transition-all duration-150',
+                      active ? 'h-3.5 w-3.5' : 'h-2 w-2 opacity-40',
                     )}
                   />
                 </button>
@@ -228,17 +202,10 @@ export default function ToolsDock({
             })}
         </div>
 
-        {/* Main button */}
         <button
           type="button"
           disabled={busy}
-          title={
-            action
-              ? selected?.sendLabel || 'Send'
-              : open
-                ? 'Cerrar'
-                : 'AI tools'
-          }
+          title={action ? selected?.sendLabel || 'Send' : open ? 'Cerrar' : 'AI tools'}
           onMouseDown={(e) => e.preventDefault()}
           onMouseEnter={() => setHoverKey('main')}
           onMouseLeave={() => setHoverKey(null)}
@@ -248,7 +215,6 @@ export default function ToolsDock({
               return;
             }
             if (open) {
-              // Close with animation
               setPanelVisible(false);
               window.setTimeout(() => setOpen(false), 280);
             } else {
@@ -256,14 +222,15 @@ export default function ToolsDock({
             }
           }}
           className={cn(
-            'relative flex h-12 w-12 shrink-0 items-center justify-center transition-colors',
+            'relative flex h-16 w-16 shrink-0 items-center justify-center transition-colors',
             busy && 'opacity-50',
             action && 'text-blue-600',
           )}
         >
+          {/* Full-size hover — same circle as the button, no inset shrink */}
           <span
             className={cn(
-              'absolute inset-1.5 rounded-full transition-all duration-200',
+              'absolute inset-0 rounded-full transition-colors duration-150',
               hoverKey === 'main' || action
                 ? action
                   ? 'bg-blue-50'
@@ -271,11 +238,11 @@ export default function ToolsDock({
                 : 'bg-transparent',
             )}
           />
-          <span className="relative z-10 transition-transform duration-200">
+          <span className="relative z-10">
             {action ? (
-              <ArrowUp className="h-5 w-5 text-blue-600" strokeWidth={2.25} />
+              <ArrowUp className="h-6 w-6 text-blue-600" strokeWidth={2.25} />
             ) : (
-              <Wrench className="h-5 w-5" strokeWidth={1.75} />
+              <Wrench className="h-6 w-6" strokeWidth={1.75} />
             )}
           </span>
         </button>

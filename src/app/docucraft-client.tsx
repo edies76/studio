@@ -93,6 +93,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
 
   const [history, setHistory] = useState<string[]>(['']);
   const [historyIndex, setHistoryIndex] = useState(0);
+  const historyRef = useRef<string[]>(['']);
+  const historyIndexRef = useRef(0);
+  const [draftReady, setDraftReady] = useState(false);
+  const restoredDraft = useRef(false);
 
   const [hasSelection, setHasSelection] = useState(false);
   const [selBar, setSelBar] = useState<{ top: number; left: number } | null>(null);
@@ -304,14 +308,16 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   }, [prefs.shortcutOpenAgent, prefs.shortcutEditSelection, openAgent, hasSelection]);
 
   const pushHistory = useCallback((html: string) => {
-    setHistory((prev) => {
-      const next = prev.slice(0, historyIndex + 1);
-      next.push(html);
-      if (next.length > 40) next.shift();
-      return next;
-    });
-    setHistoryIndex((i) => Math.min(i + 1, 39));
-  }, [historyIndex]);
+    const current = historyRef.current[historyIndexRef.current] ?? '';
+    if (current === html) return;
+    const next = historyRef.current.slice(0, historyIndexRef.current + 1);
+    next.push(html);
+    if (next.length > 80) next.shift();
+    historyRef.current = next;
+    historyIndexRef.current = next.length - 1;
+    setHistory(next);
+    setHistoryIndex(historyIndexRef.current);
+  }, []);
 
   const applyHtml = useCallback(
     (
@@ -355,24 +361,101 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     return canvasRef.current?.getHtml() || documentContent;
   }, [documentContent]);
 
-  const undo = () => {
-    if (historyIndex <= 0) return;
-    const i = historyIndex - 1;
-    setHistoryIndex(i);
-    applyHtml(history[i] || '', false);
+  const draftKey = `docs-studio:draft:${(topic.trim() || 'blank')
+    .toLowerCase()
+    .replace(/[^a-z0-9áéíóúüñ]+/gi, '-')
+    .slice(0, 120)}`;
+
+  useEffect(() => {
+    if (!isClient || draftReady) return;
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        const saved = JSON.parse(raw) as {
+          html?: string;
+          title?: string;
+          paperSize?: PaperSize;
+          fontFamily?: string;
+          fontSize?: string;
+        };
+        if (saved.html && !isDocEmpty(saved.html)) {
+          restoredDraft.current = true;
+          if (saved.title) setDocumentTitle(saved.title);
+          if (saved.paperSize === 'letter' || saved.paperSize === 'legal') setPaperSize(saved.paperSize);
+          if (saved.fontFamily) setFontFamily(saved.fontFamily);
+          if (saved.fontSize) setFontSize(saved.fontSize);
+          historyRef.current = [saved.html];
+          historyIndexRef.current = 0;
+          setHistory([saved.html]);
+          setHistoryIndex(0);
+          applyHtml(saved.html, false);
+        }
+      }
+    } catch {
+      /* A corrupt local draft should never prevent opening the editor. */
+    } finally {
+      setDraftReady(true);
+    }
+  }, [applyHtml, draftKey, draftReady, isClient]);
+
+  useEffect(() => {
+    if (!draftReady) return;
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            version: 1,
+            html: documentContent || readEditorHtml(),
+            title: documentTitle,
+            paperSize,
+            fontFamily,
+            fontSize,
+            savedAt: new Date().toISOString(),
+          }),
+        );
+      } catch {
+        /* Storage can be unavailable in private browsing; editing still works. */
+      }
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [draftKey, draftReady, documentContent, documentTitle, fontFamily, fontSize, paperSize, readEditorHtml]);
+
+  const flushPendingHistory = useCallback(() => {
+    if (localEditTimer.current) {
+      clearTimeout(localEditTimer.current);
+      localEditTimer.current = null;
+    }
+    const current = readEditorHtml();
+    if (current !== (historyRef.current[historyIndexRef.current] ?? '')) pushHistory(current);
+  }, [pushHistory, readEditorHtml]);
+
+  const undo = useCallback(() => {
+    flushPendingHistory();
+    const currentIndex = historyIndexRef.current;
+    if (currentIndex <= 0) return;
+    const nextIndex = currentIndex - 1;
+    historyIndexRef.current = nextIndex;
+    setHistoryIndex(nextIndex);
+    applyHtml(historyRef.current[nextIndex] || '', false);
+    canvasRef.current?.focusEnd();
     pushEvent({
       type: 'local_edit',
       title: 'Deshiciste un cambio',
       summary: 'Se restauró una versión anterior del documento.',
     });
-  };
+  }, [applyHtml, flushPendingHistory, pushEvent]);
 
-  const redo = () => {
-    if (historyIndex >= history.length - 1) return;
-    const i = historyIndex + 1;
-    setHistoryIndex(i);
-    applyHtml(history[i] || '', false);
-  };
+  const redo = useCallback(() => {
+    flushPendingHistory();
+    const currentIndex = historyIndexRef.current;
+    if (currentIndex >= historyRef.current.length - 1) return;
+    const nextIndex = currentIndex + 1;
+    historyIndexRef.current = nextIndex;
+    setHistoryIndex(nextIndex);
+    applyHtml(historyRef.current[nextIndex] || '', false);
+    canvasRef.current?.focusEnd();
+  }, [applyHtml, flushPendingHistory]);
 
   const setActivityLabel = (label: string, state: ActivityStep['state'] = 'active') => {
     if (state === 'done' || /^done$/i.test(label.trim())) {
@@ -780,21 +863,25 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   );
 
   useEffect(() => {
-    if (!topic || didAuto.current || !isClient) return;
+    if (!topic || didAuto.current || !isClient || !draftReady) return;
+    if (restoredDraft.current) {
+      didAuto.current = true;
+      return;
+    }
     didAuto.current = true;
     setDocumentTitle(topic.slice(0, 48) + (topic.length > 48 ? '…' : ''));
     void runFastDraft(topic);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic, isClient]);
+  }, [topic, isClient, draftReady]);
 
   const onEditorInput = () => {
     if (!canvasRef.current || skipHistory.current) return;
-    const html = readEditorHtml();
-    setDocumentContent(html);
+    setDocumentContent(readEditorHtml());
     // Debounce history + typeset so typing stays snappy
     if (localEditTimer.current) clearTimeout(localEditTimer.current);
     localEditTimer.current = setTimeout(() => {
-      pushHistory(html);
+      localEditTimer.current = null;
+      pushHistory(readEditorHtml());
       typesetAll();
     }, 400);
   };
@@ -1383,6 +1470,8 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               contentEditable={!isBusy}
               isLoading={isBusy}
               onInput={onEditorInput}
+              onUndo={undo}
+              onRedo={redo}
               onMouseUp={handleMouseUp}
               onDoubleClick={handleEditorDblClick}
               onEditBlock={handleEditBlock}
