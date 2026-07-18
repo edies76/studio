@@ -1086,22 +1086,47 @@ export default function DocsStudioClient({
 
   const handleToolsAction = (action: OrbitAction, intensity: number) => {
     const selected = selectedTextRef.current.trim();
-    const labels: Record<OrbitAction, string> = {
+    if (action === 'norms') {
+      // Dynamic import avoided — inline brief from known levels for client
+      const normHints: Record<number, string> = {
+        100: 'APA 7 (máximo rigor académico)',
+        75: 'IEEE (papers técnicos)',
+        50: 'MLA (humanidades)',
+        25: 'Simple (títulos, imágenes, tablas claras)',
+        10: 'Mínimo (solo lo obvio: jerarquía, título, sin reescribir tono)',
+      };
+      const hint = normHints[intensity] || normHints[50];
+      const scope = selected
+        ? 'Apply ONLY to the current selection (propose_edit replace_selection or edit_paragraph).'
+        : 'Apply to the entire document (propose_edit replace_document and/or several edit_paragraph).';
+      void runChat(
+        [
+          `Apply document norms: ${hint}.`,
+          scope,
+          'Use set_status, read_document, and if there is any math call list_equations first.',
+          'MATH-SAFE: never destroy LaTeX; use list_equations / edit_equation / insert_equation for formulas.',
+          'Propose changes for Accept/Reject. Summarize which norm level you applied.',
+        ].join('\n'),
+        selected ? { selectedText: selected, intensity } : { intensity },
+      );
+      return;
+    }
+    const labels: Record<Exclude<OrbitAction, 'norms'>, string> = {
       improve: 'Improve',
       shorter: 'Make shorter',
       expand: 'Expand',
       grammar: 'Fix grammar',
       academic: 'More academic',
     };
+    const label = labels[action as Exclude<OrbitAction, 'norms'>] || action;
     if (selected) {
-      // Selection is in API context — no need to quote in the user message
-      void runChat(`${labels[action]} the selected text at intensity ${intensity}%. Propose with propose_edit (replace_selection).`, {
-        selectedText: selected,
-        intensity,
-      });
+      void runChat(
+        `${label} the selected text at intensity ${intensity}%. Prefer edit_paragraph or propose_edit (replace_selection). If selection is a formula, use list_equations + edit_equation (MATH-SAFE).`,
+        { selectedText: selected, intensity },
+      );
     } else {
       void runChat(
-        `${labels[action]} the entire document at intensity ${intensity}%. Propose with propose_edit (replace_document).`,
+        `${label} the entire document at intensity ${intensity}%. Prefer targeted edit_paragraph; full replace_document only if necessary. MATH-SAFE: list_equations before touching formulas.`,
         { intensity },
       );
     }

@@ -47,6 +47,22 @@ export function sanitizeDocumentHtml(html: string): string {
 
   h = h.replace(/<\/?(html|head|body)[^>]*>/gi, '');
 
+  // Preserve agent math hosts (data-tex) — normalize class only
+  h = h.replace(
+    /<(span|div)([^>]*\bdata-tex=)([^>]*)>/gi,
+    (_m, tag, pre, rest) => {
+      let attrs = pre + rest;
+      if (!/studio-math/i.test(attrs)) {
+        if (/class="/i.test(attrs)) {
+          attrs = attrs.replace(/class="/i, 'class="studio-math-inline ');
+        } else {
+          attrs += ' class="studio-math-inline"';
+        }
+      }
+      return `<${tag}${attrs}>`;
+    },
+  );
+
   // Convert $$ ... $$ display math
   h = h.replace(/\$\$([\s\S]*?)\$\$/g, (_m, inner) => `\\[${String(inner).trim()}\\]`);
 

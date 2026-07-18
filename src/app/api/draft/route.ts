@@ -7,6 +7,7 @@ import {
   modelFallbackList,
   resolveModelId,
 } from '@/lib/deepseek';
+import { slog } from '@/lib/server-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = deepseekApiKey();
   if (!apiKey) {
+    slog.error('draft', 'missing DEEPSEEK_API_KEY');
     return new Response(encode({ type: 'error', message: 'Missing DEEPSEEK_API_KEY' }), {
       status: 500,
       headers: { 'Content-Type': 'text/event-stream' },
@@ -34,6 +36,7 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const t0 = Date.now();
       const send = (ev: object) => {
         try {
           controller.enqueue(new TextEncoder().encode(encode(ev)));
@@ -43,12 +46,21 @@ export async function POST(req: NextRequest) {
       };
 
       try {
+        slog.info('draft', 'start', {
+          promptLen: String(prompt || '').length,
+          language,
+          preferredModel,
+        });
         send({ type: 'status', label: 'Escribiendo…' });
 
         const system = `You write complete academic/professional HTML documents FAST.
 Output ONLY an HTML fragment (no markdown fences, no html/body).
 Tags: h1,h2,h3,p,ul,ol,li,strong,em,table,pre,code.
-Math: use \\( ... \\) inline and \\[ ... \\] display. Prefer clean LaTeX; Unicode (x₁) ok for simple cases.
+Math: ALWAYS use \\( ... \\) inline and \\[ ... \\] display (never destroy delimiters). Prefer clean LaTeX.
+For important formulas wrap as:
+<span class="studio-math-inline" data-tex="TEX" data-display="0">\\(TEX\\)</span>
+or display:
+<div class="studio-math-block" data-tex="TEX" data-display="1">\\[TEX\\]</div>
 Tables: use real <table><tr><th>/<td> with headers when comparing data.
 Language: match user (${language || 'auto'}). Spanish if user writes Spanish.
 Structure: clear title + sections. Be complete but concise (good for ~3–6 pages).
@@ -131,9 +143,11 @@ NO meta commentary. Start directly with <h1>...`;
           html = html.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '');
         }
 
+        slog.info('draft', 'done', { ms: Date.now() - t0, model: used, htmlLen: html.length });
         send({ type: 'html_ready', html, model: used });
         send({ type: 'done' });
       } catch (e: any) {
+        slog.error('draft', 'error', { ms: Date.now() - t0, err: e?.message || String(e) });
         send({ type: 'error', message: e?.message || 'Draft failed' });
         send({ type: 'done' });
       } finally {

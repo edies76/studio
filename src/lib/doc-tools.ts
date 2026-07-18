@@ -113,6 +113,65 @@ export const STUDIO_TOOL_DEFINITIONS = [
       required: ['title', 'summary', 'mode', 'afterHtml'],
     },
   },
+  {
+    name: 'list_equations',
+    description:
+      'MATH-SAFE: List every equation/formula in the document with index, display/inline flag, and exact TeX source. ALWAYS call this before changing any formula. Does not modify the document.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        focus: {
+          type: 'STRING',
+          description: 'Optional filter e.g. "display only" or "linear algebra"',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'edit_equation',
+    description:
+      'MATH-SAFE: Replace ONE equation by index from list_equations. Only changes the math host (data-tex / \\( \\) / \\[ \\]). Surrounding prose stays. Prefer this over edit_paragraph when the user asked to fix a formula. Proposes a document edit the user must Accept.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        equationIndex: {
+          type: 'NUMBER',
+          description: '0-based index from list_equations',
+        },
+        tex: {
+          type: 'STRING',
+          description: 'New LaTeX WITHOUT surrounding \\( \\) or \\[ \\] delimiters',
+        },
+        display: {
+          type: 'BOOLEAN',
+          description: 'true = display/block math, false = inline. Omit to keep current.',
+        },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: ['equationIndex', 'tex', 'title', 'summary'],
+    },
+  },
+  {
+    name: 'insert_equation',
+    description:
+      'MATH-SAFE: Insert a new equation after a block index from read_document (or at end if blockIndex omitted). Creates a proper studio-math host. User must Accept.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        afterBlockIndex: {
+          type: 'NUMBER',
+          description: 'Insert after this read_document block index; omit to append at end',
+        },
+        tex: { type: 'STRING', description: 'LaTeX without delimiters' },
+        display: { type: 'BOOLEAN', description: 'Default true for new equations' },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: ['tex', 'title', 'summary'],
+    },
+  },
 ] as const;
 
 /** Extract top-level-ish content blocks from HTML for read/edit_paragraph */

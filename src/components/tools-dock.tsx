@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import {
   ArrowUp,
+  BookMarked,
   GraduationCap,
   Maximize2,
   MessageSquarePlus,
@@ -12,8 +13,15 @@ import {
   Wand2,
   Wrench,
 } from 'lucide-react';
+import { NORM_LEVELS } from '@/lib/style-norms';
 
-export type OrbitAction = 'improve' | 'shorter' | 'expand' | 'grammar' | 'academic';
+export type OrbitAction =
+  | 'improve'
+  | 'shorter'
+  | 'expand'
+  | 'grammar'
+  | 'academic'
+  | 'norms';
 
 type Props = {
   busy?: boolean;
@@ -29,9 +37,16 @@ const ACTIONS: { id: OrbitAction; label: string; sendLabel: string; icon: ReactN
   { id: 'expand', label: 'Expand', sendLabel: 'Send expand', icon: <Maximize2 className="h-5 w-5" strokeWidth={1.75} /> },
   { id: 'grammar', label: 'Grammar', sendLabel: 'Send grammar', icon: <SpellCheck className="h-5 w-5" strokeWidth={1.75} /> },
   { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-5 w-5" strokeWidth={1.75} /> },
+  {
+    id: 'norms',
+    label: 'Normas',
+    sendLabel: 'Send normas',
+    icon: <BookMarked className="h-5 w-5" strokeWidth={1.75} />,
+  },
 ];
 
-const LEVELS = [
+/** Generic intensity (non-norms): most → least */
+const GENERIC_LEVELS = [
   { value: 100, tip: 'Mucho' },
   { value: 75, tip: 'Bastante' },
   { value: 50, tip: 'Medio' },
@@ -39,7 +54,13 @@ const LEVELS = [
   { value: 10, tip: 'Muy poco' },
 ];
 
-/** Floating tools capsule — fat main button, full-size hover hit area */
+/** Normas: top = APA (más exigente) → bottom = mínimo obvio */
+const NORMS_DOTS = NORM_LEVELS.map((n) => ({
+  value: n.value,
+  tip: n.tip,
+  short: n.id.toUpperCase(),
+}));
+
 export default function ToolsDock({
   busy,
   hasSelection,
@@ -55,6 +76,7 @@ export default function ToolsDock({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const expanded = open || Boolean(action);
+  const levels = action === 'norms' ? NORMS_DOTS : GENERIC_LEVELS;
 
   const reset = () => {
     setAction(null);
@@ -65,11 +87,8 @@ export default function ToolsDock({
   };
 
   useEffect(() => {
-    if (expanded) {
-      requestAnimationFrame(() => setPanelVisible(true));
-    } else if (panelVisible) {
-      setPanelVisible(false);
-    }
+    if (expanded) requestAnimationFrame(() => setPanelVisible(true));
+    else if (panelVisible) setPanelVisible(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded]);
 
@@ -84,8 +103,7 @@ export default function ToolsDock({
   useEffect(() => {
     if (!open && !action) return;
     const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (rootRef.current && !rootRef.current.contains(t)) reset();
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) reset();
     };
     document.addEventListener('mousedown', onDown, true);
     return () => document.removeEventListener('mousedown', onDown, true);
@@ -98,19 +116,21 @@ export default function ToolsDock({
   };
 
   const selected = ACTIONS.find((a) => a.id === action);
+  const activeNorm = action === 'norms' ? NORMS_DOTS.find((n) => n.value === intensity) : null;
 
-  // Fat cells: button and hover disc share the same box (no inset shrink)
   const cell =
     'relative flex h-14 w-14 shrink-0 items-center justify-center text-neutral-800 transition-colors duration-150 ease-out';
   const hoverDisc = (active: boolean) =>
-    cn(
-      'absolute inset-0 rounded-full transition-colors duration-150',
-      active ? 'bg-neutral-100' : 'bg-transparent',
-    );
+    cn('absolute inset-0 rounded-full transition-colors duration-150', active ? 'bg-neutral-100' : 'bg-transparent');
 
   const optionCount =
-    (showAgentOption && onOpenAgent ? 1 : 0) + (action ? LEVELS.length : ACTIONS.length);
-  const maxH = action ? 360 : Math.min(520, 64 + optionCount * 56);
+    (showAgentOption && onOpenAgent ? 1 : 0) + (action ? levels.length : ACTIONS.length);
+  const maxH = action ? 400 : Math.min(560, 64 + optionCount * 56);
+
+  const sendTitle =
+    action === 'norms' && activeNorm
+      ? `Send ${activeNorm.short}`
+      : selected?.sendLabel || 'Send';
 
   return (
     <div
@@ -166,7 +186,8 @@ export default function ToolsDock({
                 onMouseLeave={() => setHoverKey(null)}
                 onClick={() => {
                   setAction(a.id);
-                  setIntensity(50);
+                  // Normas: default mid (MLA). Others: 50.
+                  setIntensity(a.id === 'norms' ? 50 : 50);
                 }}
                 className={cn(cell, busy && 'opacity-40')}
               >
@@ -176,8 +197,9 @@ export default function ToolsDock({
             ))}
 
           {action &&
-            LEVELS.map((lv) => {
+            levels.map((lv) => {
               const active = intensity === lv.value;
+              const isNorms = action === 'norms';
               return (
                 <button
                   key={lv.value}
@@ -191,12 +213,23 @@ export default function ToolsDock({
                   className={cell}
                 >
                   <span className={hoverDisc(hoverKey === `i-${lv.value}` || active)} />
-                  <span
-                    className={cn(
-                      'relative z-10 rounded-full bg-neutral-800 transition-all duration-150',
-                      active ? 'h-3.5 w-3.5' : 'h-2 w-2 opacity-40',
-                    )}
-                  />
+                  {isNorms ? (
+                    <span
+                      className={cn(
+                        'relative z-10 font-mono text-[9px] font-bold tracking-tight',
+                        active ? 'text-neutral-900' : 'text-neutral-400',
+                      )}
+                    >
+                      {(lv as { short?: string }).short || lv.value}
+                    </span>
+                  ) : (
+                    <span
+                      className={cn(
+                        'relative z-10 rounded-full bg-neutral-800 transition-all duration-150',
+                        active ? 'h-3.5 w-3.5' : 'h-2 w-2 opacity-40',
+                      )}
+                    />
+                  )}
                 </button>
               );
             })}
@@ -205,7 +238,7 @@ export default function ToolsDock({
         <button
           type="button"
           disabled={busy}
-          title={action ? selected?.sendLabel || 'Send' : open ? 'Cerrar' : 'AI tools'}
+          title={action ? sendTitle : open ? 'Cerrar' : 'AI tools'}
           onMouseDown={(e) => e.preventDefault()}
           onMouseEnter={() => setHoverKey('main')}
           onMouseLeave={() => setHoverKey(null)}
@@ -227,7 +260,6 @@ export default function ToolsDock({
             action && 'text-blue-600',
           )}
         >
-          {/* Full-size hover — same circle as the button, no inset shrink */}
           <span
             className={cn(
               'absolute inset-0 rounded-full transition-colors duration-150',

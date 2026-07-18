@@ -10,6 +10,13 @@ import {
   resolveModelId,
   type ChatMessage,
 } from '@/lib/deepseek';
+import {
+  buildMathHtml,
+  ensureMathHosts,
+  listEquations,
+  replaceEquationAt,
+} from '@/lib/math-tools';
+import { slog } from '@/lib/server-log';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,6 +75,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = deepseekApiKey();
   if (!apiKey) {
+    slog.error('chat', 'missing DEEPSEEK_API_KEY');
     return new Response(encode({ type: 'error', message: 'Missing DEEPSEEK_API_KEY' }), {
       status: 500,
       headers: { 'Content-Type': 'text/event-stream' },
@@ -84,20 +92,37 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      const t0 = Date.now();
+      slog.info('chat', 'request.start', {
+        title: documentTitle,
+        paperSize,
+        msgCount: messages?.length || 0,
+        htmlLen: (documentHtml || '').length,
+        hasSelection: Boolean(selectedText?.trim()),
+        preferredModel,
+      });
+
+      // Working HTML copy for math-safe tools within this request
+      let liveHtml = ensureMathHosts(documentHtml || '');
+
       try {
         // Immediate first paint — real thinking signal
         send({ type: 'thinking', label: 'Pensando…' });
+
+        const eqCount = listEquations(liveHtml).length;
+        slog.info('chat', 'math.scan', { equationCount: eqCount });
 
         const system = `You are Studio, a document copilot. Match the user language (Spanish/English).
 
 Document title: ${documentTitle}
 Paper size: ${paperSize}
 Selected text: ${selectedText ? selectedText.slice(0, 2500) : '(none)'}
+Equations detected in document: ${eqCount}
 ${assignmentContext ? `\nCONTEXT:\n${assignmentContext.slice(0, 8000)}\n` : ''}
 
-CURRENT DOCUMENT HTML:
+CURRENT DOCUMENT HTML (math already in studio-math / data-tex hosts when possible):
 """
-${(documentHtml || '').slice(0, 32000)}
+${liveHtml.slice(0, 32000)}
 """
 
 BEHAVIOR (REAL, not simulated):
@@ -109,8 +134,18 @@ BEHAVIOR (REAL, not simulated):
 6. NEVER claim the document is already updated. Changes are PROPOSALS — user Accept/Reject.
 7. After tools, write a REAL closing message about what you proposed.
 8. Greetings only → short reply, no tools.
-9. HTML fragments only: h1-h3,p,ul,ol,li,table,pre,code,strong,em. No markdown fences.
+9. HTML fragments only: h1-h3,p,ul,ol,li,table,pre,code,strong,em,span/div.studio-math-*. No markdown fences.
+
+=== MATH-SAFE MODE (hard rules — equations must NOT break) ===
+A. If the task touches formulas OR equationCount > 0: call list_equations before any formula change.
+B. To CHANGE a formula: ONLY edit_equation(equationIndex, tex). Never rewrite TeX by free-text inside edit_paragraph.
+C. To ADD a formula: insert_equation. Never paste raw broken LaTeX as plain text.
+D. edit_paragraph / propose_edit may change prose around math but MUST keep existing <span/div class="studio-math-… data-tex="…"> hosts byte-stable unless you also used edit_equation for that index.
+E. TeX in edit_equation is WITHOUT surrounding \\( \\) or \\[ \\].
+F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
+
 10. set_status labels must be concrete in user language.
+11. Style norms (APA/IEEE/MLA/simple/minimal): follow the user message; still obey MATH-SAFE.
 `;
 
         const chatMessages: ChatMessage[] = [{ role: 'system', content: system }];
@@ -205,6 +240,8 @@ BEHAVIOR (REAL, not simulated):
               });
             };
 
+            slog.info('chat', 'tool.invoke', { round, name, callId, argsKeys: Object.keys(args || {}) });
+
             if (name === 'set_status') {
               const label = args.label || 'Trabajando…';
               const tid = `st_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -212,6 +249,7 @@ BEHAVIOR (REAL, not simulated):
               send({ type: 'status', label });
               send({ type: 'tool_start', name, label, id: tid });
               send({ type: 'tool_end', name, ok: true, label, id: tid });
+              slog.info('chat', 'tool.set_status', { label });
               await reply({ ok: true, recorded: label });
               continue;
             }
@@ -289,7 +327,7 @@ BEHAVIOR (REAL, not simulated):
               }
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const beforeHtml = args.beforeHtml || block.html;
-              const afterHtml = args.afterHtml || '';
+              const afterHtml = ensureMathHosts(args.afterHtml || '');
               send({
                 type: 'propose_edit',
                 id,
@@ -303,6 +341,11 @@ BEHAVIOR (REAL, not simulated):
                   selectionHint: block.preview,
                   changeList: [`Bloque ${blockIndex} (<${block.tag}>)`],
                 },
+              });
+              slog.info('chat', 'tool.edit_paragraph', {
+                blockIndex,
+                tag: block.tag,
+                afterLen: afterHtml.length,
               });
               send({
                 type: 'tool_end',
@@ -329,7 +372,8 @@ BEHAVIOR (REAL, not simulated):
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const beforeHtml =
                 args.beforeHtml ??
-                (args.mode === 'replace_document' ? documentHtml : selectedText || '');
+                (args.mode === 'replace_document' ? liveHtml : selectedText || '');
+              const afterHtml = ensureMathHosts(args.afterHtml || '');
               send({
                 type: 'propose_edit',
                 id,
@@ -337,13 +381,18 @@ BEHAVIOR (REAL, not simulated):
                   title,
                   summary: args.summary || 'Cambio propuesto',
                   mode: args.mode || 'replace_document',
-                  afterHtml: args.afterHtml || '',
+                  afterHtml,
                   beforeHtml,
                   selectionHint: args.selectionHint || selectedText?.slice(0, 200),
                   changeList: Array.isArray(args.changeList)
                     ? args.changeList.map(String)
                     : undefined,
                 },
+              });
+              slog.info('chat', 'tool.propose_edit', {
+                id,
+                mode: args.mode || 'replace_document',
+                afterLen: afterHtml.length,
               });
               send({
                 type: 'tool_end',
@@ -357,6 +406,201 @@ BEHAVIOR (REAL, not simulated):
                 id,
                 note: 'Pending user Accept/Reject. Do NOT claim applied.',
               });
+              continue;
+            }
+
+            if (name === 'list_equations') {
+              const tid = `lq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({
+                type: 'tool_start',
+                name,
+                label: 'Inventariando ecuaciones…',
+                id: tid,
+              });
+              const eqs = listEquations(liveHtml);
+              slog.info('chat', 'tool.list_equations', {
+                count: eqs.length,
+                focus: args.focus || null,
+                sample: eqs.slice(0, 5).map((e) => ({ i: e.index, display: e.display, tex: e.tex.slice(0, 80) })),
+              });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `${eqs.length} ecuación(es)`,
+                id: tid,
+              });
+              await reply({
+                ok: true,
+                count: eqs.length,
+                equations: eqs.map((e) => ({
+                  index: e.index,
+                  display: e.display,
+                  tex: e.tex,
+                  contextPreview: e.contextPreview,
+                })),
+                note: 'Use edit_equation(index, tex) to change one formula safely.',
+              });
+              continue;
+            }
+
+            if (name === 'edit_equation') {
+              proposedSomething = true;
+              const tid = `ee_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const equationIndex = Number(args.equationIndex);
+              const tex = String(args.tex || '').trim();
+              const title = args.title || `Ecuación ${equationIndex}`;
+              send({
+                type: 'tool_start',
+                name,
+                label: `Editando ecuación ${Number.isFinite(equationIndex) ? equationIndex : '?'}…`,
+                id: tid,
+              });
+              if (!tex || !Number.isFinite(equationIndex)) {
+                slog.warn('chat', 'tool.edit_equation.bad_args', { equationIndex, texLen: tex.length });
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: 'Índice o TeX inválido',
+                  id: tid,
+                });
+                await reply({ ok: false, error: 'equationIndex and tex required' });
+                continue;
+              }
+              const beforeList = listEquations(liveHtml);
+              const before = beforeList[equationIndex];
+              const result = replaceEquationAt(
+                liveHtml,
+                equationIndex,
+                tex,
+                typeof args.display === 'boolean' ? args.display : undefined,
+              );
+              if (!result || !before) {
+                slog.warn('chat', 'tool.edit_equation.miss', {
+                  equationIndex,
+                  available: beforeList.length,
+                });
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: `Ecuación ${equationIndex} no encontrada`,
+                  id: tid,
+                });
+                await reply({
+                  ok: false,
+                  error: `equationIndex ${equationIndex} out of range (0..${Math.max(0, beforeList.length - 1)})`,
+                });
+                continue;
+              }
+              const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              // Propose full document HTML with only that math host swapped
+              send({
+                type: 'propose_edit',
+                id,
+                edit: {
+                  title,
+                  summary:
+                    args.summary ||
+                    `LaTeX: ${before.tex.slice(0, 40)} → ${tex.slice(0, 40)}`,
+                  mode: 'replace_document',
+                  afterHtml: result.html,
+                  beforeHtml: liveHtml,
+                  changeList: [
+                    `Ecuación #${equationIndex}`,
+                    before.display ? 'display' : 'inline',
+                    `antes: ${before.tex.slice(0, 60)}`,
+                    `después: ${tex.slice(0, 60)}`,
+                  ],
+                },
+              });
+              // Keep liveHtml for subsequent math tools in this turn
+              liveHtml = result.html;
+              slog.info('chat', 'tool.edit_equation.ok', {
+                equationIndex,
+                before: before.tex.slice(0, 100),
+                after: tex.slice(0, 100),
+                display: result.entry.display,
+              });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `Ecuación ${equationIndex} propuesta · aceptá o rechazá`,
+                id: tid,
+              });
+              await reply({
+                ok: true,
+                id,
+                equationIndex,
+                note: 'Pending Accept/Reject. Math host only changed.',
+              });
+              continue;
+            }
+
+            if (name === 'insert_equation') {
+              proposedSomething = true;
+              const tid = `ie_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const tex = String(args.tex || '').trim();
+              const display = args.display !== false;
+              const title = args.title || 'Nueva ecuación';
+              send({
+                type: 'tool_start',
+                name,
+                label: 'Insertando ecuación…',
+                id: tid,
+              });
+              if (!tex) {
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: 'TeX vacío',
+                  id: tid,
+                });
+                await reply({ ok: false, error: 'tex required' });
+                continue;
+              }
+              const mathHtml = buildMathHtml(tex, display);
+              const blocks = extractHtmlBlocks(liveHtml);
+              const afterIdx =
+                typeof args.afterBlockIndex === 'number' ? Number(args.afterBlockIndex) : null;
+              let nextHtml = liveHtml;
+              if (afterIdx != null && blocks[afterIdx]) {
+                const target = blocks[afterIdx].html;
+                nextHtml = liveHtml.replace(target, `${target}${mathHtml}`);
+              } else {
+                nextHtml = `${liveHtml}${mathHtml}`;
+              }
+              nextHtml = ensureMathHosts(nextHtml);
+              const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              send({
+                type: 'propose_edit',
+                id,
+                edit: {
+                  title,
+                  summary: args.summary || `Insertar ${display ? 'display' : 'inline'}: ${tex.slice(0, 50)}`,
+                  mode: 'replace_document',
+                  afterHtml: nextHtml,
+                  beforeHtml: liveHtml,
+                  changeList: [`+ ecuación ${display ? 'bloque' : 'inline'}`, tex.slice(0, 80)],
+                },
+              });
+              liveHtml = nextHtml;
+              slog.info('chat', 'tool.insert_equation', {
+                display,
+                tex: tex.slice(0, 100),
+                afterBlockIndex: afterIdx,
+              });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: 'Ecuación insertada (propuesta)',
+                id: tid,
+              });
+              await reply({ ok: true, id, note: 'Pending Accept/Reject.' });
               continue;
             }
 
@@ -433,8 +677,16 @@ BEHAVIOR (REAL, not simulated):
           send({ type: 'text', delta: finalText });
         }
 
+        slog.info('chat', 'request.done', {
+          ms: Date.now() - t0,
+          model: usedModel,
+          proposedSomething,
+          streamedLive,
+          finalLen: finalText.length,
+        });
         send({ type: 'done', finalText, model: usedModel });
       } catch (e: any) {
+        slog.error('chat', 'request.error', { ms: Date.now() - t0, err: e?.message || String(e) });
         send({ type: 'error', message: e?.message || 'Chat failed' });
         send({ type: 'done' });
       } finally {
