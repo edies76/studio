@@ -8,33 +8,46 @@ import Loading from './loading';
 function HomeInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [initialContent, setInitialContent] = useState<string | null>(null);
+  const [ready, setReady] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [docId, setDocId] = useState<string | null>(null);
 
   useEffect(() => {
-    const topic = searchParams.get('topic');
+    const topicParam = searchParams.get('topic');
+    const doc = searchParams.get('doc');
     const uploadedContent = sessionStorage.getItem('uploadedDocumentContent');
 
-    // Free entry: empty editor is OK — no forced guide / brief
-    // Only redirect to pre-summary if explicitly requested via ?start=brief
-    if (topic === null && !uploadedContent) {
+    if (doc && doc !== 'new') {
+      setDocId(doc);
+      setTopic('');
+      setReady(true);
+      return;
+    }
+
+    if (topicParam === null && !uploadedContent && !doc) {
       if (searchParams.get('start') === 'brief') {
         router.replace('/pre-summary');
         return;
       }
-      setInitialContent('');
+      // Empty editor — create/load handled client-side via autosave create
+      setDocId(null);
+      setTopic('');
+      setReady(true);
       return;
     }
 
     const finalContent = uploadedContent
-      ? `${topic || ''}\n\n${uploadedContent}`.trim()
-      : topic || '';
+      ? `${topicParam || ''}\n\n${uploadedContent}`.trim()
+      : topicParam || '';
 
-    setInitialContent(finalContent);
+    setTopic(finalContent);
+    setDocId(null);
+    setReady(true);
     if (uploadedContent) sessionStorage.removeItem('uploadedDocumentContent');
   }, [router, searchParams]);
 
-  if (initialContent === null) return <Loading />;
-  return <DocsStudioClient topic={initialContent} />;
+  if (!ready) return <Loading />;
+  return <DocsStudioClient topic={topic} documentId={docId} />;
 }
 
 export default function Home() {

@@ -39,3 +39,6 @@ firestore-debug.log
 .idx/
 
 .env.local
+
+.data/
+

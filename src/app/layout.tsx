@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { Toaster } from '@/components/ui/toaster';
 import Script from 'next/script';
 import { IBM_Plex_Mono, Space_Grotesk } from 'next/font/google';
+import AuthSessionProvider from '@/components/session-provider';
 
 const displayFont = Space_Grotesk({
   subsets: ['latin'],
@@ -37,9 +38,11 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"
         />
       </head>
-      <body className={cn(displayFont.variable, monoFont.variable, 'h-full overflow-hidden bg-white text-neutral-900 antialiased')}>
-        {children}
-        <Toaster />
+      <body className={cn(displayFont.variable, monoFont.variable, 'min-h-full bg-white text-neutral-900 antialiased')}>
+        <AuthSessionProvider>
+          {children}
+          <Toaster />
+        </AuthSessionProvider>
       </body>
     </html>
   );

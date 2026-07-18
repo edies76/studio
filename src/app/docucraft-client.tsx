@@ -43,6 +43,7 @@ import jsPDF from 'jspdf';
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
 const DEFAULT_FONT = 'Inter, Segoe UI, system-ui, sans-serif';
+const EMPTY_DOCUMENT_HTML = '<p><br></p>';
 
 function uid() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -73,12 +74,24 @@ function wantsFullDocument(text: string): boolean {
   ) || t.length > 48;
 }
 
-export default function DocsStudioClient({ topic }: { topic: string }) {
+export default function DocsStudioClient({
+  topic,
+  documentId: initialDocumentId = null,
+}: {
+  topic: string;
+  documentId?: string | null;
+}) {
   const { toast } = useToast();
 
   const [documentTitle, setDocumentTitle] = useState('Untitled');
   const [documentContent, setDocumentContent] = useState('');
+  const [docId, setDocId] = useState<string | null>(initialDocumentId);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [isClient, setIsClient] = useState(false);
+  const serverLoaded = useRef(false);
+  const lastSavedHtml = useRef('');
+  const lastSavedTitle = useRef('');
+  const lastSavedChatLen = useRef(0);
   const [isBusy, setIsBusy] = useState(false);
   const [paperSize, setPaperSize] = useState<PaperSize>('letter');
   const [fontFamily, setFontFamily] = useState(DEFAULT_FONT);
@@ -91,9 +104,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
 
-  const [history, setHistory] = useState<string[]>(['']);
+  const [history, setHistory] = useState<string[]>([EMPTY_DOCUMENT_HTML]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  const historyRef = useRef<string[]>(['']);
+  const historyRef = useRef<string[]>([EMPTY_DOCUMENT_HTML]);
   const historyIndexRef = useRef(0);
   const [draftReady, setDraftReady] = useState(false);
   const restoredDraft = useRef(false);
@@ -308,10 +321,11 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   }, [prefs.shortcutOpenAgent, prefs.shortcutEditSelection, openAgent, hasSelection]);
 
   const pushHistory = useCallback((html: string) => {
-    const current = historyRef.current[historyIndexRef.current] ?? '';
-    if (current === html) return;
+    const normalized = sanitizeDocumentHtml(html) || EMPTY_DOCUMENT_HTML;
+    const current = historyRef.current[historyIndexRef.current] ?? EMPTY_DOCUMENT_HTML;
+    if (current === normalized) return;
     const next = historyRef.current.slice(0, historyIndexRef.current + 1);
-    next.push(html);
+    next.push(normalized);
     if (next.length > 80) next.shift();
     historyRef.current = next;
     historyIndexRef.current = next.length - 1;
@@ -325,7 +339,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       recordHistory = true,
       mode: false | 'cascade' | 'firstReveal' = false,
     ) => {
-      const clean = sanitizeDocumentHtml(html);
+      const clean = sanitizeDocumentHtml(html) || EMPTY_DOCUMENT_HTML;
       const withoutBreaks = clean.replace(
         /<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi,
         '',
@@ -384,9 +398,9 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           if (saved.paperSize === 'letter' || saved.paperSize === 'legal') setPaperSize(saved.paperSize);
           if (saved.fontFamily) setFontFamily(saved.fontFamily);
           if (saved.fontSize) setFontSize(saved.fontSize);
-          historyRef.current = [saved.html];
+          historyRef.current = [sanitizeDocumentHtml(saved.html) || EMPTY_DOCUMENT_HTML];
           historyIndexRef.current = 0;
-          setHistory([saved.html]);
+          setHistory(historyRef.current);
           setHistoryIndex(0);
           applyHtml(saved.html, false);
         }
@@ -411,6 +425,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
             paperSize,
             fontFamily,
             fontSize,
+            docId,
             savedAt: new Date().toISOString(),
           }),
         );
@@ -419,7 +434,132 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       }
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [draftKey, draftReady, documentContent, documentTitle, fontFamily, fontSize, paperSize, readEditorHtml]);
+  }, [draftKey, draftReady, documentContent, documentTitle, fontFamily, fontSize, paperSize, readEditorHtml, docId]);
+
+  // Load cloud/local server document when ?doc=id
+  useEffect(() => {
+    if (!isClient || !initialDocumentId || serverLoaded.current) return;
+    serverLoaded.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/docs/${initialDocumentId}`);
+        if (res.status === 401) return;
+        if (!res.ok) {
+          toast({ variant: 'destructive', title: 'Documento no encontrado' });
+          return;
+        }
+        const data = await res.json();
+        if (cancelled || !data.doc) return;
+        setDocId(data.doc.id);
+        setDocumentTitle(data.doc.title || 'Untitled');
+        setDocumentContent(data.doc.html || EMPTY_DOCUMENT_HTML);
+        lastSavedHtml.current = data.doc.html || '';
+        lastSavedTitle.current = data.doc.title || '';
+        applyHtml(data.doc.html || EMPTY_DOCUMENT_HTML, false);
+        if (Array.isArray(data.doc.chat) && data.doc.chat.length) {
+          setMessages(
+            data.doc.chat.map((t: { id: string; role: string; content: string }) => ({
+              id: t.id,
+              role: t.role as 'user' | 'assistant',
+              content: t.content,
+              streaming: false,
+            })),
+          );
+          lastSavedChatLen.current = data.doc.chat.length;
+        }
+        restoredDraft.current = true;
+        setDraftReady(true);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyHtml, initialDocumentId, isClient, toast]);
+
+  // Ensure we have a server document id (create if opening blank / topic)
+  useEffect(() => {
+    if (!isClient || !draftReady) return;
+    if (initialDocumentId) return; // load path owns this
+    if (docId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/docs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: documentTitle || 'Untitled',
+            html: documentContent || EMPTY_DOCUMENT_HTML,
+          }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data.doc?.id) {
+          setDocId(data.doc.id);
+          lastSavedHtml.current = data.doc.html || documentContent || '';
+          lastSavedTitle.current = data.doc.title || documentTitle || '';
+          const url = new URL(window.location.href);
+          url.searchParams.set('doc', data.doc.id);
+          window.history.replaceState({}, '', url.toString());
+        }
+      } catch {
+        /* local guest still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isClient, draftReady, initialDocumentId, docId]);
+
+  // Server autosave every ~4s when dirty
+  useEffect(() => {
+    if (!docId || !draftReady) return;
+    const tick = async () => {
+      const html = documentContent || readEditorHtml();
+      const title = documentTitle || 'Untitled';
+      if (html === lastSavedHtml.current && title === lastSavedTitle.current) return;
+      setSaveState('saving');
+      try {
+        const res = await fetch(`/api/docs/${docId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ html, title }),
+        });
+        if (!res.ok) throw new Error('save failed');
+        lastSavedHtml.current = html;
+        lastSavedTitle.current = title;
+        setSaveState('saved');
+      } catch {
+        setSaveState('error');
+      }
+    };
+    const id = window.setInterval(() => void tick(), 4000);
+    return () => clearInterval(id);
+  }, [docId, draftReady, documentContent, documentTitle, readEditorHtml]);
+
+  // Persist new chat turns to server
+  useEffect(() => {
+    if (!docId || messages.length <= lastSavedChatLen.current) return;
+    const fresh = messages.slice(lastSavedChatLen.current).filter((m) => !m.streaming);
+    if (!fresh.length) return;
+    const turns = fresh.map((m) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      at: Date.now(),
+    }));
+    void fetch(`/api/docs/${docId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatTurns: turns }),
+    }).then((res) => {
+      if (res.ok) lastSavedChatLen.current = messages.filter((m) => !m.streaming).length;
+    });
+  }, [docId, messages]);
 
   const flushPendingHistory = useCallback(() => {
     if (localEditTimer.current) {
@@ -427,7 +567,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       localEditTimer.current = null;
     }
     const current = readEditorHtml();
-    if (current !== (historyRef.current[historyIndexRef.current] ?? '')) pushHistory(current);
+    if (current !== (historyRef.current[historyIndexRef.current] ?? EMPTY_DOCUMENT_HTML)) pushHistory(current);
   }, [pushHistory, readEditorHtml]);
 
   const undo = useCallback(() => {
@@ -1519,6 +1659,24 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               data-studio-toolbar
               className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
             >
+              <div className="pointer-events-auto flex max-w-[min(980px,100%)] items-center gap-2">
+              <a
+                href="/home"
+                className="pointer-events-auto flex h-9 shrink-0 items-center rounded-full border border-neutral-200 bg-white/95 px-3 text-[11px] font-semibold text-neutral-600 shadow-sm backdrop-blur-md hover:bg-white hover:text-neutral-900"
+              >
+                Inicio
+              </a>
+              {docId && (
+                <span className="pointer-events-none hidden rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 font-mono text-[10px] text-neutral-400 sm:inline">
+                  {saveState === 'saving'
+                    ? 'Guardando…'
+                    : saveState === 'error'
+                      ? 'Error al guardar'
+                      : saveState === 'saved'
+                        ? 'Guardado'
+                        : '·'}
+                </span>
+              )}
               <div className="pointer-events-auto max-w-[min(980px,100%)] overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
                 <DocumentEditorToolbar
                   onRequestLink={() => {
@@ -1542,6 +1700,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                   onOpenSettings={() => setSettingsOpen(true)}
                 />
               </div>
+            </div>
             </div>
 
             {hasSelection && selBar && prefs.showSelectionToolbar && (
