@@ -2,6 +2,41 @@
  * Normalize AI HTML so MathJax can render; keep tables editable; support formula edit.
  */
 
+const SAFE_IMAGE_STYLE_PROPERTIES = new Set([
+  'width',
+  'height',
+  'max-width',
+  'min-width',
+  'display',
+  'float',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'vertical-align',
+  'object-fit',
+]);
+
+function sanitizeImageStyle(raw: string): string {
+  return raw
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const match = part.match(/^([\w-]+)\s*:\s*(.+)$/);
+      if (!match) return null;
+      const property = match[1].toLowerCase();
+      const value = match[2].trim();
+      if (!SAFE_IMAGE_STYLE_PROPERTIES.has(property) || /url\s*\(|expression\s*\(|javascript:/i.test(value)) {
+        return null;
+      }
+      return `${property}:${value}`;
+    })
+    .filter((part): part is string => Boolean(part))
+    .join(';');
+}
+
 /** Fix common broken LaTeX / delimiter issues from LLMs */
 export function sanitizeDocumentHtml(html: string): string {
   let h = html || '';
@@ -55,7 +90,16 @@ export function sanitizeDocumentHtml(html: string): string {
     /<pre([^>]*)>/gi,
     '<pre$1 style="white-space:pre-wrap;word-break:break-word;overflow-x:auto;max-width:100%">',
   );
-  h = h.replace(/<img([^>]*)>/gi, '<img$1 style="max-width:100%;height:auto"');
+  h = h.replace(/<img\b([^>]*)>/gi, (_m, attrs) => {
+    const rawAttrs = String(attrs || '');
+    const styleMatch = rawAttrs.match(/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+    const safeStyle = sanitizeImageStyle(styleMatch?.[1] || styleMatch?.[2] || '');
+    const withoutStyle = rawAttrs.replace(/\sstyle\s*=\s*(?:"[^"]*"|'[^']*')/i, '');
+    const style = ['max-width:100%', 'height:auto', 'display:block', safeStyle]
+      .filter(Boolean)
+      .join(';');
+    return `<img${withoutStyle} style="${style}">`;
+  });
 
   return h;
 }
@@ -186,6 +230,45 @@ export function insertTableAtSelection(
     editor.appendChild(table);
     editor.appendChild(p);
   }
+}
+
+/** Insert a local image at the last editor selection. Images stay in the document as data URLs. */
+export function insertImageAtSelection(
+  editor: HTMLElement,
+  src: string,
+  alt = 'Inserted image',
+  savedRange?: Range | null,
+): HTMLImageElement {
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = alt;
+  img.draggable = false;
+  img.setAttribute('data-studio-image', '1');
+  img.style.maxWidth = '100%';
+  img.style.height = 'auto';
+  img.style.display = 'block';
+  img.style.margin = '0.85em 0';
+
+  const sel = window.getSelection();
+  const range =
+    savedRange && editor.contains(savedRange.startContainer)
+      ? savedRange.cloneRange()
+      : sel && sel.rangeCount && editor.contains(sel.anchorNode)
+        ? sel.getRangeAt(0).cloneRange()
+        : null;
+
+  if (range) {
+    range.deleteContents();
+    range.insertNode(img);
+    range.setStartAfter(img);
+    range.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  } else {
+    editor.appendChild(img);
+  }
+
+  return img;
 }
 
 /**

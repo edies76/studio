@@ -19,10 +19,20 @@ import {
 } from 'react';
 import { cn } from '@/lib/utils';
 import type { PaperSize } from '@/lib/doc-tools';
-import { sanitizeDocumentHtml, typesetEditor } from '@/lib/math-html';
+import { insertImageAtSelection, sanitizeDocumentHtml, typesetEditor } from '@/lib/math-html';
 import { buildCanvasDiffHtml } from '@/lib/canvas-diff';
 import { placeCaretAtEnd } from '@/lib/page-layout';
-import { Pencil } from 'lucide-react';
+import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  Maximize2,
+  Minus,
+  Plus,
+  Trash2,
+  WrapText,
+  Pencil,
+} from 'lucide-react';
 import type { StudioPrefs } from '@/components/studio-settings';
 
 export const PAPER: Record<
@@ -42,12 +52,63 @@ export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
 
 const BLOCK_SEL = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table';
 
+type ImageWrapMode = 'inline' | 'left' | 'right' | 'center' | 'break';
+
+const IMAGE_WRAP_OPTIONS: { value: ImageWrapMode; label: string }[] = [
+  { value: 'inline', label: 'En línea' },
+  { value: 'left', label: 'Ajuste izquierda' },
+  { value: 'right', label: 'Ajuste derecha' },
+  { value: 'center', label: 'Centrada' },
+  { value: 'break', label: 'Texto arriba y abajo' },
+];
+
+type ImageToolsRect = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+type ResizeSession = {
+  image: HTMLImageElement;
+  direction: 'nw' | 'ne' | 'sw' | 'se';
+  startX: number;
+  startWidth: number;
+  ratio: number;
+};
+
+function getImageWrapMode(image: HTMLImageElement): ImageWrapMode {
+  const explicit = image.dataset.studioWrap as ImageWrapMode | undefined;
+  if (explicit && ['inline', 'left', 'right', 'center', 'break'].includes(explicit)) return explicit;
+  if (image.style.float === 'left') return 'left';
+  if (image.style.float === 'right') return 'right';
+  if (image.style.display === 'inline-block') return 'inline';
+  if (image.style.marginLeft === 'auto' && image.style.marginRight === 'auto') return 'center';
+  return 'break';
+}
+
+function applyImageWrapMode(image: HTMLImageElement, mode: ImageWrapMode): void {
+  image.dataset.studioWrap = mode;
+  image.style.maxWidth = '100%';
+  image.style.height = 'auto';
+  image.style.float = mode === 'left' || mode === 'right' ? mode : 'none';
+  image.style.display = mode === 'inline' ? 'inline-block' : 'block';
+  image.style.verticalAlign = mode === 'inline' ? 'middle' : '';
+
+  if (mode === 'inline') image.style.margin = '0 0.3em';
+  if (mode === 'left') image.style.margin = '0.25em 1.1em 0.6em 0';
+  if (mode === 'right') image.style.margin = '0.25em 0 0.6em 1.1em';
+  if (mode === 'center') image.style.margin = '0.85em auto';
+  if (mode === 'break') image.style.margin = '0.85em 0';
+}
+
 export type PaperCanvasHandle = {
   getHtml: () => string;
   setHtml: (html: string, opts?: { reveal?: boolean }) => void;
   getPageCount: () => number;
   focusEnd: () => void;
   getBodies: () => HTMLElement[];
+  insertImage: (file: File) => Promise<boolean>;
 };
 
 type Props = {
@@ -102,7 +163,15 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const ghostRef = useRef<HTMLDivElement>(null);
   const skipInput = useRef(false);
   const lastExternalHtml = useRef<string | null>(null);
+  const lastSelection = useRef<Range | null>(null);
   const pageNotify = useRef(1);
+
+  const rememberSelection = useCallback(() => {
+    const el = editorRef.current;
+    const sel = window.getSelection();
+    if (!el || !sel || !sel.rangeCount || !sel.anchorNode || !el.contains(sel.anchorNode)) return;
+    lastSelection.current = sel.getRangeAt(0).cloneRange();
+  }, []);
 
   const [pageCount, setPageCount] = useState(1);
   const paperHeight = Math.max(spec.heightPx, pageCount * spec.heightPx);
@@ -114,6 +183,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   >([]);
   const [editVisible, setEditVisible] = useState(false);
   const hoverLock = useRef(false);
+  const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
+  const [imageTools, setImageTools] = useState<ImageToolsRect | null>(null);
+  const resizeSession = useRef<ResizeSession | null>(null);
 
   const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
   const diffOverlayHtml = useMemo(() => {
@@ -158,11 +230,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         k.remove();
         continue;
       }
-      const t = (k.textContent || '').replace(/\u00a0/g, ' ').trim();
-      const empty =
-        !t && !k.querySelector('img, table, svg, mjx-container, hr, video');
-      if (empty && i > 0) k.remove();
-      else break;
+      // A real empty paragraph is user content and must survive so intentional
+      // blank lines remain exportable.
+      break;
     }
     if (!clone.children.length) return '<p><br></p>';
     return clone.innerHTML?.trim() || '<p><br></p>';
@@ -172,6 +242,8 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     (html: string, opts?: { reveal?: boolean }) => {
       const clean = sanitizeDocumentHtml(html) || '<p><br></p>';
       lastExternalHtml.current = clean;
+      setSelectedImage(null);
+      setImageTools(null);
       const el = editorRef.current;
       if (!el) return;
       skipInput.current = true;
@@ -188,6 +260,64 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     [measurePages],
   );
 
+  const updateImageTools = useCallback(() => {
+    const editor = editorRef.current;
+    const scroll = scrollRef.current;
+    const image = selectedImage;
+    if (!editor || !scroll || !image || !editor.contains(image) || hasGhost) {
+      setImageTools(null);
+      return;
+    }
+    const rect = image.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    setImageTools({
+      top: rect.top - scrollRect.top + scroll.scrollTop,
+      left: rect.left - scrollRect.left + scroll.scrollLeft,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, [hasGhost, selectedImage]);
+
+  useLayoutEffect(() => {
+    updateImageTools();
+    const scroll = scrollRef.current;
+    if (!scroll || !selectedImage) return;
+    const onScroll = () => updateImageTools();
+    scroll.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onScroll) : null;
+    if (observer) observer.observe(selectedImage);
+    return () => {
+      scroll.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      observer?.disconnect();
+    };
+  }, [selectedImage, updateImageTools]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.querySelectorAll('[data-studio-image-selected="1"]').forEach((node) => {
+      node.removeAttribute('data-studio-image-selected');
+    });
+    if (selectedImage && editor.contains(selectedImage)) {
+      selectedImage.setAttribute('data-studio-image-selected', '1');
+    }
+  }, [selectedImage]);
+
+  useEffect(() => {
+    if (hasGhost || !contentEditable) setSelectedImage(null);
+  }, [contentEditable, hasGhost]);
+
+  const promoteRealContentBlocks = useCallback((el: HTMLElement) => {
+    el.querySelectorAll('[data-studio-pad="1"]').forEach((node) => {
+      const block = node as HTMLElement;
+      const hasText = (block.textContent || '').replace(/\u00a0/g, ' ').trim();
+      const hasEmbeddedContent = block.querySelector('img, table, svg, mjx-container, hr, video');
+      if (hasText || hasEmbeddedContent) block.removeAttribute('data-studio-pad');
+    });
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -198,8 +328,34 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         if (editorRef.current) placeCaretAtEnd(editorRef.current);
       },
       getBodies: () => (editorRef.current ? [editorRef.current] : []),
+      insertImage: async (file: File) => {
+        if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) return false;
+        const el = editorRef.current;
+        if (!el) return false;
+        const src = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error || new Error('Could not read image'));
+          reader.readAsDataURL(file);
+        });
+        const image = insertImageAtSelection(
+          el,
+          src,
+          file.name.replace(/\.[^.]+$/, '') || 'Inserted image',
+          lastSelection.current,
+        );
+        applyImageWrapMode(image, 'break');
+        setSelectedImage(image);
+        promoteRealContentBlocks(el);
+        requestAnimationFrame(() => {
+          promoteRealContentBlocks(el);
+          measurePages();
+          onInput();
+        });
+        return true;
+      },
     }),
-    [getHtml, setHtml, pageCount],
+    [getHtml, setHtml, pageCount, measurePages, onInput, promoteRealContentBlocks],
   );
 
   useEffect(() => {
@@ -254,34 +410,211 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     }
   };
 
+  const commitImageMutation = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    promoteRealContentBlocks(editor);
+    padEditorToPage(editor, Math.max(paperHeight, editor.scrollHeight));
+    measurePages();
+    requestAnimationFrame(() => updateImageTools());
+    onInput();
+  }, [measurePages, onInput, paperHeight, promoteRealContentBlocks, updateImageTools]);
+
+  const updateImageWidth = useCallback(
+    (nextWidth: number) => {
+      const image = selectedImage;
+      if (!image) return;
+      const parentWidth = image.parentElement?.clientWidth || editorRef.current?.clientWidth || 1200;
+      const maxWidth = Math.max(120, parentWidth);
+      const width = Math.min(Math.max(Math.round(nextWidth || 0), 80), maxWidth);
+      image.style.width = `${width}px`;
+      image.style.height = 'auto';
+      image.style.maxWidth = '100%';
+      updateImageTools();
+    },
+    [selectedImage, updateImageTools],
+  );
+
+  const handleResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, direction: ResizeSession['direction']) => {
+      const image = selectedImage;
+      if (!image) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = image.getBoundingClientRect();
+      const ratio = image.naturalWidth && image.naturalHeight
+        ? image.naturalWidth / image.naturalHeight
+        : rect.width / Math.max(rect.height, 1);
+      resizeSession.current = {
+        image,
+        direction,
+        startX: event.clientX,
+        startWidth: rect.width,
+        ratio: ratio || 1,
+      };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    [selectedImage],
+  );
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const session = resizeSession.current;
+      if (!session) return;
+      event.preventDefault();
+      const sign = session.direction.endsWith('e') ? 1 : -1;
+      const delta = (event.clientX - session.startX) * sign;
+      const parentWidth = session.image.parentElement?.clientWidth || editorRef.current?.clientWidth || 1200;
+      const width = Math.min(Math.max(session.startWidth + delta, 80), Math.max(120, parentWidth));
+      session.image.style.width = `${Math.round(width)}px`;
+      session.image.style.height = 'auto';
+      session.image.style.maxWidth = '100%';
+      updateImageTools();
+    };
+    const onPointerUp = () => {
+      if (!resizeSession.current) return;
+      resizeSession.current = null;
+      commitImageMutation();
+    };
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [commitImageMutation, updateImageTools]);
+
+  const changeImageWrap = useCallback(
+    (mode: ImageWrapMode) => {
+      if (!selectedImage) return;
+      applyImageWrapMode(selectedImage, mode);
+      commitImageMutation();
+    },
+    [commitImageMutation, selectedImage],
+  );
+
+  const removeSelectedImage = useCallback(() => {
+    if (!selectedImage) return;
+    selectedImage.remove();
+    setSelectedImage(null);
+    setImageTools(null);
+    commitImageMutation();
+  }, [commitImageMutation, selectedImage]);
+
   const handleInput = () => {
     if (skipInput.current) return;
     const el = editorRef.current;
     if (el) {
+      rememberSelection();
+      if (selectedImage && !el.contains(selectedImage)) setSelectedImage(null);
       // User typed into a pad paragraph → promote to real content
-      el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => {
-        const t = (n.textContent || '').replace(/\u00a0/g, ' ').trim();
-        if (t) n.removeAttribute('data-studio-pad');
-      });
+      promoteRealContentBlocks(el);
       padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
     }
     measurePages();
     onInput();
   };
 
-  const handlePaste = () => {
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith('image/'));
+    if (imageItem) {
+      const file = imageItem.getAsFile();
+      if (file) {
+        event.preventDefault();
+        void (async () => {
+          const el = editorRef.current;
+          if (!el) return;
+          rememberSelection();
+          if (file.size > 12 * 1024 * 1024) return;
+          const src = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(reader.error || new Error('Could not read image'));
+            reader.readAsDataURL(file);
+          });
+          const image = insertImageAtSelection(el, src, 'Pasted image', lastSelection.current);
+          applyImageWrapMode(image, 'break');
+          setSelectedImage(image);
+          promoteRealContentBlocks(el);
+          requestAnimationFrame(() => {
+            promoteRealContentBlocks(el);
+            measurePages();
+            onInput();
+          });
+        })().catch(() => {
+          /* Keep native paste available when an image cannot be decoded. */
+        });
+        return;
+      }
+    }
+
     requestAnimationFrame(() => {
       const el = editorRef.current;
       if (el) {
-        el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => {
-          const t = (n.textContent || '').replace(/\u00a0/g, ' ').trim();
-          if (t || n.querySelector('img, table')) n.removeAttribute('data-studio-pad');
-        });
+        rememberSelection();
+        promoteRealContentBlocks(el);
         padEditorToPage(el, Math.max(paperHeight, el.scrollHeight));
         measurePages();
       }
       onInput();
     });
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter') {
+      const sel = window.getSelection();
+      const anchor = sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement;
+      const pad = anchor?.closest('[data-studio-pad="1"]');
+      // A filler paragraph becomes real content as soon as the user creates a line
+      // inside it. This is what preserves intentional blank lines.
+      if (pad) pad.removeAttribute('data-studio-pad');
+    }
+    rememberSelection();
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'));
+    if (!file) return;
+    event.preventDefault();
+    rememberSelection();
+    void (async () => {
+      const el = editorRef.current;
+      if (!el || file.size > 12 * 1024 * 1024) return;
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('Could not read image'));
+        reader.readAsDataURL(file);
+      });
+      const image = insertImageAtSelection(
+        el,
+        src,
+        file.name.replace(/\.[^.]+$/, '') || 'Dropped image',
+        lastSelection.current,
+      );
+      applyImageWrapMode(image, 'break');
+      setSelectedImage(image);
+      promoteRealContentBlocks(el);
+      requestAnimationFrame(() => {
+        promoteRealContentBlocks(el);
+        measurePages();
+        onInput();
+      });
+    })().catch(() => {
+      /* Ignore an invalid dropped file without breaking the editor. */
+    });
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (Array.from(event.dataTransfer.items).some((item) => item.type.startsWith('image/'))) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    }
+  };
+
+  const handleEditorMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    rememberSelection();
+    onMouseUp(event);
   };
 
   /**
@@ -293,6 +626,15 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     const el = editorRef.current;
     if (!el) return;
     const t = e.target as HTMLElement;
+    const image = t.closest('img') as HTMLImageElement | null;
+    if (image && el.contains(image)) {
+      e.preventDefault();
+      e.stopPropagation();
+      image.setAttribute('data-studio-image', '1');
+      setSelectedImage(image);
+      return;
+    }
+    if (selectedImage) setSelectedImage(null);
     // Native placement inside real text blocks is fine
     if (t.closest(BLOCK_SEL) && t.closest(BLOCK_SEL) !== el) {
       const block = t.closest(BLOCK_SEL) as HTMLElement;
@@ -491,8 +833,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 suppressContentEditableWarning
                 onInput={handleInput}
                 onPaste={handlePaste}
+                onKeyDown={handleKeyDown}
                 onMouseDown={handleEditorMouseDown}
-                onMouseUp={onMouseUp}
+                onMouseUp={handleEditorMouseUp}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
                 onDoubleClick={onDoubleClick}
                 className={cn(
                   'studio-doc-editor relative z-10 max-w-none text-neutral-900 outline-none',
@@ -546,6 +891,135 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             </div>
           </div>
         </div>
+
+        {selectedImage && imageTools && !hasGhost && contentEditable && (
+          <>
+            <div
+              className="pointer-events-none absolute z-40"
+              style={{
+                top: imageTools.top,
+                left: imageTools.left,
+                width: imageTools.width,
+                height: imageTools.height,
+              }}
+              aria-hidden
+            >
+              <div className="absolute inset-0 rounded-[2px] border-2 border-studio-brown/80 shadow-[0_0_0_1px_rgba(255,255,255,0.9)]" />
+              {(['nw', 'ne', 'sw', 'se'] as const).map((direction) => (
+                <button
+                  key={direction}
+                  type="button"
+                  aria-label={`Redimensionar imagen ${direction}`}
+                  className={cn(
+                    'pointer-events-auto absolute h-3 w-3 rounded-[3px] border border-white bg-studio-brown shadow-[0_1px_4px_rgba(0,0,0,0.25)]',
+                    direction === 'nw' && '-left-1.5 -top-1.5 cursor-nwse-resize',
+                    direction === 'ne' && '-right-1.5 -top-1.5 cursor-nesw-resize',
+                    direction === 'sw' && '-bottom-1.5 -left-1.5 cursor-nesw-resize',
+                    direction === 'se' && '-bottom-1.5 -right-1.5 cursor-nwse-resize',
+                  )}
+                  onPointerDown={(event) => handleResizePointerDown(event, direction)}
+                  onMouseDown={(event) => event.preventDefault()}
+                />
+              ))}
+            </div>
+
+            <div
+              className="absolute z-50 flex max-w-[calc(100%-16px)] items-center gap-1 rounded-xl border border-neutral-200 bg-white/95 p-1.5 text-neutral-700 shadow-[0_10px_30px_rgba(0,0,0,0.14)] backdrop-blur"
+              style={{
+                top: Math.max(8, imageTools.top - 52),
+                left: Math.max(8, Math.min(imageTools.left, Math.max(8, scrollRef.current?.clientWidth || 360) - 350)),
+              }}
+              onMouseDown={(event) => event.preventDefault()}
+              onPointerDown={(event) => event.stopPropagation()}
+              data-image-tools
+            >
+              <span className="flex items-center gap-1 border-r border-neutral-200 pr-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+                <Maximize2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+                <span className="sr-only">Tamaño</span>
+              </span>
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-neutral-100"
+                title="Reducir ancho"
+                onClick={() => updateImageWidth(imageTools.width - 40)}
+              >
+                <Minus className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              <input
+                aria-label="Ancho de imagen en píxeles"
+                type="number"
+                min={80}
+                max={1600}
+                value={Math.round(imageTools.width)}
+                onChange={(event) => updateImageWidth(Number(event.target.value))}
+                onBlur={commitImageMutation}
+                className="h-7 w-14 rounded-md border border-neutral-200 bg-neutral-50 px-1 text-center text-[11px] tabular-nums outline-none focus:border-studio-brown"
+              />
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-neutral-100"
+                title="Aumentar ancho"
+                onClick={() => updateImageWidth(imageTools.width + 40)}
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              <span className="mr-1 text-[10px] text-neutral-400">px</span>
+              <span className="h-5 w-px bg-neutral-200" />
+              <button
+                type="button"
+                title="Alinear a la izquierda"
+                aria-label="Alinear a la izquierda"
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-neutral-100"
+                onClick={() => changeImageWrap('left')}
+              >
+                <AlignLeft className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              <button
+                type="button"
+                title="Centrar imagen"
+                aria-label="Centrar imagen"
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-neutral-100"
+                onClick={() => changeImageWrap('center')}
+              >
+                <AlignCenter className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              <button
+                type="button"
+                title="Alinear a la derecha"
+                aria-label="Alinear a la derecha"
+                className="flex h-7 w-7 items-center justify-center rounded-lg hover:bg-neutral-100"
+                onClick={() => changeImageWrap('right')}
+              >
+                <AlignRight className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+              <span className="h-5 w-px bg-neutral-200" />
+              <label className="flex items-center gap-1.5">
+                <WrapText className="h-3.5 w-3.5 text-neutral-400" strokeWidth={1.8} />
+                <select
+                  aria-label="Modo de ajuste de texto"
+                  value={getImageWrapMode(selectedImage)}
+                  onChange={(event) => changeImageWrap(event.target.value as ImageWrapMode)}
+                  className="h-7 max-w-[136px] rounded-md border border-neutral-200 bg-neutral-50 px-1.5 text-[11px] outline-none focus:border-studio-brown"
+                >
+                  {IMAGE_WRAP_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                title="Eliminar imagen"
+                aria-label="Eliminar imagen"
+                className="ml-1 flex h-7 w-7 items-center justify-center rounded-lg text-red-600 hover:bg-red-50"
+                onClick={removeSelectedImage}
+              >
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+              </button>
+            </div>
+          </>
+        )}
 
         {lineHls.map((hl, i) => (
           <div

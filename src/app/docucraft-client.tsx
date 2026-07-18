@@ -10,7 +10,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
 import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
-import WordEngineEditor, { type WordEngineHandle } from '@/components/word-engine-editor';
 import StudioChat, {
   type ActivityStep,
   type ChatMessage,
@@ -25,6 +24,7 @@ import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
 import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
+import { extractHtmlBlocks } from '@/lib/doc-tools';
 import type { PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
 import {
   sanitizeDocumentHtml,
@@ -51,6 +51,13 @@ function uid() {
 function isDocEmpty(html: string) {
   const t = html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
   return t.length < 8;
+}
+
+function plainTextFromHtml(html: string): string {
+  if (!html) return '';
+  const node = document.createElement('div');
+  node.innerHTML = html;
+  return (node.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** Only draft a full document when the user clearly asks for one — not "hola". */
@@ -105,18 +112,14 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
   /** Default: panel collapsed — floating composer on canvas */
   const [chatCollapsed, setChatCollapsed] = useState(true);
   const resizingChat = useRef(false);
-
-  /** Default: real Word engine (Syncfusion). Canvas = HTML + AI diffs. */
-  const [editorMode, setEditorMode] = useState<'word' | 'canvas'>('word');
   const canvasRef = useRef<PaperCanvasHandle>(null);
-  const wordEngineRef = useRef<WordEngineHandle>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const didAuto = useRef(false);
   const skipHistory = useRef(false);
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
-  const pendingWordFile = useRef<File | null>(null);
 
   /** Active page body under caret / selection, else last page */
   const getActiveBody = useCallback((): HTMLElement | null => {
@@ -310,21 +313,6 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setHistoryIndex((i) => Math.min(i + 1, 39));
   }, [historyIndex]);
 
-  /** Push HTML into the real Word engine via DOCX round-trip */
-  const loadHtmlIntoWordEngine = useCallback(async (html: string, title: string) => {
-    const res = await fetch('/api/export-docx', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html, title }),
-    });
-    if (!res.ok) throw new Error('No se pudo convertir HTML → DOCX para el motor');
-    const blob = await res.blob();
-    const file = new File([blob], `${title.replace(/[^\w\- ]+/g, '').trim() || 'doc'}.docx`, {
-      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    });
-    await wordEngineRef.current?.openDocxFile(file);
-  }, []);
-
   const applyHtml = useCallback(
     (
       html: string,
@@ -332,69 +320,40 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       mode: false | 'cascade' | 'firstReveal' = false,
     ) => {
       const clean = sanitizeDocumentHtml(html);
-      // Never store page-break spacers in history / state
       const withoutBreaks = clean.replace(
         /<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi,
         '',
       );
       setDocumentContent(withoutBreaks);
       skipHistory.current = true;
-
-      if (editorMode === 'word') {
-        void loadHtmlIntoWordEngine(withoutBreaks, documentTitle || 'Documento')
-          .catch((e) => {
-            toast({
-              variant: 'destructive',
-              title: 'Motor Word',
-              description: e?.message || 'No se pudo cargar en el motor',
+      canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
+      requestAnimationFrame(() => {
+        if (mode === 'cascade') {
+          const first = canvasRef.current?.getBodies()?.[0];
+          if (first) {
+            Array.from(first.children).forEach((child, i) => {
+              const el = child as HTMLElement;
+              el.classList.add('studio-cascade-item');
+              el.style.animationDelay = `${Math.min(i * 48, 900)}ms`;
+              window.setTimeout(() => {
+                el.classList.remove('studio-cascade-item');
+                el.style.animationDelay = '';
+              }, Math.min(i * 48, 900) + 420);
             });
-            // Fallback to canvas so content is never lost
-            setEditorMode('canvas');
-            canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
-          })
-          .finally(() => {
-            skipHistory.current = false;
-          });
-      } else {
-        canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
-        requestAnimationFrame(() => {
-          if (mode === 'cascade') {
-            const first = canvasRef.current?.getBodies()?.[0];
-            if (first) {
-              Array.from(first.children).forEach((child, i) => {
-                const el = child as HTMLElement;
-                el.classList.add('studio-cascade-item');
-                el.style.animationDelay = `${Math.min(i * 48, 900)}ms`;
-                window.setTimeout(() => {
-                  el.classList.remove('studio-cascade-item');
-                  el.style.animationDelay = '';
-                }, Math.min(i * 48, 900) + 420);
-              });
-            }
           }
-          typesetAll();
-          skipHistory.current = false;
-        });
-      }
+        }
+        typesetAll();
+        skipHistory.current = false;
+      });
       if (recordHistory) pushHistory(withoutBreaks);
     },
-    [pushHistory, typesetAll, editorMode, loadHtmlIntoWordEngine, documentTitle, toast],
+    [pushHistory, typesetAll],
   );
 
   /** Full document HTML from canvas, or plain text from Word engine for AI context */
-  const readEditorHtml = () => {
-    if (editorMode === 'canvas') {
-      return canvasRef.current?.getHtml() || documentContent;
-    }
-    // Word engine: AI context as paragraphs from plain text
-    try {
-      const sfdt = wordEngineRef.current?.getSfdt() || '';
-      if (sfdt && documentContent) return documentContent;
-    } catch {
-      /* ignore */
-    }
-    return documentContent || '<p><br></p>';
-  };
+  const readEditorHtml = useCallback(() => {
+    return canvasRef.current?.getHtml() || documentContent;
+  }, [documentContent]);
 
   const undo = () => {
     if (historyIndex <= 0) return;
@@ -593,7 +552,8 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       const text = userText.trim();
       if (!text) return;
 
-      const empty = isDocEmpty(readEditorHtml());
+      const liveDocumentHtml = readEditorHtml();
+      const empty = isDocEmpty(liveDocumentHtml);
       // Only full-draft on clear document requests — never on "hola"
       if (empty && wantsFullDocument(text)) {
         await runFastDraft(text);
@@ -650,7 +610,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               role,
               content: role === 'user' && content === text ? content + intensityNote : content,
             })),
-            documentHtml: readEditorHtml(),
+            documentHtml: liveDocumentHtml,
             documentTitle,
             paperSize,
             selectedText: opts?.selectedText || selectedTextRef.current || '',
@@ -739,10 +699,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
             }
             if (ev.type === 'propose_edit') {
               const edit = ev.edit as ProposeEditPayload;
-              // Always anchor "before" to the live canvas so structural diffs
+              // Always anchor "before" to the live document so structural diffs
               // keep real HTML (headings, LaTeX, tables) instead of model guesses.
               if (edit.mode === 'replace_document') {
-                edit.beforeHtml = readEditorHtml();
+                edit.beforeHtml = liveDocumentHtml;
               } else if (edit.mode === 'replace_selection') {
                 if (!edit.beforeHtml) {
                   edit.beforeHtml = selectedTextRef.current
@@ -816,7 +776,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         abortRef.current = null;
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml],
   );
 
   useEffect(() => {
@@ -938,10 +898,58 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     setActivity([]);
   };
 
-  const acceptEdit = (id: string) => {
+  const acceptEdit = async (id: string) => {
     const item = pendingEdits.find((p) => p.id === id);
     if (!item) return;
     const { edit } = item;
+
+    // AI proposals are anchored to a specific document state. Never apply a
+    // stale range or block to a newer document, otherwise an edit can silently
+    // land in the wrong paragraph after the user keeps typing.
+    if (edit.mode === 'replace_document' && edit.beforeHtml) {
+      const current = readEditorHtml();
+      if (current !== edit.beforeHtml) {
+        toast({
+          variant: 'destructive',
+          title: 'El documento cambió',
+          description: 'La propuesta quedó desactualizada. Pedile al agente que la genere de nuevo.',
+        });
+        return;
+      }
+    }
+
+    if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
+      const target = queryAllBlocks()[edit.blockIndex];
+      if (!target) {
+        toast({
+          variant: 'destructive',
+          title: 'No se encontró el bloque',
+          description: `Índice ${edit.blockIndex}`,
+        });
+        return;
+      }
+      if (edit.beforeHtml && target.outerHTML !== edit.beforeHtml) {
+        toast({
+          variant: 'destructive',
+          title: 'El bloque cambió',
+          description: 'La propuesta quedó desactualizada. Volvé a pedir ese cambio.',
+        });
+        return;
+      }
+    }
+
+    if (edit.mode === 'replace_selection') {
+      const range = selectionRef.current;
+      const attached = !!range && selectionInCanvas(range.commonAncestorContainer);
+      if (!attached || !range?.toString().trim()) {
+        toast({
+          variant: 'destructive',
+          title: 'La selección ya no está disponible',
+          description: 'Seleccioná el texto nuevamente y pedile al agente que lo edite.',
+        });
+        return;
+      }
+    }
 
     if (edit.mode === 'replace_document') {
       applyHtml(edit.afterHtml, true, 'cascade');
@@ -975,15 +983,37 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
         const html = readEditorHtml();
         applyHtml(html, true);
       } catch {
-        applyHtml(edit.afterHtml, true, 'cascade');
+        toast({
+          variant: 'destructive',
+          title: 'No se pudo aplicar la selección',
+          description: 'La propuesta no modificó el documento. Volvé a seleccionar el texto y pedile al agente que lo intente de nuevo.',
+        });
+        return;
       }
     } else if (edit.mode === 'insert_html') {
       const body = getActiveBody();
       if (body) {
-        body.insertAdjacentHTML('beforeend', sanitizeDocumentHtml(edit.afterHtml));
+        const range = selectionRef.current && body.contains(selectionRef.current.commonAncestorContainer)
+          ? selectionRef.current.cloneRange()
+          : null;
+        if (range) {
+          range.deleteContents();
+          const temp = document.createElement('div');
+          temp.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
+          const frag = document.createDocumentFragment();
+          while (temp.firstChild) frag.appendChild(temp.firstChild);
+          range.insertNode(frag);
+        } else {
+          body.insertAdjacentHTML('beforeend', sanitizeDocumentHtml(edit.afterHtml));
+        }
         applyHtml(readEditorHtml(), true);
       } else {
-        applyHtml(edit.afterHtml, true, 'cascade');
+        toast({
+          variant: 'destructive',
+          title: 'No hay un punto de inserción',
+          description: 'Poné el cursor en el documento y aceptá la propuesta otra vez.',
+        });
+        return;
       }
     } else {
       applyHtml(edit.afterHtml, true, 'cascade');
@@ -1024,9 +1054,32 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     );
   };
 
-  const acceptAllEdits = () => {
-    const ids = pendingEdits.filter((e) => e.status === 'pending').map((e) => e.id);
-    ids.forEach((id) => acceptEdit(id));
+  const acceptAllEdits = async () => {
+    const pending = pendingEdits.filter((e) => e.status === 'pending');
+    if (pending.length <= 1) {
+      for (const item of pending) await acceptEdit(item.id);
+      return;
+    }
+
+    // Block edits can be applied safely from the bottom upwards. Selection,
+    // document and insertion edits depend on a live anchor, so applying them
+    // in a synchronous loop could move or overwrite the next target.
+    const blockEdits = pending.every(
+      (item) => item.edit.mode === 'replace_block' && typeof item.edit.blockIndex === 'number',
+    );
+    if (!blockEdits) {
+      toast({
+        title: 'Aplicá las propuestas una por una',
+        description: 'Las propuestas de selección o documento necesitan conservar su anclaje actual.',
+      });
+      return;
+    }
+
+    for (const item of pending
+      .slice()
+      .sort((a, b) => (b.edit.blockIndex ?? 0) - (a.edit.blockIndex ?? 0))) {
+      await acceptEdit(item.id);
+    }
   };
 
   const rejectAllEdits = () => {
@@ -1128,93 +1181,33 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
     }
     setIsBusy(true);
     try {
-      const base = name.replace(/\.docx$/i, '').trim() || 'Documento importado';
-      setDocumentTitle(base.slice(0, 80));
-
-      // Prefer real Word engine (native DOCX pages/styles/tables)
-      setEditorMode('word');
-      // Wait a tick for WordEngine to mount if we were on canvas
-      await new Promise((r) => setTimeout(r, 80));
-
-      if (wordEngineRef.current) {
-        await wordEngineRef.current.openDocxFile(file);
-        // Also keep HTML snapshot for AI context (best-effort mammoth)
-        try {
-          const buf = await file.arrayBuffer();
-          const { html } = await importDocxToHtml(buf, name);
-          setDocumentContent(html);
-          pushHistory(html);
-        } catch {
-          /* AI context optional */
-        }
-        toast({
-          title: 'Word abierto en motor real',
-          description: `«${base}» — páginas, estilos y tablas nativas.`,
-        });
-        pushEvent(
-          { type: 'local_edit', title: 'Import .docx (motor Word)', summary: base.slice(0, 48) },
-          true,
-        );
-        setMessages((ms) => [
-          ...ms,
-          {
-            id: uid(),
-            role: 'assistant',
-            content: `Abrí **${base}** en el **motor Word real** (Syncfusion). Editá como en Word: páginas, estilos, tablas y tipografía nativas.`,
-            streaming: false,
-          },
-        ]);
-      } else {
-        // Fallback: HTML canvas import
-        const buf = await file.arrayBuffer();
-        const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
-        setDocumentTitle(titleHint.slice(0, 80));
-        setEditorMode('canvas');
-        applyHtml(html, true, false);
-        toast({ title: 'Word importado (lienzo)', description: userSummary.slice(0, 240) });
-        pushEvent({ type: 'local_edit', title: 'Import .docx', summary: userSummary.slice(0, 160) }, true);
-        setMessages((ms) => [
-          ...ms,
-          {
-            id: uid(),
-            role: 'assistant',
-            content:
-              warnings.length === 0
-                ? `Importé **${titleHint}** al lienzo HTML.`
-                : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
-            streaming: false,
-          },
-        ]);
-      }
+      const buf = await file.arrayBuffer();
+      const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
+      setDocumentTitle(titleHint.slice(0, 80));
+      applyHtml(html, true, 'cascade');
+      toast({ title: 'Word importado al lienzo', description: userSummary.slice(0, 240) });
+      pushEvent({ type: 'local_edit', title: 'Import .docx', summary: userSummary.slice(0, 160) }, true);
+      setMessages((ms) => [
+        ...ms,
+        {
+          id: uid(),
+          role: 'assistant',
+          content:
+            warnings.length === 0
+              ? `Importé **${titleHint}** al lienzo (hojas, tablas y fórmulas editables).`
+              : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
+          streaming: false,
+        },
+      ]);
     } catch (e: any) {
       toast({
         variant: 'destructive',
         title: 'No se pudo importar',
-        description: e?.message || 'Error abriendo el .docx en el motor',
+        description: e?.message || 'Error leyendo el .docx',
       });
     } finally {
       setIsBusy(false);
       if (importInputRef.current) importInputRef.current.value = '';
-    }
-  };
-
-  const handleExportWordEngine = async () => {
-    try {
-      if (editorMode === 'word' && wordEngineRef.current) {
-        const blob = await wordEngineRef.current.saveAsDocxBlob();
-        if (!blob) throw new Error('Export vacío');
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${(documentTitle || 'docs-studio').replace(/[^\w\- ]+/g, '').trim() || 'docs-studio'}.docx`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast({ title: 'Word (.docx) exportado desde el motor' });
-        return;
-      }
-      await handleExportWord();
-    } catch (e: any) {
-      toast({ variant: 'destructive', title: 'Export falló', description: e?.message });
     }
   };
 
@@ -1257,6 +1250,10 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
       title: 'Tabla insertada',
       summary: 'Tabla 3×3 editable en el lienzo.',
     });
+  };
+
+  const handleInsertImage = () => {
+    imageInputRef.current?.click();
   };
 
   /** Double-click math to edit TeX source */
@@ -1345,7 +1342,7 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           <DropdownMenuItem onClick={handleExportPdf}>
             <FileText className="mr-2 h-4 w-4" /> PDF
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handleExportWordEngine()}>
+          <DropdownMenuItem onClick={() => void handleExportWord()}>
             <FileText className="mr-2 h-4 w-4" /> Exportar Word (.docx)
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -1376,41 +1373,27 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
           ref={paperHostRef}
         >
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {/* Real Word engine (default) */}
-            {editorMode === 'word' ? (
-              <div className="absolute inset-0 flex flex-col pt-14">
-                <WordEngineEditor
-                  ref={wordEngineRef}
-                  documentTitle={documentTitle}
-                  height="100%"
-                  onContentChange={() => {
-                    // Keep a soft flag; full SFDT history is heavy
-                    lastLocalNotify.current = Date.now();
-                  }}
-                />
-              </div>
-            ) : (
-              <PaperCanvas
-                ref={canvasRef}
-                paperSize={paperSize}
-                onPaperSizeChange={setPaperSize}
-                fontFamily={fontFamily}
-                fontSize={fontSize}
-                contentEditable={!isBusy}
-                isLoading={isBusy}
-                onInput={onEditorInput}
-                onMouseUp={handleMouseUp}
-                onDoubleClick={handleEditorDblClick}
-                onEditBlock={handleEditBlock}
-                onPageCountChange={setPageCount}
-                ghostHtml={pending?.edit.afterHtml ?? null}
-                ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
-                ghostTitle={pending?.edit.title ?? null}
-                zoom={zoom}
-                marginPreset={prefs.marginPreset}
-                showEditButton={prefs.showEditButton}
-              />
-            )}
+            {/* Handmade paper canvas: full pages + math + tables */}
+            <PaperCanvas
+              ref={canvasRef}
+              paperSize={paperSize}
+              onPaperSizeChange={setPaperSize}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              contentEditable={!isBusy}
+              isLoading={isBusy}
+              onInput={onEditorInput}
+              onMouseUp={handleMouseUp}
+              onDoubleClick={handleEditorDblClick}
+              onEditBlock={handleEditBlock}
+              onPageCountChange={setPageCount}
+              ghostHtml={pending?.edit.afterHtml ?? null}
+              ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
+              ghostTitle={pending?.edit.title ?? null}
+              zoom={zoom}
+              marginPreset={prefs.marginPreset}
+              showEditButton={prefs.showEditButton}
+            />
             <input
               ref={importInputRef}
               type="file"
@@ -1421,9 +1404,32 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                 if (f) void handleImportWord(f);
               }}
             />
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  void canvasRef.current?.insertImage(file).then((inserted) => {
+                    if (!inserted) {
+                      toast({
+                        variant: 'destructive',
+                        title: 'No se pudo insertar la imagen',
+                        description: 'Usá una imagen de menos de 12 MB.',
+                      });
+                    }
+                  });
+                }
+                e.currentTarget.value = '';
+              }}
+            />
 
-            {/* Floating format toolbar */}
-            <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3">
+            <div
+              data-studio-toolbar
+              className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
+            >
               <div className="pointer-events-auto max-w-[min(980px,100%)] overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
                 <DocumentEditorToolbar
                   onRequestLink={() => {
@@ -1440,19 +1446,16 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
                   onFontSize={setFontSize}
                   pageCount={pageCount}
                   wordCount={countWords()}
-                  onInsertMath={editorMode === 'canvas' ? handleInsertMath : undefined}
-                  onInsertTable={editorMode === 'canvas' ? handleInsertTable : undefined}
+                  onInsertMath={handleInsertMath}
+                  onInsertTable={handleInsertTable}
+                  onInsertImage={handleInsertImage}
                   onImportWord={() => importInputRef.current?.click()}
                   onOpenSettings={() => setSettingsOpen(true)}
-                  editorMode={editorMode}
-                  onEditorModeChange={setEditorMode}
-                  canvasTools={editorMode === 'canvas'}
                 />
               </div>
             </div>
 
-            {/* Canvas-only: selection bar, tools, zoom */}
-            {editorMode === 'canvas' && hasSelection && selBar && prefs.showSelectionToolbar && (
+            {hasSelection && selBar && prefs.showSelectionToolbar && (
               <SelectionFormatBar
                 top={selBar.top}
                 left={selBar.left}
@@ -1463,32 +1466,17 @@ export default function DocsStudioClient({ topic }: { topic: string }) {
               />
             )}
 
-            {editorMode === 'canvas' && (
-              <ToolsDock
-                busy={isBusy}
-                hasSelection={hasSelection}
-                onAction={handleToolsAction}
-                showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
-                onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
-              />
-            )}
+            <ToolsDock
+              busy={isBusy}
+              hasSelection={hasSelection}
+              onAction={handleToolsAction}
+              showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
+              onOpenAgent={() => openAgent(hasSelection ? 'edit' : 'chat')}
+            />
 
-            {editorMode === 'canvas' && (
-              <div className="pointer-events-none absolute bottom-6 left-5 z-40">
-                <ZoomControl zoom={zoom} onZoom={setZoom} />
-              </div>
-            )}
-
-            {/* Word mode: still offer agent + tools (AI over document) */}
-            {editorMode === 'word' && (
-              <ToolsDock
-                busy={isBusy}
-                hasSelection={false}
-                onAction={handleToolsAction}
-                showAgentOption={prefs.showAgentInTools && prefs.agentVisibility !== 'hidden'}
-                onOpenAgent={() => openAgent('chat')}
-              />
-            )}
+            <div className="pointer-events-none absolute bottom-6 left-5 z-40">
+              <ZoomControl zoom={zoom} onZoom={setZoom} />
+            </div>
 
             {/* Ephemeral agent input — only when opened (or always mode) */}
             {prefs.agentVisibility !== 'hidden' && (

@@ -6,11 +6,6 @@ const nextConfig: NextConfig = {
   },
   /** Keep heavy Node packages off the client graph */
   serverExternalPackages: ['docx'],
-  transpilePackages: [
-    '@syncfusion/ej2-react-documenteditor',
-    '@syncfusion/ej2-documenteditor',
-    '@syncfusion/ej2-base',
-  ],
   typescript: {
     ignoreBuildErrors: true,
   },

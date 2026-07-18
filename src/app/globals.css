@@ -187,6 +187,12 @@
     height: auto !important;
   }
 
+  .studio-doc-editor img[data-studio-image-selected='1'] {
+    outline: 2px solid rgba(93, 63, 48, 0.72);
+    outline-offset: 2px;
+    cursor: move;
+  }
+
   .studio-doc-editor p,
   .studio-doc-editor li,
   .studio-doc-editor h1,

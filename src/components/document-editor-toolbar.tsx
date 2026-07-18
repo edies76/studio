@@ -31,9 +31,8 @@ import {
   Table2,
   Settings2,
   FileUp,
+  ImagePlus,
 } from 'lucide-react';
-import { cn } from '@/lib/utils';
-
 function ensureEditMode() {
   try {
     document.execCommand('styleWithCSS', false, 'true');
@@ -78,13 +77,9 @@ type Props = {
   wordCount?: number;
   onInsertMath?: () => void;
   onInsertTable?: () => void;
+  onInsertImage?: () => void;
   onOpenSettings?: () => void;
   onImportWord?: () => void;
-  /** Real Word engine vs HTML canvas */
-  editorMode?: 'word' | 'canvas';
-  onEditorModeChange?: (m: 'word' | 'canvas') => void;
-  /** Hide canvas-only format controls when in Word engine */
-  canvasTools?: boolean;
 };
 
 /** Clean white Word-style toolbar (restored look) */
@@ -102,11 +97,9 @@ export default function DocumentEditorToolbar({
   wordCount,
   onInsertMath,
   onInsertTable,
+  onInsertImage,
   onOpenSettings,
   onImportWord,
-  editorMode = 'word',
-  onEditorModeChange,
-  canvasTools = true,
 }: Props) {
   const applyFont = (value: string, name: string) => {
     onFontFamily(value);
@@ -125,42 +118,6 @@ export default function DocumentEditorToolbar({
 
   return (
     <div className="flex flex-nowrap items-center gap-0.5 bg-transparent px-2 py-1.5 text-neutral-800">
-      {onEditorModeChange && (
-        <>
-          <div className="mr-1 flex items-center gap-0.5 rounded-full border border-neutral-200 bg-neutral-50 p-0.5">
-            <button
-              type="button"
-              title="Motor Word real (páginas, estilos, tablas nativas)"
-              onClick={() => onEditorModeChange('word')}
-              className={cn(
-                'rounded-full px-2.5 py-1 text-[10px] font-semibold transition',
-                editorMode === 'word'
-                  ? 'bg-neutral-900 text-white shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-900',
-              )}
-            >
-              Word
-            </button>
-            <button
-              type="button"
-              title="Lienzo HTML (diffs IA / MathJax)"
-              onClick={() => onEditorModeChange('canvas')}
-              className={cn(
-                'rounded-full px-2.5 py-1 text-[10px] font-semibold transition',
-                editorMode === 'canvas'
-                  ? 'bg-neutral-900 text-white shadow-sm'
-                  : 'text-neutral-500 hover:text-neutral-900',
-              )}
-            >
-              Lienzo
-            </button>
-          </div>
-          <div className="mx-1 h-5 w-px bg-neutral-200" />
-        </>
-      )}
-
-      {canvasTools && (
-        <>
       <Button variant="ghost" size="icon" className={btn} disabled={!canUndo} onClick={onUndo} title="Undo">
         <Undo2 className="h-4 w-4" strokeWidth={1.5} />
       </Button>
@@ -241,6 +198,11 @@ export default function DocumentEditorToolbar({
           <Table2 className="h-4 w-4" strokeWidth={1.5} />
         </Button>
       )}
+      {onInsertImage && (
+        <Button variant="ghost" size="icon" className={btn} onClick={onInsertImage} title="Insert image">
+          <ImagePlus className="h-4 w-4" strokeWidth={1.5} />
+        </Button>
+      )}
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -286,8 +248,6 @@ export default function DocumentEditorToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-        </>
-      )}
 
       <div className="mx-1 h-5 w-px bg-neutral-200" />
       {onImportWord && (
