@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import ThinkingShine from '@/components/thinking-shine';
-import { sanitizeDocumentHtml } from '@/lib/math-html';
+import { sanitizeDocumentHtml, typesetEditor } from '@/lib/math-html';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -17,10 +17,16 @@ export default function DraftStreamCard({
   done?: boolean;
 }) {
   const [open, setOpen] = useState(true);
+  const previewRef = useRef<HTMLDivElement>(null);
   const plain = html
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => typesetEditor(previewRef.current), 90);
+    return () => window.clearTimeout(timer);
+  }, [html, open]);
 
   return (
     <div className="space-y-2">
@@ -51,6 +57,7 @@ export default function DraftStreamCard({
             )}
           >
             <div
+              ref={previewRef}
               className="studio-draft-preview prose prose-neutral max-w-none text-[12px] leading-relaxed text-neutral-700 prose-headings:font-inherit prose-headings:text-neutral-900"
               style={{ fontFamily: 'Inter, Segoe UI, system-ui, sans-serif' }}
               dangerouslySetInnerHTML={{

@@ -186,7 +186,10 @@ G. read_document may show tag "math" for display equation blocks — use those i
         let usedModel = models[0];
         let lastErr = '';
 
-        const MAX_ROUNDS = 5;
+        // Most Studio edits are read → propose. Three tool rounds are enough
+        // for that path and prevent a slow runaway loop when a model keeps
+        // asking for another status/read call.
+        const MAX_ROUNDS = 3;
         let finalTextParts: string[] = [];
         let proposedSomething = false;
         let streamedLive = false;
@@ -205,7 +208,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 tools,
                 stream: false,
                 temperature: 0.5,
-                maxTokens: 8192,
+                maxTokens: 4096,
               });
               const data = await res.json();
               if (!res.ok) {
@@ -742,8 +745,10 @@ G. read_document may show tag "math" for display equation blocks — use those i
 
         let finalText = finalTextParts.join('\n').trim();
 
-        // Stream a concrete closing if tools-only
-        if (!finalText || (proposedSomething && finalText.length < 20)) {
+        // Only ask for a second model completion when the first call did not
+        // answer at all. A proposal already has enough context to close with a
+        // truthful local message, so avoid paying for another network round.
+        if (!finalText) {
           try {
             send({ type: 'thinking', label: 'Escribiendo respuesta…' });
             const closeRes = await deepseekChat({

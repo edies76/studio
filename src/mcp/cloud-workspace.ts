@@ -112,6 +112,41 @@ export class CloudDocsStudioWorkspace {
     return listStoredDocuments(this.userId);
   }
 
+  async findInDocument(id: string, query: string, maxResults = 20) {
+    const document = await this.getDocument(id);
+    const needle = query.trim().toLowerCase();
+    if (!needle) throw new Error('query is required');
+    return extractDocumentBlocks(document.html)
+      .filter((block) => `${block.tag} ${block.preview}`.toLowerCase().includes(needle))
+      .slice(0, Math.min(Math.max(maxResults, 1), 100));
+  }
+
+  async checkDocument(id: string) {
+    const document = await this.getDocument(id);
+    const blocks = extractDocumentBlocks(document.html);
+    const issues: { code: string; severity: 'error' | 'warning'; message: string }[] = [];
+    if (!plainText(document.html)) issues.push({ code: 'empty', severity: 'error', message: 'The document has no readable text.' });
+    if (!/<h1\b/i.test(document.html)) issues.push({ code: 'missing_h1', severity: 'warning', message: 'No h1 heading was found.' });
+    if (/<img\b/i.test(document.html) && /<img\b(?![^>]*\balt\s*=)/i.test(document.html)) {
+      issues.push({ code: 'image_alt', severity: 'warning', message: 'At least one image is missing alt text.' });
+    }
+    if (/<table\b/i.test(document.html) && !/<th\b/i.test(document.html)) {
+      issues.push({ code: 'table_header', severity: 'warning', message: 'A table has no header cells.' });
+    }
+    if (document.pendingEdits.some((edit) => edit.status === 'pending')) {
+      issues.push({ code: 'pending_edits', severity: 'warning', message: 'There are proposals waiting for review.' });
+    }
+    return {
+      documentId: document.id,
+      title: document.title,
+      ok: !issues.some((issue) => issue.severity === 'error'),
+      wordCount: plainText(document.html).split(/\s+/).filter(Boolean).length,
+      blockCount: blocks.length,
+      pendingEditCount: document.pendingEdits.filter((edit) => edit.status === 'pending').length,
+      issues,
+    };
+  }
+
   async deleteDocument(id: string) {
     await this.getDocument(id);
     await deleteStoredDocument(this.userId, id);
@@ -271,6 +306,13 @@ export class CloudDocsStudioWorkspace {
   async insertPageBreak(id: string) {
     const document = await this.getDocument(id);
     return this.replaceContent(id, `${document.html}<div data-studio-break="1" style="break-before:page;page-break-before:always"></div><p><br></p>`, 'inserted', 'Inserted page break');
+  }
+
+  async insertHtml(id: string, html: string) {
+    const fragment = sanitizeDocumentHtml(html.trim());
+    if (!fragment) throw new Error('html is required');
+    const document = await this.getDocument(id);
+    return this.replaceContent(id, `${document.html}${fragment}`, 'inserted', 'Inserted HTML fragment');
   }
 
   async history(id: string) {

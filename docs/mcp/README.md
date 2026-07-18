@@ -1,120 +1,113 @@
 # Docs Studio MCP
 
-Docs Studio exposes an MCP server for external AI clients. The server is implemented with the official TypeScript SDK v1.29 and supports the two transports that matter for this project:
+Docs Studio exposes the real document loop to external AI clients through the official MCP TypeScript SDK.
 
-- `stdio` for local clients that spawn the server process.
-- Streamable HTTP for a running endpoint at `http://localhost:8787/mcp`.
+The hosted endpoint is:
 
-The web app still owns the visual editor. The MCP workspace is a separate, in-memory document workspace inside the MCP process. It uses the existing Docs Studio API for AI drafting and DOCX export, but it does not silently mutate a browser tab. A future session bridge must solve that explicitly.
-
-## Start it
-
-In one terminal, start the web app because `draft_document` and DOCX export call the existing server routes:
-
-```bash
-npm run dev
+```text
+https://YOUR_DOCS_DOMAIN/api/mcp
 ```
 
-In another terminal:
+It uses Streamable HTTP in stateless mode, so an AWS serverless instance does not need sticky sessions. Documents are isolated by the authenticated MCP principal and stored through the same Docs Studio document store. In production, that store must be DynamoDB.
 
-```bash
-npm run mcp:stdio
-```
-
-For Streamable HTTP:
-
-```bash
-npm run mcp:http
-```
-
-Environment variables:
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `DOCS_STUDIO_URL` | `http://localhost:9003` | Base URL for `/api/draft`, `/api/chat`, and `/api/export-docx`. |
-| `MCP_PORT` | `8787` | Port for the Streamable HTTP server. |
-
-## Client configuration
+## Remote client configuration
 
 ```json
 {
   "mcpServers": {
     "docs-studio": {
-      "command": "npx",
-      "args": ["tsx", "src/mcp/server.ts"],
-      "cwd": "/absolute/path/to/studio",
-      "env": {
-        "DOCS_STUDIO_URL": "http://localhost:9003"
+      "url": "https://YOUR_DOCS_DOMAIN/api/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_API_KEY"
       }
     }
   }
 }
 ```
 
-The same example is stored at [`client-configs/claude-desktop.json`](./client-configs/claude-desktop.json).
+Configure the token in Amplify or the hosting provider, never in the repository:
 
-## Recommended workflow
+```bash
+MCP_API_KEY=long-random-secret
+MCP_KEY_ID=agent-main
+MCP_USER_ID=workspace-main
+AWS_REGION=us-east-2
+DOCS_TABLE=docs-studio
+DEEPSEEK_API_KEY=sk-...
+DOCS_STUDIO_URL=https://YOUR_DOCS_DOMAIN
+```
 
-1. Call `create_document`.
-2. Call `parse_brief` with the professor's brief. Pass `documentId` to attach it.
-3. Call `draft_document` to run the same streaming draft route as the web app.
-4. Call `read_document` before making a targeted edit. Blocks have stable indexes for the current document version.
-5. Use `chat_document` or `propose_edit`. Proposals are not applied.
-6. Call `accept_edit` or `reject_edit` deliberately.
-7. Call `export_document` as `html`, `docx`, or `pdf`.
+For more than one isolated workspace, use `MCP_API_KEYS` as a JSON array:
 
-The first draft follows the current web product behavior and is applied directly. Subsequent AI changes are reviewable proposals. `accept_edit` rejects stale proposals when the source document has changed, so an external AI must read again and create a fresh proposal.
+```json
+[
+  {"id":"research-agent","token":"secret-a","userId":"workspace-research"},
+  {"id":"writing-agent","token":"secret-b","userId":"workspace-writing"}
+]
+```
 
-## Surface
+## Editing surface
 
-### Tools
+The remote server exposes 22 tools:
 
-| Tool | What it does | Mutates? |
+| Tool | Purpose | Mutates |
 | --- | --- | --- |
-| `get_capabilities` | Reports the server contract, transports, and session boundary. | No |
-| `create_document` | Creates a blank or HTML-seeded document. | Yes |
-| `list_documents` | Lists documents in this process. | No |
-| `read_document` | Returns HTML, text, blocks, word count, brief, and pending proposals. | No |
-| `parse_brief` | Extracts tasks, objectives, constraints, learning outcome, and rubric. | Optional attachment |
-| `draft_document` | Calls `/api/draft` and applies the returned HTML. | Yes |
-| `chat_document` | Calls `/api/chat` and records any returned proposals. | Proposal only |
-| `propose_edit` | Creates a reviewable proposal. | Proposal only |
-| `accept_edit` / `reject_edit` | Applies or closes a proposal. | Yes / no |
-| `insert_math` / `insert_table` | Inserts editable document primitives. | Yes |
-| `get_history` | Returns the last 40 events. | No |
-| `export_document` | Returns HTML or base64 DOCX/PDF. | No |
+| `get_capabilities` | Read the contract and review boundary. | No |
+| `create_document` | Create a Letter or Legal document. | Yes |
+| `list_documents` | List documents in the authenticated workspace. | No |
+| `delete_document` | Delete a document with `confirm=true`. | Yes |
+| `read_document` | Read HTML, text, blocks, brief and pending edits. | No |
+| `find_in_document` | Search text and return matching block indexes. | No |
+| `check_document` | Check headings, images, tables and review state. | No |
+| `parse_brief` | Extract and optionally attach tasks, constraints and rubric. | Optional |
+| `draft_document` | Run the same AI draft endpoint as the app. | Yes |
+| `chat_document` | Run the copilot and persist returned proposals. | Proposal only |
+| `propose_edit` | Create a reviewable edit. | Proposal only |
+| `accept_edit` / `reject_edit` | Apply or close a proposal. | Yes / No |
+| `update_title` | Rename a document. | Yes |
+| `set_paper_size` | Set Letter or Legal. | Yes |
+| `insert_html` | Append sanitized HTML directly. | Yes |
+| `insert_math` | Insert an inline or display MathJax equation. | Yes |
+| `insert_table` | Insert an editable HTML table with headers. | Yes |
+| `insert_image` | Insert an HTTPS/data image with width and wrap mode. | Yes |
+| `insert_page_break` | Insert a persistent page break. | Yes |
+| `get_history` | Read the document audit trail. | No |
+| `export_document` | Return HTML or base64 DOCX/PDF. | No |
 
-### Resources
+### Recommended agent loop
 
-- `docs://workspace` — documents in the current process.
-- `docs://document/{documentId}` — current document state.
-- `docs://history/{documentId}` — review and mutation trail.
+1. `create_document` or `list_documents`.
+2. `parse_brief` and attach it with `documentId`.
+3. `draft_document` for the first version.
+4. `read_document`, `find_in_document` and `check_document` before targeted work.
+5. Use `chat_document` or `propose_edit` for consequential changes.
+6. Review the returned proposal and call `accept_edit` or `reject_edit` deliberately.
+7. Use `insert_image`, `insert_math`, `insert_table` and `insert_page_break` for document primitives.
+8. `check_document` again, then `export_document`.
 
-### Prompts
+`accept_edit` rejects stale proposals when the source HTML changed. An agent must read the document again and create a fresh proposal instead of overwriting newer work.
 
+## Resources and prompts
+
+- `docs://workspace`
+- `docs://document/{documentId}`
+- `docs://history/{documentId}`
 - `draft_from_brief`
 - `review_document`
 - `prepare_export`
 
-## Known gaps / necessary next MCPs
+## Local development
 
-These are intentionally documented as gaps instead of being implied to exist:
+The existing stdio and standalone HTTP servers remain available:
 
-- **Session bridge:** connect an MCP document ID to an authenticated browser editor session, with explicit open/attach/detach operations.
-- **Persistence:** replace process memory with durable document revisions and binary artifact storage.
-- **Identity and permissions:** authenticate HTTP clients and scope documents to a user or workspace.
-- **Browser selection state:** expose the actual current selection/cursor when the AI is working beside an open canvas.
-- **Event subscription:** publish draft/proposal/export progress as structured notifications for long-running jobs.
-- **Image operations:** the browser can analyze image context today, but MCP does not yet expose an image upload/resource contract.
+```bash
+npm run dev
+npm run mcp:stdio
+npm run mcp:http
+```
 
-The first four are the important product work before hosting this endpoint for multiple users. The current implementation is useful for local agents and controlled single-process integrations.
+The Next route can be smoke-tested locally only when `MCP_ALLOW_LOCAL=1` and `MCP_API_KEY` are set. It is intentionally disabled otherwise so a misconfigured production deployment cannot fall back to local JSON files.
 
-## Source references
+## What this does not claim
 
-- [`src/mcp/server.ts`](../../src/mcp/server.ts) — tools, resources, and prompts.
-- [`src/mcp/core.ts`](../../src/mcp/core.ts) — document state and review semantics.
-- [`src/mcp/http.ts`](../../src/mcp/http.ts) — Streamable HTTP process.
-- [`/mcp`](http://localhost:9003/mcp) — visual documentation page in the app.
-
-The server follows the MCP model of tools for actions, resources for read-only context, and prompts for reusable interaction templates. See the [official TypeScript SDK server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md) for protocol-level details.
-
+The remote MCP workspace is not silently attached to a browser tab. It operates on authenticated persistent documents. A future browser session bridge would need explicit attach/detach operations and a permission model for live selection state.

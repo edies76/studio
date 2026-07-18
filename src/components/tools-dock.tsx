@@ -266,7 +266,7 @@ export default function ToolsDock({
           className={cn(
             'relative flex h-16 w-16 shrink-0 items-center justify-center transition-colors',
             busy && 'opacity-50',
-            action && 'text-blue-600',
+            action && 'text-studio-brown',
           )}
         >
           <span
@@ -274,14 +274,14 @@ export default function ToolsDock({
               'absolute inset-0 rounded-full transition-colors duration-150',
               hoverKey === 'main' || action
                 ? action
-                  ? 'bg-blue-50'
+                  ? 'bg-studio-brown/10'
                   : 'bg-neutral-100'
                 : 'bg-transparent',
             )}
           />
           <span className="relative z-10">
             {action ? (
-              <ArrowUp className="h-6 w-6 text-blue-600" strokeWidth={2.25} />
+              <ArrowUp className="h-6 w-6 text-studio-brown" strokeWidth={2.25} />
             ) : (
               <Wrench className="h-6 w-6" strokeWidth={1.75} />
             )}

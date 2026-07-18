@@ -104,6 +104,49 @@ aws dynamodb create-table ...  # arriba
 # 4) Dominio personalizado docs.bambalunar.app
 ```
 
+## MCP remoto en el mismo deploy
+
+El MCP cloud no necesita otro servidor. La ruta Next.js `/api/mcp` usa el mismo dominio, el mismo DeepSeek y el mismo almacenamiento de documentos:
+
+```text
+https://docs.bambalunar.app/api/mcp
+```
+
+Configura estos secretos en Amplify/App Runner:
+
+```bash
+MCP_API_KEY=<secreto largo y aleatorio>
+MCP_KEY_ID=agent-main
+MCP_USER_ID=workspace-main
+DOCS_STUDIO_URL=https://docs.bambalunar.app
+```
+
+El endpoint exige `Authorization: Bearer <MCP_API_KEY>` y rechaza el tráfico si no hay DynamoDB configurado. Para varias identidades, usa `MCP_API_KEYS` con el formato documentado en [`docs/mcp/README.md`](mcp/README.md).
+
+Configuración MCP de un cliente compatible:
+
+```json
+{
+  "mcpServers": {
+    "docs-studio": {
+      "url": "https://docs.bambalunar.app/api/mcp",
+      "headers": { "Authorization": "Bearer <MCP_API_KEY>" }
+    }
+  }
+}
+```
+
+### Permisos IAM mínimos para el runtime
+
+La identidad IAM que ejecuta Next.js necesita acceso a la tabla configurada:
+
+- `dynamodb:Query` para listar documentos.
+- `dynamodb:GetItem` para leerlos.
+- `dynamodb:PutItem` para guardar documentos y propuestas.
+- `dynamodb:DeleteItem` para borrar documentos.
+
+El MCP usa Streamable HTTP stateless; no depende de una sesión guardada en memoria ni de sticky sessions.
+
 ### URL corta
 
 Usá un subdominio del dominio Bamba:
@@ -133,3 +176,5 @@ Sin `DOCS_TABLE` / credentials:
 - [ ] `FORCE_AUTH=1` en prod
 - [ ] Dominio corto + HTTPS
 - [ ] Probar: login Google → home → nuevo doc → autosave → chat persiste
+- [ ] Probar externamente: `initialize` → `tools/list` → `create_document` en `/api/mcp`
+- [ ] Confirmar que `MCP_API_KEY` no aparece en el repo ni en logs

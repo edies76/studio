@@ -5,8 +5,10 @@ import type { ProposeEditPayload } from '@/lib/doc-tools';
 import ThinkingShine from '@/components/thinking-shine';
 import DraftStreamCard from '@/components/draft-stream-card';
 import ToolLog, { type ToolLogItem } from '@/components/tool-log';
+import EditDiffCard from '@/components/edit-diff-card';
 import BrandMark from '@/components/brand-mark';
 import { ArrowUp, Loader2 } from 'lucide-react';
+import { typesetEditor } from '@/lib/math-html';
 
 export type ChatMessage = {
   id: string;
@@ -40,6 +42,8 @@ type Props = {
   onSend: () => void;
   onAcceptEdit: (id: string) => void;
   onRejectEdit: (id: string) => void;
+  onAcceptEditPart?: (id: string, hunkIndex: number) => void;
+  onRejectEditPart?: (id: string, hunkIndex: number) => void;
   isBusy: boolean;
   onQuickAction?: (prompt: string) => void;
   topBar?: React.ReactNode;
@@ -54,12 +58,17 @@ const QUICK = [
 export default function StudioChat({
   messages,
   activity,
+  pendingEdits,
   input,
   onInputChange,
   onSend,
+  onAcceptEdit,
+  onRejectEdit,
   isBusy,
   onQuickAction,
   topBar,
+  onAcceptEditPart,
+  onRejectEditPart,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   // Only show shine while actively working — never when Done/idle
@@ -148,9 +157,7 @@ export default function StudioChat({
 
               <ToolLog items={tools} />
 
-              {hasBody && (
-                <div className="whitespace-pre-wrap">{m.content}</div>
-              )}
+              {hasBody && <ChatRichText content={m.content} />}
 
               {m.streaming && onlyTools && showThinking && (
                 <ThinkingShine label={activeStep?.label || 'Trabajando…'} />
@@ -158,6 +165,20 @@ export default function StudioChat({
             </div>
           );
         })}
+
+        {pendingEdits
+          .filter((item) => item.status === 'pending')
+          .map((item) => (
+            <EditDiffCard
+              key={item.id}
+              id={item.id}
+              edit={item.edit}
+              onAccept={onAcceptEdit}
+              onReject={onRejectEdit}
+              onAcceptPart={onAcceptEditPart}
+              onRejectPart={onRejectEditPart}
+            />
+          ))}
 
         {showThinking &&
           messages.every((m) => !m.streaming) && (
@@ -197,4 +218,41 @@ export default function StudioChat({
       </div>
     </aside>
   );
+}
+
+function ChatRichText({ content }: { content: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const html = chatContentToHtml(content);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => typesetEditor(ref.current), 90);
+    return () => window.clearTimeout(timer);
+  }, [html]);
+
+  return (
+    <div
+      ref={ref}
+      className="studio-chat-richtext leading-relaxed"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+function chatContentToHtml(value: string): string {
+  let html = escapeHtml(value || '');
+  html = html.replace(/```(?:html|latex|tex)?\s*([\s\S]*?)```/gi, '<pre><code>$1</code></pre>');
+  html = html.replace(/\\\[([\s\S]*?)\\\]/g, '<div class="studio-chat-math studio-math-block">\\[$1\\]</div>');
+  html = html.replace(/\\\(([^\n]+?)\\\)/g, '<span class="studio-chat-math studio-math-inline">\\($1\\)</span>');
+  html = html.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^\n*]+?)\*(?!\*)/g, '<em>$1</em>');
+  return html.replace(/\n/g, '<br />');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

@@ -6,7 +6,6 @@ import {
   Check,
   Loader2,
   MessageSquare,
-  Sparkles,
   Square,
   X,
 } from 'lucide-react';
@@ -180,7 +179,6 @@ export default function FloatingComposer({
           <div className={cn('mb-2 w-full', wide ? 'max-w-lg' : 'max-w-sm')}>
             <div className="rounded-2xl border border-neutral-200 bg-white px-3 py-2.5 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
               <div className="flex items-start gap-2">
-                <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-blue-500" strokeWidth={1.75} />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center justify-end gap-1.5">
                     {pending.length > 1 && (
@@ -258,7 +256,7 @@ export default function FloatingComposer({
             'transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
             wide ? 'w-[min(28rem,88vw)]' : 'w-[min(16rem,72vw)]',
             focused && 'border-neutral-300 shadow-[0_20px_56px_rgba(0,0,0,0.16),0_6px_16px_rgba(0,0,0,0.08)]',
-            busy && 'ring-2 ring-blue-400/25',
+            busy && 'ring-2 ring-studio-brown/15',
             sentPulse && 'floating-composer-sent',
           )}
         >
@@ -266,13 +264,13 @@ export default function FloatingComposer({
             <span
               className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                busy ? 'text-blue-500' : 'text-neutral-400',
+                busy ? 'text-studio-brown' : 'text-neutral-400',
               )}
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Sparkles className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <span className="h-1.5 w-1.5 rounded-full bg-studio-brown/70" aria-hidden />
               )}
             </span>
 
@@ -343,7 +341,7 @@ export default function FloatingComposer({
                 type="button"
                 onClick={onStop}
                 title="Detener"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-500 text-white shadow-md hover:bg-blue-600"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-studio-brown text-white shadow-md hover:bg-studio-brown-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>

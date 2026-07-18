@@ -31,7 +31,6 @@ import {
   Plus,
   Trash2,
   WrapText,
-  Pencil,
 } from 'lucide-react';
 import type { StudioPrefs } from '@/components/studio-settings';
 
@@ -68,6 +67,12 @@ type ImageToolsRect = {
   left: number;
   width: number;
   height: number;
+};
+
+type TableToolsRect = {
+  top: number;
+  left: number;
+  width: number;
 };
 
 type ResizeSession = {
@@ -207,18 +212,74 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
 
   const [pageCount, setPageCount] = useState(1);
   const paperHeight = Math.max(spec.heightPx, pageCount * spec.heightPx);
-  const [hoverBtn, setHoverBtn] = useState<{ top: number; left: number; el: HTMLElement } | null>(
-    null,
-  );
-  const [lineHls, setLineHls] = useState<
-    { top: number; left: number; width: number; height: number; radius: string }[]
-  >([]);
-  const [editVisible, setEditVisible] = useState(false);
-  const hoverLock = useRef(false);
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
   const [imageTools, setImageTools] = useState<ImageToolsRect | null>(null);
+  const [selectedTable, setSelectedTable] = useState<HTMLTableElement | null>(null);
+  const [tableTools, setTableTools] = useState<TableToolsRect | null>(null);
   const resizeSession = useRef<ResizeSession | null>(null);
   const dragSession = useRef<DragSession | null>(null);
+
+  const updateTableTools = useCallback(() => {
+    const table = selectedTable;
+    const scroll = scrollRef.current;
+    if (!table || !scroll || !editorRef.current?.contains(table)) {
+      setTableTools(null);
+      return;
+    }
+    const rect = table.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    setTableTools({
+      top: Math.max(8, rect.top - scrollRect.top + scroll.scrollTop - 44),
+      left: Math.max(8, rect.left - scrollRect.left + scroll.scrollLeft),
+      width: rect.width,
+    });
+  }, [selectedTable]);
+
+  useEffect(() => {
+    if (!selectedTable) return;
+    const scroll = scrollRef.current;
+    const sync = () => updateTableTools();
+    scroll?.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    requestAnimationFrame(sync);
+    return () => {
+      scroll?.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, [selectedTable, updateTableTools]);
+
+  const mutateTable = useCallback(
+    (action: 'add-row' | 'remove-row' | 'add-column' | 'remove-column') => {
+      const table = selectedTable;
+      if (!table) return;
+      const body = table.tBodies[0] || table.createTBody();
+      const rows = Array.from(table.rows);
+      const columnCount = rows[0]?.cells.length || 1;
+      if (action === 'add-row') {
+        const row = body.insertRow(-1);
+        for (let i = 0; i < columnCount; i++) {
+          const cell = row.insertCell(-1);
+          cell.className = 'studio-td';
+          cell.innerHTML = '<br>';
+        }
+      } else if (action === 'remove-row' && rows.length > 2) {
+        rows[rows.length - 1].remove();
+      } else if (action === 'add-column') {
+        rows.forEach((row, rowIndex) => {
+          const cell = row.insertCell(-1);
+          cell.className = rowIndex === 0 ? 'studio-th' : 'studio-td';
+          cell.innerHTML = rowIndex === 0 ? `Col ${row.cells.length}` : '<br>';
+        });
+      } else if (action === 'remove-column' && columnCount > 1) {
+        rows.forEach((row) => row.deleteCell(-1));
+      } else {
+        return;
+      }
+      updateTableTools();
+      onInput();
+    },
+    [onInput, selectedTable, updateTableTools],
+  );
 
   const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
 
@@ -770,6 +831,13 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       return;
     }
     if (selectedImage) setSelectedImage(null);
+    const table = t.closest('table') as HTMLTableElement | null;
+    if (table && el.contains(table)) {
+      setSelectedTable(table);
+      requestAnimationFrame(updateTableTools);
+    } else {
+      setSelectedTable(null);
+    }
     // Native placement inside real text blocks is fine
     if (t.closest(BLOCK_SEL) && t.closest(BLOCK_SEL) !== el) {
       const block = t.closest(BLOCK_SEL) as HTMLElement;
@@ -831,88 +899,6 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     } catch {
       /* native fallback */
     }
-  };
-
-  useEffect(() => {
-    const scroll = scrollRef.current;
-    if (!scroll || hasGhost) return;
-
-    const clearHover = () => {
-      if (hoverLock.current) return;
-      document.querySelectorAll('.studio-block-hover').forEach((n) => n.classList.remove('studio-block-hover'));
-      setHoverBtn(null);
-      setLineHls([]);
-      setEditVisible(false);
-    };
-
-    const onMove = (e: MouseEvent) => {
-      if (hoverLock.current) return;
-      const t = e.target as HTMLElement;
-      if (!editorRef.current?.contains(t)) {
-        clearHover();
-        return;
-      }
-      const block = t.closest(BLOCK_SEL) as HTMLElement | null;
-      if (!block || !editorRef.current.contains(block)) {
-        clearHover();
-        return;
-      }
-      try {
-        const range = document.createRange();
-        range.selectNodeContents(block);
-        const rects = Array.from(range.getClientRects()).filter((r) => r.width > 2 && r.height > 2);
-        const isTable = block.tagName.toLowerCase() === 'table';
-        if (!isTable && rects.length < 3) {
-          clearHover();
-          return;
-        }
-        document.querySelectorAll('.studio-block-hover').forEach((n) => {
-          if (n !== block) n.classList.remove('studio-block-hover');
-        });
-        block.classList.add('studio-block-hover');
-        const br = block.getBoundingClientRect();
-        const sr = scroll.getBoundingClientRect();
-        const pad = 7;
-        setHoverBtn({
-          top: br.top - sr.top + scroll.scrollTop + 2,
-          left: Math.min(br.right - sr.left + scroll.scrollLeft + 8, scroll.scrollLeft + scroll.clientWidth - 52),
-          el: block,
-        });
-        setEditVisible(true);
-        setLineHls([
-          {
-            top: br.top - sr.top + scroll.scrollTop - pad,
-            left: br.left - sr.left + scroll.scrollLeft - pad,
-            width: br.width + pad * 2,
-            height: br.height + pad * 2,
-            radius: '12px',
-          },
-        ]);
-      } catch {
-        setLineHls([]);
-      }
-    };
-
-    scroll.addEventListener('mousemove', onMove);
-    scroll.addEventListener('mouseleave', clearHover);
-    return () => {
-      scroll.removeEventListener('mousemove', onMove);
-      scroll.removeEventListener('mouseleave', clearHover);
-    };
-  }, [hasGhost, zoom, showEditButton, pageCount]);
-
-  const editHovered = () => {
-    if (!hoverBtn?.el || !onEditBlock) return;
-    const el = hoverBtn.el;
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    const sel = window.getSelection();
-    sel?.removeAllRanges();
-    sel?.addRange(range);
-    onEditBlock(el.outerHTML, el.innerText || '');
-    hoverLock.current = false;
-    setHoverBtn(null);
-    setLineHls([]);
   };
 
   // Repeating page break markers as background on the white sheet
@@ -1168,45 +1154,29 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           </>
         )}
 
-        {lineHls.map((hl, i) => (
+        {selectedTable && tableTools && !hasGhost && contentEditable && (
           <div
-            key={i}
-            className="studio-line-hl"
-            style={{
-              top: hl.top,
-              left: hl.left,
-              width: hl.width,
-              height: hl.height,
-              borderRadius: hl.radius,
-            }}
-          />
-        ))}
-
-        {showEditButton && hoverBtn && onEditBlock && !hasGhost && (
-          <button
-            type="button"
-            data-block-edit
-            onMouseEnter={() => {
-              hoverLock.current = true;
-              setEditVisible(true);
-            }}
-            onMouseLeave={() => {
-              hoverLock.current = false;
-              setHoverBtn(null);
-              setLineHls([]);
-            }}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={editHovered}
-            title="Editar bloque"
-            className={cn(
-              'studio-edit-fab absolute z-30 flex h-10 w-10 items-center justify-center rounded-full bg-studio-brown text-[#f3f1ec] shadow-lg',
-              editVisible ? 'studio-edit-fab-in' : 'studio-edit-fab-out',
-            )}
-            style={{ top: hoverBtn.top, left: hoverBtn.left }}
+            className="absolute z-50 flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 px-1.5 py-1 text-[10px] text-neutral-600 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+            style={{ top: tableTools.top, left: tableTools.left, minWidth: Math.min(280, Math.max(180, tableTools.width)) }}
+            data-selection-ui
           >
-            <Pencil className="h-4 w-4" strokeWidth={1.75} />
-          </button>
+            <span className="px-1 font-semibold text-neutral-500">Tabla</span>
+            <span className="h-4 w-px bg-neutral-200" />
+            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('add-row')} title="Agregar fila">
+              + fila
+            </button>
+            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('remove-row')} title="Quitar fila">
+              − fila
+            </button>
+            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('add-column')} title="Agregar columna">
+              + col.
+            </button>
+            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('remove-column')} title="Quitar columna">
+              − col.
+            </button>
+          </div>
         )}
+
       </div>
     </div>
   );

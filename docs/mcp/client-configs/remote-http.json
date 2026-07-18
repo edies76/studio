@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "docs-studio": {
+      "url": "https://YOUR_DOCS_DOMAIN/api/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_MCP_API_KEY"
+      }
+    }
+  }
+}

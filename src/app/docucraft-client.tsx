@@ -37,6 +37,7 @@ import {
 } from '@/lib/math-html';
 import { importDocxToHtml } from '@/lib/import-docx';
 import { normsAgentPrompt } from '@/lib/style-norms';
+import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
 import jsPDF from 'jspdf';
@@ -127,8 +128,8 @@ export default function DocsStudioClient({
   const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
-  /** Default: panel collapsed — floating composer on canvas */
-  const [chatCollapsed, setChatCollapsed] = useState(true);
+  /** The editor opens with the assistant visible; the floating composer takes over when opened. */
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const resizingChat = useRef(false);
   const canvasRef = useRef<PaperCanvasHandle>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
@@ -242,6 +243,8 @@ export default function DocsStudioClient({
       return;
     }
     setAgentMode(mode);
+    // The floating input is a focused mode: keep only one assistant surface open.
+    setChatCollapsed(true);
     setAgentOpen(true);
   }, [prefs.agentVisibility]);
 
@@ -255,7 +258,10 @@ export default function DocsStudioClient({
 
   // agentVisibility: always → keep open
   useEffect(() => {
-    if (prefs.agentVisibility === 'always') setAgentOpen(true);
+    if (prefs.agentVisibility === 'always') {
+      setChatCollapsed(true);
+      setAgentOpen(true);
+    }
     if (prefs.agentVisibility === 'hidden') setAgentOpen(false);
   }, [prefs.agentVisibility]);
 
@@ -730,9 +736,11 @@ export default function DocsStudioClient({
                   m.id === assistantId
                     ? {
                         ...m,
-                        content: 'Listo — el documento está en el lienzo.',
+                        // The draft card is the real completion signal. Do not
+                        // inject a canned assistant sentence into the chat.
+                        content: '',
                         draftHtml: finalHtml,
-                        draftStatus: 'Listo',
+                        draftStatus: 'Documento en el lienzo',
                         streaming: false,
                         isDraftStream: true,
                       }
@@ -1290,6 +1298,68 @@ export default function DocsStudioClient({
     );
   };
 
+  /** Apply or remove one word-level hunk while leaving the remaining proposal pending. */
+  const reviewEditPart = (id: string, hunkIndex: number, decision: 'accept-one' | 'reject-one') => {
+    const item = pendingEdits.find((candidate) => candidate.id === id);
+    if (!item) return;
+    const { edit } = item;
+    if (edit.mode !== 'replace_block' && edit.mode !== 'replace_document') {
+      toast({ title: 'Este cambio necesita revisión completa', description: 'La edición parcial está disponible para párrafos y encabezados.' });
+      return;
+    }
+    const beforeHtml = edit.beforeHtml || '';
+    const nextFragment = mergeSingleInlineHunk(beforeHtml, edit.afterHtml, hunkIndex, decision);
+    if (!nextFragment) {
+      toast({ title: 'Revisión parcial no disponible', description: 'Este cambio contiene una tabla, imagen o fórmula compleja.' });
+      return;
+    }
+
+    if (decision === 'accept-one') {
+      const currentHtml = readEditorHtml();
+      let nextDocument = currentHtml;
+      if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
+        const target = queryAllBlocks()[edit.blockIndex];
+        if (!target) {
+          toast({ variant: 'destructive', title: 'El párrafo ya cambió', description: 'Volvé a generar la propuesta sobre el texto actual.' });
+          return;
+        }
+        nextDocument = currentHtml.replace(target.outerHTML, nextFragment);
+      } else if (edit.mode === 'replace_document') {
+        const currentBlocks = extractHtmlBlocks(currentHtml);
+        if (currentBlocks.length !== 1) {
+          toast({ title: 'Revisión por palabra', description: 'Para este documento usá el botón de Aceptar todo o revisá el párrafo desde la propuesta.' });
+          return;
+        }
+        nextDocument = nextFragment;
+      }
+      applyHtml(nextDocument, true);
+      setPendingEdits((items) =>
+        items.map((candidate) =>
+          candidate.id === id
+            ? { ...candidate, edit: { ...candidate.edit, beforeHtml: nextFragment } }
+            : candidate,
+        ),
+      );
+      pushEvent({ type: 'ai_applied', title: 'Cambio parcial aplicado', summary: 'Una modificación de palabra quedó en el lienzo.' }, true);
+      return;
+    }
+
+    const remaining = mergeSingleInlineHunk(beforeHtml, edit.afterHtml, hunkIndex, 'reject-one');
+    if (!remaining) return;
+    if (htmlToPlain(beforeHtml) === htmlToPlain(remaining)) {
+      rejectEdit(id);
+      return;
+    }
+    setPendingEdits((items) =>
+      items.map((candidate) =>
+        candidate.id === id
+          ? { ...candidate, edit: { ...candidate.edit, afterHtml: remaining } }
+          : candidate,
+      ),
+    );
+    pushEvent({ type: 'local_edit', title: 'Cambio parcial rechazado', summary: 'La palabra seleccionada se mantuvo sin cambios.' }, true);
+  };
+
   const acceptAllEdits = async () => {
     const pending = pendingEdits.filter((e) => e.status === 'pending');
     if (pending.length <= 1) {
@@ -1550,39 +1620,42 @@ export default function DocsStudioClient({
     );
   }
 
+  const exportControl = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 rounded-md border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
+        >
+          Export
+          <Download className="ml-1.5 h-3.5 w-3.5" strokeWidth={1.5} />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
+          <FileText className="mr-2 h-4 w-4" /> Importar Word (.docx)
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={handleExportPdf}>
+          <FileText className="mr-2 h-4 w-4" /> PDF
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void handleExportWord()}>
+          <FileText className="mr-2 h-4 w-4" /> Exportar Word (.docx)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   const chatTopBar = (
     <>
       <button
         type="button"
         title="Historial de cambios"
         onClick={() => setHistoryOpen(true)}
-        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+        className="mr-24 flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
       >
         <History className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 rounded-md border border-neutral-300 bg-white px-3 text-xs font-semibold text-neutral-900 shadow-sm hover:bg-neutral-50"
-          >
-            Export
-            <Download className="ml-1.5 h-3.5 w-3.5" strokeWidth={1.5} />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
-            <FileText className="mr-2 h-4 w-4" /> Importar Word (.docx)
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleExportPdf}>
-            <FileText className="mr-2 h-4 w-4" /> PDF
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => void handleExportWord()}>
-            <FileText className="mr-2 h-4 w-4" /> Exportar Word (.docx)
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </>
   );
 
@@ -1602,7 +1675,10 @@ export default function DocsStudioClient({
         : null;
 
   return (
-    <div className="flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
+    <div className="relative flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
+      <div className="pointer-events-none absolute right-3 top-3 z-50 flex items-center">
+        <div className="pointer-events-auto">{exportControl}</div>
+      </div>
       <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
@@ -1822,6 +1898,8 @@ export default function DocsStudioClient({
               onSend={() => runChat(chatInput)}
               onAcceptEdit={acceptEdit}
               onRejectEdit={rejectEdit}
+              onAcceptEditPart={(id, hunkIndex) => reviewEditPart(id, hunkIndex, 'accept-one')}
+              onRejectEditPart={(id, hunkIndex) => reviewEditPart(id, hunkIndex, 'reject-one')}
               isBusy={isBusy}
               onQuickAction={(p) => void runChat(p)}
               topBar={chatTopBar}
