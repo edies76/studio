@@ -23,6 +23,7 @@ const SAFE_IMAGE_STYLE_PROPERTIES = new Set([
 ]);
 
 function sanitizeImageStyle(raw: string): string {
+  const seen = new Set<string>();
   return raw
     .split(';')
     .map((part) => part.trim())
@@ -37,7 +38,13 @@ function sanitizeImageStyle(raw: string): string {
       }
       return `${property}:${value}`;
     })
-    .filter((part): part is string => Boolean(part))
+    .filter((part): part is string => {
+      if (!part) return false;
+      const property = part.split(':', 1)[0].trim().toLowerCase();
+      if (seen.has(property)) return false;
+      seen.add(property);
+      return true;
+    })
     .join(';');
 }
 
@@ -115,9 +122,18 @@ export function sanitizeDocumentHtml(html: string): string {
     const styleMatch = rawAttrs.match(/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
     const safeStyle = sanitizeImageStyle(styleMatch?.[1] || styleMatch?.[2] || '');
     const withoutStyle = rawAttrs.replace(/\sstyle\s*=\s*(?:"[^"]*"|'[^']*')/i, '');
-    const style = ['max-width:100%', 'height:auto', 'display:block', safeStyle]
-      .filter(Boolean)
-      .join(';');
+    const safeParts = safeStyle.split(';').filter(Boolean);
+    const safeProperties = new Set(
+      safeParts.map((part) => part.split(':', 1)[0].trim().toLowerCase()),
+    );
+    const defaults = [
+      ['max-width', '100%'],
+      ['height', 'auto'],
+      ['display', 'block'],
+    ]
+      .filter(([property]) => !safeProperties.has(property))
+      .map(([property, value]) => `${property}:${value}`);
+    const style = [...defaults, ...safeParts].join(';');
     return `<img${withoutStyle} style="${style}">`;
   });
 

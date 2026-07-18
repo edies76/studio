@@ -36,6 +36,7 @@ import {
   htmlForWordExport,
 } from '@/lib/math-html';
 import { importDocxToHtml } from '@/lib/import-docx';
+import { normsAgentPrompt } from '@/lib/style-norms';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
 import jsPDF from 'jspdf';
@@ -1087,28 +1088,11 @@ export default function DocsStudioClient({
   const handleToolsAction = (action: OrbitAction, intensity: number) => {
     const selected = selectedTextRef.current.trim();
     if (action === 'norms') {
-      // Dynamic import avoided — inline brief from known levels for client
-      const normHints: Record<number, string> = {
-        100: 'APA 7 (máximo rigor académico)',
-        75: 'IEEE (papers técnicos)',
-        50: 'MLA (humanidades)',
-        25: 'Simple (títulos, imágenes, tablas claras)',
-        10: 'Mínimo (solo lo obvio: jerarquía, título, sin reescribir tono)',
-      };
-      const hint = normHints[intensity] || normHints[50];
-      const scope = selected
-        ? 'Apply ONLY to the current selection (propose_edit replace_selection or edit_paragraph).'
-        : 'Apply to the entire document (propose_edit replace_document and/or several edit_paragraph).';
-      void runChat(
-        [
-          `Apply document norms: ${hint}.`,
-          scope,
-          'Use set_status, read_document, and if there is any math call list_equations first.',
-          'MATH-SAFE: never destroy LaTeX; use list_equations / edit_equation / insert_equation for formulas.',
-          'Propose changes for Accept/Reject. Summarize which norm level you applied.',
-        ].join('\n'),
-        selected ? { selectedText: selected, intensity } : { intensity },
-      );
+      // Full level brief (APA→minimal) so the agent applies real norms, not a one-liner
+      void runChat(normsAgentPrompt(intensity, Boolean(selected)), {
+        selectedText: selected || undefined,
+        intensity,
+      });
       return;
     }
     const labels: Record<Exclude<OrbitAction, 'norms'>, string> = {

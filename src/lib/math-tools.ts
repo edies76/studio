@@ -43,7 +43,9 @@ function extractTexFromHost(html: string, inner: string): string {
 export function listEquations(html: string): MathEntry[] {
   const out: MathEntry[] = [];
   if (!html) return out;
-  const seen = new Set<string>();
+  /** Character ranges already covered by studio-math hosts — raw \( \) / \[ \] inside them are NOT separate equations */
+  const covered: Array<[number, number]> = [];
+  const isCovered = (idx: number) => covered.some(([a, b]) => idx >= a && idx < b);
 
   let m: RegExpExecArray | null;
   const wrap = new RegExp(WRAP_RE.source, 'gi');
@@ -54,9 +56,7 @@ export function listEquations(html: string): MathEntry[] {
     const display =
       /data-display="1"|studio-math-block|display\s*=\s*["']?true/i.test(attrs + full);
     const tex = extractTexFromHost(full, inner);
-    const key = `${display}:${tex}:${m.index}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    covered.push([m.index, m.index + full.length]);
     const start = Math.max(0, m.index - 40);
     const ctx = stripTags(html.slice(start, m.index + full.length + 40)).slice(0, 120);
     out.push({
@@ -68,20 +68,19 @@ export function listEquations(html: string): MathEntry[] {
     });
   }
 
-  // Raw delimiters not already inside wrappers
+  // Raw delimiters NOT already inside wrappers
   const rawScan = (re: RegExp, display: boolean) => {
     re.lastIndex = 0;
     let rm: RegExpExecArray | null;
     while ((rm = re.exec(html))) {
+      if (isCovered(rm.index)) continue;
       const full = rm[0];
-      // skip if inside a studio-math host we already captured
-      const before = html.slice(Math.max(0, rm.index - 80), rm.index);
-      if (/studio-math|data-tex/i.test(before) && !before.includes('</')) continue;
       const tex = (rm[1] || '').trim();
       if (!tex) continue;
-      const key = `raw:${display}:${tex}:${rm.index}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      // Also skip if immediately preceded by data-tex host open tag (defensive)
+      const before = html.slice(Math.max(0, rm.index - 100), rm.index);
+      if (/studio-math|data-tex\s*=/i.test(before) && !/<\/(span|div)>/i.test(before)) continue;
+      covered.push([rm.index, rm.index + full.length]);
       const start = Math.max(0, rm.index - 40);
       out.push({
         index: out.length,
@@ -95,7 +94,6 @@ export function listEquations(html: string): MathEntry[] {
   rawScan(new RegExp(DELIM_DISPLAY.source, 'g'), true);
   rawScan(new RegExp(DELIM_INLINE.source, 'g'), false);
 
-  // reindex
   return out.map((e, i) => ({ ...e, index: i }));
 }
 
@@ -191,4 +189,86 @@ export function ensureMathHosts(html: string): string {
     return buildMathHtml(String(tex).trim(), false);
   });
   return h;
+}
+
+function texFingerprint(tex: string): string {
+  return (tex || '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * MATH-SAFE hard guard for free-form HTML rewrites (propose_edit / edit_paragraph).
+ * If the model dropped equations that existed before, re-append missing hosts
+ * so LaTeX is never silently destroyed. Returns repaired HTML + diagnostics.
+ */
+export function protectMathInRewrite(
+  beforeHtml: string,
+  afterHtml: string,
+): {
+  html: string;
+  beforeCount: number;
+  afterCount: number;
+  restored: number;
+  lostTex: string[];
+  mode: 'math-safe';
+} {
+  const before = ensureMathHosts(beforeHtml || '');
+  let after = ensureMathHosts(afterHtml || '');
+  const beforeEqs = listEquations(before);
+  const afterEqs = listEquations(after);
+
+  // Multiset of fingerprints present after rewrite
+  const afterBag = new Map<string, number>();
+  for (const e of afterEqs) {
+    const fp = texFingerprint(e.tex);
+    if (!fp) continue;
+    afterBag.set(fp, (afterBag.get(fp) || 0) + 1);
+  }
+
+  const lost: MathEntry[] = [];
+  for (const e of beforeEqs) {
+    const fp = texFingerprint(e.tex);
+    if (!fp) continue;
+    const n = afterBag.get(fp) || 0;
+    if (n > 0) {
+      afterBag.set(fp, n - 1);
+    } else {
+      lost.push(e);
+    }
+  }
+
+  if (lost.length > 0) {
+    const restoreBlock = lost
+      .map((e) => buildMathHtml(e.tex, e.display))
+      .join('');
+    // Prefer inject before trailing empty paragraphs; else append
+    if (/<\/p>\s*$/i.test(after.trim())) {
+      after = after.replace(/(<\/p>\s*)$/i, `${restoreBlock}$1`);
+    } else {
+      after = `${after}${restoreBlock}`;
+    }
+    after = ensureMathHosts(after);
+  }
+
+  const finalEqs = listEquations(after);
+  return {
+    html: after,
+    beforeCount: beforeEqs.length,
+    afterCount: finalEqs.length,
+    restored: lost.length,
+    lostTex: lost.map((e) => e.tex.slice(0, 80)),
+    mode: 'math-safe',
+  };
+}
+
+/** Snapshot for agent / logs */
+export function mathSafeSnapshot(html: string) {
+  const eqs = listEquations(html || '');
+  return {
+    equationCount: eqs.length,
+    equations: eqs.map((e) => ({
+      index: e.index,
+      display: e.display,
+      tex: e.tex.slice(0, 120),
+    })),
+  };
 }

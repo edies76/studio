@@ -183,25 +183,34 @@ export function extractHtmlBlocks(html: string): { index: number; tag: string; p
     .replace(/<div[^>]*data-studio-break[^>]*>[\s\S]*?<\/div>/gi, '')
     .replace(/<div[^>]*data-studio-tail[^>]*>[\s\S]*?<\/div>/gi, '');
 
+  // Include studio-math-block so insert_equation / edit can target math by block index
   const re =
-    /<(h[1-6]|p|li|blockquote|pre|table|ul|ol)(\s[^>]*)?>[\s\S]*?<\/\1>/gi;
+    /<(h[1-6]|p|li|blockquote|pre|table|ul|ol|div)(\s[^>]*)?>[\s\S]*?<\/\1>/gi;
   const out: { index: number; tag: string; preview: string; html: string }[] = [];
   let m: RegExpExecArray | null;
   while ((m = re.exec(cleaned))) {
-    // skip nested li inside already-captured ul? simple: skip if inside previous table-ish
     const full = m[0];
-    const tag = m[1].toLowerCase();
-    // skip li if we're going to show ul/ol as whole — keep li for edit granularity
+    let tag = m[1].toLowerCase();
+    const attrs = m[2] || '';
+    // Only keep divs that are math hosts (ignore layout wrappers)
+    if (tag === 'div') {
+      if (!/studio-math|data-tex|data-display/i.test(attrs + full)) continue;
+      tag = 'math';
+    }
     const plain = full
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 140);
-    if (!plain && tag !== 'table') continue;
+    if (!plain && tag !== 'table' && tag !== 'math') continue;
+    const preview =
+      tag === 'math'
+        ? `[math] ${(full.match(/data-tex="([^"]*)"/i)?.[1] || plain).slice(0, 100)}`
+        : plain || `[${tag}]`;
     out.push({
       index: out.length,
       tag,
-      preview: plain || `[${tag}]`,
+      preview,
       html: full,
     });
   }

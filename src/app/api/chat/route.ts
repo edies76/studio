@@ -14,6 +14,8 @@ import {
   buildMathHtml,
   ensureMathHosts,
   listEquations,
+  mathSafeSnapshot,
+  protectMathInRewrite,
   replaceEquationAt,
 } from '@/lib/math-tools';
 import { slog } from '@/lib/server-log';
@@ -104,13 +106,31 @@ export async function POST(req: NextRequest) {
 
       // Working HTML copy for math-safe tools within this request
       let liveHtml = ensureMathHosts(documentHtml || '');
+      /** Special MATH-SAFE mode: active when doc has equations or user talks math */
+      let mathSafeMode = listEquations(liveHtml).length > 0;
 
       try {
         // Immediate first paint — real thinking signal
         send({ type: 'thinking', label: 'Pensando…' });
 
-        const eqCount = listEquations(liveHtml).length;
-        slog.info('chat', 'math.scan', { equationCount: eqCount });
+        const snap0 = mathSafeSnapshot(liveHtml);
+        const eqCount = snap0.equationCount;
+        const lastUser = [...(messages || [])]
+          .reverse()
+          .find((m) => m.role === 'user')
+          ?.content || '';
+        if (
+          /ecuaci[oó]n|f[oó]rmula|latex|math|matriz|matrix|\\frac|\\begin|algebra/i.test(
+            lastUser,
+          )
+        ) {
+          mathSafeMode = true;
+        }
+        slog.info('chat', 'math.scan', {
+          equationCount: eqCount,
+          mathSafeMode,
+          sample: snap0.equations.slice(0, 6),
+        });
 
         const system = `You are Studio, a document copilot. Match the user language (Spanish/English).
 
@@ -118,6 +138,7 @@ Document title: ${documentTitle}
 Paper size: ${paperSize}
 Selected text: ${selectedText ? selectedText.slice(0, 2500) : '(none)'}
 Equations detected in document: ${eqCount}
+MATH-SAFE MODE: ${mathSafeMode ? 'ON (mandatory for this turn)' : 'standby — activate if you touch formulas'}
 ${assignmentContext ? `\nCONTEXT:\n${assignmentContext.slice(0, 8000)}\n` : ''}
 
 CURRENT DOCUMENT HTML (math already in studio-math / data-tex hosts when possible):
@@ -137,12 +158,14 @@ BEHAVIOR (REAL, not simulated):
 9. HTML fragments only: h1-h3,p,ul,ol,li,table,pre,code,strong,em,span/div.studio-math-*. No markdown fences.
 
 === MATH-SAFE MODE (hard rules — equations must NOT break) ===
-A. If the task touches formulas OR equationCount > 0: call list_equations before any formula change.
+The server runs a math-safe protector on every free HTML rewrite. Still:
+A. If equationCount > 0 OR task mentions formulas: call list_equations FIRST before any formula change.
 B. To CHANGE a formula: ONLY edit_equation(equationIndex, tex). Never rewrite TeX by free-text inside edit_paragraph.
 C. To ADD a formula: insert_equation. Never paste raw broken LaTeX as plain text.
-D. edit_paragraph / propose_edit may change prose around math but MUST keep existing <span/div class="studio-math-… data-tex="…"> hosts byte-stable unless you also used edit_equation for that index.
+D. edit_paragraph / propose_edit may change prose around math but MUST keep existing <span/div class="studio-math-… data-tex="…"> hosts. If you drop them, the server restores them.
 E. TeX in edit_equation is WITHOUT surrounding \\( \\) or \\[ \\].
 F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
+G. read_document may show tag "math" for display equation blocks — use those indices with insert_equation(afterBlockIndex).
 
 10. set_status labels must be concrete in user language.
 11. Style norms (APA/IEEE/MLA/simple/minimal): follow the user message; still obey MATH-SAFE.
@@ -268,7 +291,15 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                 label: focus ? `Leyendo (${focus})…` : 'Leyendo el documento…',
                 id: tid,
               });
-              const blocks = extractHtmlBlocks(documentHtml || '');
+              // Use liveHtml so prior math tools in this turn are visible
+              const blocks = extractHtmlBlocks(liveHtml);
+              const mathBlocks = blocks.filter((b) => b.tag === 'math').length;
+              slog.info('chat', 'tool.read_document', {
+                blockCount: blocks.length,
+                mathBlocks,
+                focus: focus || null,
+                htmlLen: liveHtml.length,
+              });
               const lines = blocks.map(
                 (b) =>
                   `[${b.index}] <${b.tag}> ${b.preview}${b.preview.length >= 140 ? '…' : ''}`,
@@ -281,19 +312,21 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                 type: 'tool_end',
                 name,
                 ok: true,
-                label: `Leído · ${blocks.length} bloque(s)`,
+                label: `Leído · ${blocks.length} bloque(s)${mathBlocks ? ` · ${mathBlocks} math` : ''}`,
                 id: tid,
               });
               await reply({
                 ok: true,
                 blockCount: blocks.length,
+                mathBlockCount: mathBlocks,
+                mathSafeMode,
                 blocks: blocks.map((b) => ({
                   index: b.index,
                   tag: b.tag,
                   preview: b.preview,
                 })),
                 listing,
-                note: 'Use blockIndex with edit_paragraph for targeted changes.',
+                note: 'Use blockIndex with edit_paragraph. Tag "math" = display equation host. Prefer list_equations + edit_equation for formulas.',
               });
               continue;
             }
@@ -303,7 +336,7 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
               const tid = `ep_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const blockIndex = Number(args.blockIndex);
               const title = args.title || `Editar bloque ${blockIndex}`;
-              const blocks = extractHtmlBlocks(documentHtml || '');
+              const blocks = extractHtmlBlocks(liveHtml);
               const block = Number.isFinite(blockIndex) ? blocks[blockIndex] : undefined;
               send({
                 type: 'tool_start',
@@ -312,6 +345,10 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                 id: tid,
               });
               if (!block) {
+                slog.warn('chat', 'tool.edit_paragraph.miss', {
+                  blockIndex,
+                  available: blocks.length,
+                });
                 send({
                   type: 'tool_end',
                   name,
@@ -325,9 +362,40 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                 });
                 continue;
               }
+              // Math hosts must not be edited via free HTML — redirect agent
+              if (block.tag === 'math') {
+                slog.warn('chat', 'tool.edit_paragraph.math_block_redirect', { blockIndex });
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: 'Bloque math → usá edit_equation',
+                  id: tid,
+                });
+                await reply({
+                  ok: false,
+                  error:
+                    'This block is a math host. Call list_equations then edit_equation(index, tex). Do not use edit_paragraph on math.',
+                });
+                continue;
+              }
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const beforeHtml = args.beforeHtml || block.html;
-              const afterHtml = ensureMathHosts(args.afterHtml || '');
+              const guarded = protectMathInRewrite(beforeHtml, args.afterHtml || '');
+              if (guarded.restored > 0) {
+                mathSafeMode = true;
+                slog.warn('chat', 'math.protect.restored', {
+                  tool: 'edit_paragraph',
+                  blockIndex,
+                  restored: guarded.restored,
+                  lostTex: guarded.lostTex,
+                });
+              }
+              const afterHtml = guarded.html;
+              // Patch liveHtml for multi-tool turns
+              if (liveHtml.includes(block.html)) {
+                liveHtml = liveHtml.replace(block.html, afterHtml);
+              }
               send({
                 type: 'propose_edit',
                 id,
@@ -339,13 +407,21 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                   afterHtml,
                   beforeHtml,
                   selectionHint: block.preview,
-                  changeList: [`Bloque ${blockIndex} (<${block.tag}>)`],
+                  changeList: [
+                    `Bloque ${blockIndex} (<${block.tag}>)`,
+                    ...(guarded.restored
+                      ? [`MATH-SAFE: restauradas ${guarded.restored} ecuación(es)`]
+                      : []),
+                  ],
                 },
               });
               slog.info('chat', 'tool.edit_paragraph', {
                 blockIndex,
                 tag: block.tag,
                 afterLen: afterHtml.length,
+                mathBefore: guarded.beforeCount,
+                mathAfter: guarded.afterCount,
+                mathRestored: guarded.restored,
               });
               send({
                 type: 'tool_end',
@@ -358,6 +434,11 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
                 ok: true,
                 id,
                 blockIndex,
+                mathSafe: {
+                  restored: guarded.restored,
+                  beforeCount: guarded.beforeCount,
+                  afterCount: guarded.afterCount,
+                },
                 note: 'Pending user Accept/Reject. Do NOT claim applied.',
               });
               continue;
@@ -370,29 +451,53 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
               send({ type: 'status', label: `Proponiendo: ${title}` });
               send({ type: 'tool_start', name, label: `Proponiendo: ${title}`, id: tid });
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              const mode = args.mode || 'replace_document';
               const beforeHtml =
                 args.beforeHtml ??
-                (args.mode === 'replace_document' ? liveHtml : selectedText || '');
-              const afterHtml = ensureMathHosts(args.afterHtml || '');
+                (mode === 'replace_document' ? liveHtml : selectedText || liveHtml);
+              const guarded = protectMathInRewrite(
+                mode === 'replace_document' ? liveHtml : beforeHtml,
+                args.afterHtml || '',
+              );
+              if (guarded.restored > 0) {
+                mathSafeMode = true;
+                slog.warn('chat', 'math.protect.restored', {
+                  tool: 'propose_edit',
+                  mode,
+                  restored: guarded.restored,
+                  lostTex: guarded.lostTex,
+                });
+              }
+              const afterHtml = guarded.html;
+              if (mode === 'replace_document') {
+                liveHtml = afterHtml;
+              }
+              const changeList = Array.isArray(args.changeList)
+                ? args.changeList.map(String)
+                : [];
+              if (guarded.restored) {
+                changeList.push(`MATH-SAFE: restauradas ${guarded.restored} ecuación(es)`);
+              }
               send({
                 type: 'propose_edit',
                 id,
                 edit: {
                   title,
                   summary: args.summary || 'Cambio propuesto',
-                  mode: args.mode || 'replace_document',
+                  mode,
                   afterHtml,
                   beforeHtml,
                   selectionHint: args.selectionHint || selectedText?.slice(0, 200),
-                  changeList: Array.isArray(args.changeList)
-                    ? args.changeList.map(String)
-                    : undefined,
+                  changeList: changeList.length ? changeList : undefined,
                 },
               });
               slog.info('chat', 'tool.propose_edit', {
                 id,
-                mode: args.mode || 'replace_document',
+                mode,
                 afterLen: afterHtml.length,
+                mathBefore: guarded.beforeCount,
+                mathAfter: guarded.afterCount,
+                mathRestored: guarded.restored,
               });
               send({
                 type: 'tool_end',
@@ -404,6 +509,11 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
               await reply({
                 ok: true,
                 id,
+                mathSafe: {
+                  restored: guarded.restored,
+                  beforeCount: guarded.beforeCount,
+                  afterCount: guarded.afterCount,
+                },
                 note: 'Pending user Accept/Reject. Do NOT claim applied.',
               });
               continue;
@@ -683,6 +793,8 @@ F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
           proposedSomething,
           streamedLive,
           finalLen: finalText.length,
+          mathSafeMode,
+          finalEquations: listEquations(liveHtml).length,
         });
         send({ type: 'done', finalText, model: usedModel });
       } catch (e: any) {

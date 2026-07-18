@@ -19,11 +19,15 @@ export type NormLevel = {
  * Five dots when action === norms, top → bottom:
  * APA → IEEE → MLA → Simple → Minimal
  */
+/**
+ * Selector order (top → bottom): APA → IEEE → MLA → Simple → Minimal
+ * value 100 is the top dot (most demanding). APA is the reference standard.
+ */
 export const NORM_LEVELS: NormLevel[] = [
   {
     value: 100,
     id: 'apa',
-    tip: 'APA 7 — máximo rigor',
+    tip: 'APA 7 — máximo rigor (referencia)',
     brief: `Apply APA 7th edition (academic paper norms) STRICTLY:
 - Title page style: clear title; author/affiliation lines if missing (don't invent fake authors — use placeholders only if needed)
 - Headings hierarchy (Level 1 centered bold; Level 2 flush left bold) approximated in HTML with h1/h2/h3
@@ -62,10 +66,10 @@ export const NORM_LEVELS: NormLevel[] = [
   {
     value: 25,
     id: 'simple',
-    tip: 'Simple — títulos e imágenes',
-    brief: `Apply SIMPLE document norms (no full style guide name):
-- Clear title (h1), section headings (h2/h3) consistent
-- Titles/section heads centered or visually hierarchical and clean
+    tip: 'Simple — títulos centrados, imágenes, tablas (sin nombre de norma)',
+    brief: `Apply SIMPLE document norms (no full style guide name — just obvious structure):
+- Clear title (h1) centered when it is the document title
+- Section headings (h2/h3) consistent and hierarchical
 - Images: max-width 100%, sensible margins, captions under images if present
 - Tables: header row, borders, readable
 - Lists for steps; short paragraphs
@@ -75,8 +79,8 @@ export const NORM_LEVELS: NormLevel[] = [
   {
     value: 10,
     id: 'minimal',
-    tip: 'Mínimo — solo lo obvio',
-    brief: `Apply MINIMAL obvious cleanup only (no named style):
+    tip: 'Mínimo — solo lo obvio (sin nombre)',
+    brief: `Apply MINIMAL obvious cleanup only (no named style guide):
 - Fix broken heading hierarchy (one h1, then h2…)
 - Center the main title if it looks like a title
 - Ensure images don't overflow; tables not broken

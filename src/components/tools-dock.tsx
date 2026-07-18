@@ -39,8 +39,8 @@ const ACTIONS: { id: OrbitAction; label: string; sendLabel: string; icon: ReactN
   { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-5 w-5" strokeWidth={1.75} /> },
   {
     id: 'norms',
-    label: 'Normas',
-    sendLabel: 'Send normas',
+    label: 'Aplicar normas',
+    sendLabel: 'Aplicar normas',
     icon: <BookMarked className="h-5 w-5" strokeWidth={1.75} />,
   },
 ];
@@ -54,11 +54,20 @@ const GENERIC_LEVELS = [
   { value: 10, tip: 'Muy poco' },
 ];
 
+/** Short chip labels: APA is reference at top; bottom = brief/obvious unnamed norms */
+const NORM_SHORT: Record<string, string> = {
+  apa: 'APA',
+  ieee: 'IEEE',
+  mla: 'MLA',
+  simple: 'Sim',
+  minimal: 'Min',
+};
+
 /** Normas: top = APA (más exigente) → bottom = mínimo obvio */
 const NORMS_DOTS = NORM_LEVELS.map((n) => ({
   value: n.value,
   tip: n.tip,
-  short: n.id.toUpperCase(),
+  short: NORM_SHORT[n.id] || n.id.toUpperCase(),
 }));
 
 export default function ToolsDock({
@@ -186,8 +195,8 @@ export default function ToolsDock({
                 onMouseLeave={() => setHoverKey(null)}
                 onClick={() => {
                   setAction(a.id);
-                  // Normas: default mid (MLA). Others: 50.
-                  setIntensity(a.id === 'norms' ? 50 : 50);
+                  // Normas: default APA (top, most strict) as reference point
+                  setIntensity(a.id === 'norms' ? 100 : 50);
                 }}
                 className={cn(cell, busy && 'opacity-40')}
               >
