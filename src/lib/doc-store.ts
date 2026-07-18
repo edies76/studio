@@ -8,6 +8,26 @@ import 'server-only';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import type { AssignmentBrief } from './assignment-types';
+
+export type StoredHistoryEntry = {
+  id: string;
+  type: 'created' | 'drafted' | 'edited' | 'proposed' | 'accepted' | 'rejected' | 'inserted' | 'exported';
+  label: string;
+  at: string;
+};
+
+export type StoredPendingEdit = {
+  id: string;
+  title: string;
+  summary: string;
+  mode: 'replace_document' | 'replace_selection' | 'replace_block';
+  beforeHtml: string;
+  afterHtml: string;
+  selectionHint?: string;
+  createdAt: string;
+  status: 'pending' | 'accepted' | 'rejected';
+};
 
 export type ChatTurn = {
   id: string;
@@ -21,6 +41,10 @@ export type StudioDocument = {
   userId: string;
   title: string;
   html: string;
+  paperSize: 'letter' | 'legal';
+  brief?: AssignmentBrief;
+  history: StoredHistoryEntry[];
+  pendingEdits: StoredPendingEdit[];
   preview?: string;
   createdAt: number;
   updatedAt: number;
@@ -184,6 +208,10 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     userId: String(it.userId),
     title: String(it.title || 'Untitled'),
     html: String(it.html || ''),
+    paperSize: it.paperSize === 'legal' ? 'legal' : 'letter',
+    brief: it.brief as AssignmentBrief | undefined,
+    history: Array.isArray(it.history) ? (it.history as StoredHistoryEntry[]) : [],
+    pendingEdits: Array.isArray(it.pendingEdits) ? (it.pendingEdits as StoredPendingEdit[]) : [],
     preview: String(it.preview || ''),
     createdAt: Number(it.createdAt || 0),
     updatedAt: Number(it.updatedAt || 0),
@@ -204,6 +232,10 @@ async function dynamoSave(doc: StudioDocument): Promise<StudioDocument> {
         userId: doc.userId,
         title: doc.title,
         html: doc.html,
+        paperSize: doc.paperSize,
+        brief: doc.brief,
+        history: doc.history || [],
+        pendingEdits: doc.pendingEdits || [],
         preview: doc.preview || previewFromHtml(doc.html),
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
@@ -240,7 +272,7 @@ export async function getDocument(userId: string, id: string): Promise<StudioDoc
 
 export async function createDocument(
   userId: string,
-  opts?: { title?: string; html?: string },
+  opts?: { title?: string; html?: string; paperSize?: 'letter' | 'legal'; brief?: AssignmentBrief },
 ): Promise<StudioDocument> {
   const now = Date.now();
   const doc: StudioDocument = {
@@ -248,6 +280,10 @@ export async function createDocument(
     userId,
     title: opts?.title || 'Untitled',
     html: opts?.html || '<p><br></p>',
+    paperSize: opts?.paperSize === 'legal' ? 'legal' : 'letter',
+    brief: opts?.brief,
+    history: [],
+    pendingEdits: [],
     preview: previewFromHtml(opts?.html || ''),
     createdAt: now,
     updatedAt: now,
@@ -260,7 +296,15 @@ export async function createDocument(
 export async function saveDocument(
   userId: string,
   id: string,
-  patch: { title?: string; html?: string; chat?: ChatTurn[] },
+  patch: {
+    title?: string;
+    html?: string;
+    paperSize?: 'letter' | 'legal';
+    brief?: AssignmentBrief;
+    history?: StoredHistoryEntry[];
+    pendingEdits?: StoredPendingEdit[];
+    chat?: ChatTurn[];
+  },
 ): Promise<StudioDocument | null> {
   const existing = await getDocument(userId, id);
   if (!existing) return null;
@@ -268,6 +312,10 @@ export async function saveDocument(
     ...existing,
     title: patch.title ?? existing.title,
     html: patch.html ?? existing.html,
+    paperSize: patch.paperSize ?? existing.paperSize ?? 'letter',
+    brief: patch.brief ?? existing.brief,
+    history: patch.history ?? existing.history ?? [],
+    pendingEdits: patch.pendingEdits ?? existing.pendingEdits ?? [],
     chat: patch.chat ?? existing.chat,
     updatedAt: Date.now(),
   };

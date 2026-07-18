@@ -326,8 +326,8 @@ export async function readSse(response: Response) {
   return events;
 }
 
-export async function callDocsStudioApi(path: string, body: unknown) {
-  const base = (process.env.DOCS_STUDIO_URL || 'http://localhost:9003').replace(/\/$/, '');
+export async function callDocsStudioApi(path: string, body: unknown, baseOverride?: string) {
+  const base = (baseOverride || process.env.DOCS_STUDIO_URL || process.env.NEXTAUTH_URL || 'http://localhost:9003').replace(/\/$/, '');
   return fetch(`${base}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
