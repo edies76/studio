@@ -929,7 +929,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 top: Math.max(8, imageTools.top - 52),
                 left: Math.max(8, Math.min(imageTools.left, Math.max(8, scrollRef.current?.clientWidth || 360) - 350)),
               }}
-              onMouseDown={(event) => event.preventDefault()}
+              onMouseDown={(event) => {
+                const target = event.target as HTMLElement;
+                if (!target.closest('button, input, select')) event.preventDefault();
+              }}
               onPointerDown={(event) => event.stopPropagation()}
               data-image-tools
             >
