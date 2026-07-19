@@ -59,12 +59,14 @@ export type DocListItem = {
   createdAt: number;
 };
 
+/**
+ * Use DynamoDB when table + region are set.
+ * Credentials: explicit keys, AWS profile, Lambda, OR EC2/ECS instance role
+ * (default SDK chain — do NOT require AWS_ACCESS_KEY_ID on EC2).
+ */
 function useDynamo(): boolean {
-  return Boolean(
-    process.env.AWS_REGION &&
-      process.env.DOCS_TABLE &&
-      (process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE || process.env.AWS_EXECUTION_ENV),
-  );
+  if (process.env.DOCS_USE_LOCAL === '1') return false;
+  return Boolean(process.env.AWS_REGION && process.env.DOCS_TABLE);
 }
 
 function dataDir() {
