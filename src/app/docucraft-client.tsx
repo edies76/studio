@@ -1330,6 +1330,8 @@ export default function DocsStudioClient({
 
       const clickedEditor = target.closest('.studio-doc-editor');
       const clickedSelectionToolbar = target.closest('[data-selection-ui]');
+      const clickedComposer = target.closest('.floating-composer-shell');
+      const clickedChat = target.closest('.studio-chat-panel');
       const clickedTopToolbar = target.closest(
         '[data-document-editor-toolbar], [data-studio-toolbar], .document-editor-toolbar',
       );
@@ -1338,7 +1340,7 @@ export default function DocsStudioClient({
       // color/highlight choice dismisses the bar before its second use.
       const clickedToolbarMenu = target.closest('[role="menu"]');
 
-      if (!clickedEditor && !clickedSelectionToolbar && !clickedTopToolbar && !clickedToolbarMenu) {
+      if (!clickedEditor && !clickedSelectionToolbar && !clickedComposer && !clickedChat && !clickedTopToolbar && !clickedToolbarMenu) {
         clearSelectionContext();
       }
     };
@@ -1482,11 +1484,23 @@ export default function DocsStudioClient({
     } else if (edit.mode === 'replace_selection' && selectionRef.current) {
       try {
         const range = selectionRef.current;
-        range.deleteContents();
+        const hostBlock =
+          range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+            ? (range.commonAncestorContainer as HTMLElement).closest('p, h1, h2, h3, li, blockquote')
+            : range.commonAncestorContainer.parentElement?.closest('p, h1, h2, h3, li, blockquote');
         const temp = document.createElement('div');
         temp.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
         const frag = document.createDocumentFragment();
-        while (temp.firstChild) frag.appendChild(temp.firstChild);
+        const replacementBlock = temp.children.length === 1 ? temp.firstElementChild : null;
+        // A partial selection inside one text block must stay inline. Inserting
+        // a generated <p> into that <p> splits surrounding text and makes the
+        // proposal look like a whole-paragraph replacement.
+        if (hostBlock?.tagName === 'P' && replacementBlock?.tagName === 'P') {
+          while (replacementBlock.firstChild) frag.appendChild(replacementBlock.firstChild);
+        } else {
+          while (temp.firstChild) frag.appendChild(temp.firstChild);
+        }
+        range.deleteContents();
         range.insertNode(frag);
         const html = readEditorHtml();
         applyHtml(html, true);
@@ -2015,7 +2029,10 @@ export default function DocsStudioClient({
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
-      <div className="pointer-events-none absolute right-3 top-3 z-50 flex items-center gap-2">
+      <div
+        className="pointer-events-none absolute top-3 z-50 flex items-center gap-2 transition-[right] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ right: chatCollapsed ? 12 : chatWidth + 18 }}
+      >
         <label className="pointer-events-auto hidden sm:block">
           <span className="sr-only">Document title</span>
           <input

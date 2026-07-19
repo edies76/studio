@@ -1002,6 +1002,52 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       onHistoryBoundary?.();
     }
 
+    // Enter near page bottom → flush rebalance immediately so the browser
+    // never gets a chance to scroll the overflow:hidden body before the new
+    // page exists. We post a rAF so the browser first inserts the new <p>,
+    // then we check overflow and rebalance with 0-delay if needed.
+    if (event.key === 'Enter' && !modifier) {
+      const body = bodyRefs.current[pageIdx];
+      if (body) {
+        requestAnimationFrame(() => {
+          if (body.scrollHeight > body.clientHeight + 2) {
+            body.scrollTop = 0;
+            if (rebalanceTimer.current) {
+              clearTimeout(rebalanceTimer.current);
+              rebalanceTimer.current = null;
+            }
+            const liveCount = Math.max(bodyRefs.current.filter(Boolean).length, 1);
+            const live = Array.from({ length: liveCount }, (_, i) =>
+              bodyRefs.current[i]?.innerHTML ?? '<p><br></p>',
+            );
+            const next = rebalanceFromPage(live, pageIdx, metrics, styleOpts);
+            lastExternalHtml.current = joinPageHtmls(next);
+            skipInput.current = true;
+            setPages(next);
+            requestAnimationFrame(() => {
+              const grew = next.length > live.length;
+              next.forEach((pageHtml, i) => {
+                const el = bodyRefs.current[i];
+                if (!el) return;
+                if (el.innerHTML === pageHtml) return;
+                el.innerHTML = pageHtml;
+                typesetEditor(el);
+              });
+              if (grew) {
+                const last = bodyRefs.current[next.length - 1];
+                if (last) {
+                  placeCaretAtEnd(last);
+                  last.closest('.studio-page-sheet')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                }
+              }
+              skipInput.current = false;
+              onInput();
+            });
+          }
+        });
+      }
+    }
+
     // Backspace on empty last page → remove page (Word-like)
     if (event.key === 'Backspace' && pageIdx > 0) {
       const body = bodyRefs.current[pageIdx];

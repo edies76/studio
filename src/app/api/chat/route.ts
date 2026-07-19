@@ -102,6 +102,17 @@ function isFastLaneQuestion(text: string, selectedText: string) {
   return !/\b(documento|lienzo|hoja|p[áa]gina|texto|p[áa]rrafo|selecci[oó]n|ecuaci[oó]n|f[oó]rmula|tabla|imagen|estructura|esquema|outline|brief|norma|apa|ieee|mla|document|canvas|page|text|paragraph|selection|equation|formula|table|image|structure|cambia|cambiar|pon|aplica|formatea|edita|corrige|reescribe|escribe|redacta|genera|crea|inserta|elimina|borra|mueve|inspecciona|analiza|revisa|comprueba|valida|busca|encuentra|resume|deshaz|rehaz|undo|redo|format|change|apply|edit|rewrite|write|draft|generate|create|insert|delete|remove|move|fix|check|review|search|summarize)\b/i.test(text);
 }
 
+/**
+ * A selection is an explicit scope contract. Short imperative requests such
+ * as "cámbialo por…" must never enter the document-agent tool loop, where a
+ * model can legitimately choose edit_paragraph and replace the whole block.
+ */
+function isSelectionRewriteRequest(text: string) {
+  return /\b(?:cambia(?:lo)?|reemplaza(?:lo)?|sustituye(?:lo)?|reescribe(?:lo)?|corrige(?:lo)?|mejora(?:lo)?|acorta(?:lo)?|expande(?:lo)?|pon|haz|edita(?:lo)?|replace|change|rewrite|fix|improve|shorten|expand|edit)\b/i.test(
+    text,
+  );
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const {
@@ -303,8 +314,11 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               lastUser,
             )
           : null;
-        if (quickRewriteMatch && selectedText.trim() && workspaceContext?.agentPermission !== 'read') {
-          const [, actionLabel, intensityRaw] = quickRewriteMatch;
+        const rewriteSelectedText = !mathSafeMode && selectedText.trim() &&
+          (Boolean(quickRewriteMatch) || isSelectionRewriteRequest(lastUser));
+        if (rewriteSelectedText && workspaceContext?.agentPermission !== 'read') {
+          const [, quickActionLabel = 'Edit selection', intensityRaw] = quickRewriteMatch || [];
+          const actionLabel = quickRewriteMatch ? quickActionLabel : 'Edit selection';
           const intensity = Math.max(0, Math.min(100, Number(intensityRaw) || 50));
           const instructions: Record<string, string> = {
             improve: `Improve the writing quality, clarity, and flow of this text at intensity ${intensity}% (higher = more thorough rewrite) without changing its meaning.`,
@@ -313,7 +327,9 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
             'fix grammar': `Fix grammar, spelling, and punctuation errors in this text without changing its meaning, tone, or length.`,
             'more academic': `Rewrite this text in a more formal, academic register at intensity ${intensity}% (higher = more formal), without changing its core meaning.`,
           };
-          const instruction = instructions[actionLabel.toLowerCase()] || `${actionLabel} this text.`;
+          const instruction = quickRewriteMatch
+            ? instructions[actionLabel.toLowerCase()] || `${actionLabel} this text.`
+            : `Follow this user instruction exactly for the selected text: ${lastUser}`;
           const tid = `quick_rewrite_${Date.now()}`;
           send({ type: 'status', label: `${actionLabel}…` });
           send({ type: 'tool_start', name: 'quick_rewrite', label: `${actionLabel}…`, id: tid });

@@ -103,7 +103,7 @@ export default function HomePage() {
     void load();
   }, [load]);
 
-  const createDoc = async (title = 'Untitled', html = '<p><br></p>', paperSize?: 'letter' | 'legal' | 'a4') => {
+  const createDoc = async (title = 'Untitled', html = '<p><br></p>', paperSize?: 'letter' | 'legal' | 'a4', navigate = true) => {
     setCreating(true);
     try {
       const res = await fetch('/api/docs', {
@@ -113,13 +113,15 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'create failed');
-      router.push(`/studio/doc/${data.doc.id}`);
+      if (navigate) router.push(`/studio/doc/${data.doc.id}`);
+      return data.doc as { id: string };
     } catch (e: any) {
       toast({
         variant: 'destructive',
         title: locale === 'es' ? 'No se pudo crear' : 'Could not create',
         description: e?.message,
       });
+      return null;
     } finally {
       setCreating(false);
     }
@@ -129,7 +131,13 @@ export default function HomePage() {
     setCreating(true);
     try {
       const imported = await importDocxToHtml(await file.arrayBuffer(), file.name);
-      await createDoc(imported.titleHint, imported.fidelityHtml || imported.html, imported.paperSize);
+      const doc = await createDoc(imported.titleHint, imported.fidelityHtml || imported.html, imported.paperSize, false);
+      if (!doc) return;
+      const form = new FormData();
+      form.set('file', file);
+      const source = await fetch(`/api/docs/${doc.id}/source`, { method: 'POST', body: form });
+      if (!source.ok) throw new Error('No se pudo conservar el .docx original.');
+      router.push(`/studio/doc/${doc.id}`);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'No se pudo abrir el documento', description: error?.message || 'Revisa el archivo Word.' });
     } finally {

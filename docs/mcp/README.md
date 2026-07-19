@@ -113,7 +113,7 @@ npm run mcp:stdio
 npm run mcp:http
 ```
 
-The Next route can be smoke-tested locally only when `MCP_ALLOW_LOCAL=1` and `MCP_API_KEY` are set. It is intentionally disabled otherwise so a misconfigured production deployment cannot fall back to local JSON files.
+During local development, personal credentials are stored in `.data/docs/mcp-credentials.json` automatically. Set `MCP_ALLOW_LOCAL=1` only if you explicitly need that fallback in a production-like process; a production runtime without DynamoDB stays disabled and never falls back to local JSON files.
 
 ## What this does not claim
 

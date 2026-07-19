@@ -52,6 +52,8 @@ export type StudioDocument = {
   title: string;
   html: string;
   paperSize: 'letter' | 'legal' | 'a4';
+  /** Original OOXML source retained for the high-fidelity office editor. */
+  sourceDocx?: { fileName: string; size: number; updatedAt: number };
   brief?: AssignmentBrief;
   history: StoredHistoryEntry[];
   pendingEdits: StoredPendingEdit[];
@@ -334,6 +336,7 @@ export async function saveDocument(
     title?: string;
     html?: string;
     paperSize?: 'letter' | 'legal' | 'a4';
+    sourceDocx?: StudioDocument['sourceDocx'];
     brief?: AssignmentBrief;
     history?: StoredHistoryEntry[];
     pendingEdits?: StoredPendingEdit[];
@@ -352,6 +355,7 @@ export async function saveDocument(
     title: patch.title ?? existing.title,
     html: patch.html ?? existing.html,
     paperSize: patch.paperSize ?? existing.paperSize ?? 'letter',
+    sourceDocx: patch.sourceDocx ?? existing.sourceDocx,
     brief: patch.brief ?? existing.brief,
     history: patch.history ?? existing.history ?? [],
     pendingEdits: patch.pendingEdits ?? existing.pendingEdits ?? [],
