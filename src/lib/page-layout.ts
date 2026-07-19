@@ -90,8 +90,11 @@ export function htmlToBlockHtmls(html: string): string[] {
           .filter((attribute) => attribute.name.toLowerCase() !== 'start')
           .map((attribute) => ` ${attribute.name}="${attribute.value.replace(/"/g, '&quot;')}"`)
           .join('');
+        const originalStart = Number.parseInt(el.getAttribute('start') || '1', 10) || 1;
         items.forEach((item, index) => {
-          const start = tag === 'ol' && index > 0 ? ` start="${index + 1}"` : '';
+          // Preserve imported Word/HTML numbering rather than restarting a
+          // split list at one when its items cross visual pages.
+          const start = tag === 'ol' ? ` start="${originalStart + index}"` : '';
           blocks.push(`<${tag}${attributes}${start}>${item.outerHTML}</${tag}>`);
         });
         return;
