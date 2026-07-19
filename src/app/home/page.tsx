@@ -90,7 +90,7 @@ export default function HomePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'create failed');
-      router.push(`/studio?doc=${data.doc.id}`);
+      router.push(`/studio/doc/${data.doc.id}`);
     } catch (e: any) {
       toast({
         variant: 'destructive',
@@ -253,7 +253,7 @@ export default function HomePage() {
               <div className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-neutral-50/80 sm:px-5">
                 <button
                   type="button"
-                  onClick={() => router.push(`/studio?doc=${d.id}`)}
+                  onClick={() => router.push(`/studio/doc/${d.id}`)}
                   className="flex min-w-0 flex-1 items-start gap-3 text-left"
                 >
                   <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600">

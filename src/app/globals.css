@@ -1407,6 +1407,19 @@
     min-width: 0;
   }
 
+  .landing-brand-lockup {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    text-decoration: none;
+    color: inherit;
+  }
+
+  .landing-brand-lockup__mark {
+    flex-shrink: 0;
+  }
+
   .landing-wordmark {
     display: inline-flex;
     align-items: baseline;
@@ -4455,6 +4468,7 @@
 /* Product landing at / — the workspace is /studio; this page only explains it. */
 .home-landing__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 19px; margin-top: 31px; }
 .home-landing__actions .landing-primary-button { background: var(--landing-acid); color: #211b17; }
+.home-landing__positioning { max-width: 610px; margin: 16px 0 0; color: #75695e; font-size: 12px; line-height: 1.55; }
 .home-landing__actions .landing-primary-button > span { background: rgba(33, 27, 23, 0.13); }
 .home-landing__text-link { color: var(--landing-soft); font-size: 12px; }
 .home-landing__text-link:hover { color: var(--landing-acid); }

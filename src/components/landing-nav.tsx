@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
-import { useLocale } from '@/lib/i18n/locale-context';
+import BrandMark from '@/components/brand-mark';
 import LocaleSwitch from '@/components/locale-switch';
+import { useLocale } from '@/lib/i18n/locale-context';
+import { cn } from '@/lib/utils';
 
 /**
- * Slim header: wordmark left (studio expands on scroll-down), links + EN/ES + CTA right.
+ * Header: logo + DocsS wordmark (studio expands on scroll-down) left;
+ * section links + EN/ES + CTA right.
  */
 export default function LandingNav() {
   const { t } = useLocale();
@@ -26,11 +28,7 @@ export default function LandingNav() {
         open = true;
         setStudioOpen(true);
       }
-      if (goingUp && y < 80 && open) {
-        open = false;
-        setStudioOpen(false);
-      }
-      if (y < 12 && open) {
+      if ((goingUp && y < 80 && open) || y < 12) {
         open = false;
         setStudioOpen(false);
       }
@@ -45,15 +43,18 @@ export default function LandingNav() {
     <header className="landing-nav landing-nav--slim">
       <Link
         href="/"
-        className={cn('landing-wordmark', studioOpen && 'is-open')}
+        className={cn('landing-brand-lockup', studioOpen && 'is-open')}
         aria-label="Docs Studio"
       >
-        <span className="landing-wordmark__docs">Docs</span>
-        <span className="landing-wordmark__s" aria-hidden="true">
-          S
-        </span>
-        <span className="landing-wordmark__studio" aria-hidden={!studioOpen}>
-          tudio
+        <BrandMark size={32} className="landing-brand-lockup__mark" />
+        <span className={cn('landing-wordmark', studioOpen && 'is-open')}>
+          <span className="landing-wordmark__docs">Docs</span>
+          <span className="landing-wordmark__s" aria-hidden="true">
+            S
+          </span>
+          <span className="landing-wordmark__studio" aria-hidden={!studioOpen}>
+            tudio
+          </span>
         </span>
       </Link>
 

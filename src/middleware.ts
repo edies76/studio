@@ -8,11 +8,17 @@ import type { NextRequest } from 'next/server';
 export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
-  // Legacy: editor used to live at `/` with ?doc= / ?topic=
-  if (path === '/') {
+  // Legacy query routes → canonical paths
+  if (path === '/' || path === '/studio') {
     const doc = req.nextUrl.searchParams.get('doc');
     const topic = req.nextUrl.searchParams.get('topic');
-    if (doc || topic) {
+    if (doc && doc !== 'new') {
+      const url = req.nextUrl.clone();
+      url.pathname = `/studio/doc/${doc}`;
+      url.searchParams.delete('doc');
+      return NextResponse.redirect(url);
+    }
+    if (path === '/' && topic) {
       const url = req.nextUrl.clone();
       url.pathname = '/studio';
       return NextResponse.redirect(url);
@@ -56,5 +62,13 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/home', '/home/:path*', '/studio', '/studio/:path*', '/api/docs/:path*', '/pre-summary'],
+  matcher: [
+    '/',
+    '/home',
+    '/home/:path*',
+    '/studio',
+    '/studio/:path*',
+    '/api/docs/:path*',
+    '/pre-summary',
+  ],
 };

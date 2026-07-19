@@ -15,6 +15,8 @@ export const messages = {
     'hero.title2': 'It ends in the file.',
     'hero.lede':
       'An academic workspace: bring the assignment brief, work on a paginated canvas, and let the copilot propose. You accept or reject. Export when the file is ready to submit.',
+    'hero.positioning':
+      'Docs Studio is not a Word replacement. It is the working layer between an imperfect brief and a reviewable document, with context, proposals, and document objects an agent can control.',
     'hero.fact1k': 'Context',
     'hero.fact1v': 'Brief + rubric',
     'hero.fact2k': 'Surface',
@@ -27,7 +29,7 @@ export const messages = {
     'product.rule': 'What it actually does',
     'product.h2': 'A document that remembers the assignment.',
     'product.p':
-      'The difference is not generating more text. It is keeping the conditions that make the text useful visible: the brief, the format, the structure, and the review.',
+      'The difference is not generating more text. It is keeping the conditions that make the text useful visible: the brief, the format, the structure, and the review. It is a focused document workspace, not a general-purpose Word clone.',
     'cap.1.t': 'The brief enters as context',
     'cap.1.b':
       'The parser identifies tasks, objectives, constraints, and rubric so the document does not start blind.',
@@ -73,11 +75,7 @@ export const messages = {
     'login.guestHint': 'Guest · documents on this server (DynamoDB)',
     'login.optional': 'optional',
     'login.google': 'Sign in with Google',
-    'login.googleFail': 'If Google fails (redirect_uri), no problem: use without an account.',
     'login.workspace': 'Go straight to the workspace',
-    'login.error': 'Could not sign in with Google. You can continue without an account.',
-    'login.errorConfig':
-      'Google OAuth misconfigured (redirect_uri). You can continue without an account.',
     'home.library': '/home · Library',
     'home.title': 'Your documents',
     'home.guest': 'Guest mode — docs are saved on this server. Open each one in /studio.',
@@ -105,6 +103,8 @@ export const messages = {
     'hero.title2': 'Termina en el archivo.',
     'hero.lede':
       'Un workspace academico: trae la guia del taller, trabaja en un lienzo paginado y deja que el copiloto proponga. Tu aceptas o rechazas. Exporta cuando el archivo este listo para entregar.',
+    'hero.positioning':
+      'Docs Studio no busca reemplazar Word. Es la capa de trabajo entre una consigna imperfecta y un documento revisable, con contexto, propuestas y objetos que tambien puede controlar un agente.',
     'hero.fact1k': 'Contexto',
     'hero.fact1v': 'Brief + rubrica',
     'hero.fact2k': 'Superficie',
@@ -117,7 +117,7 @@ export const messages = {
     'product.rule': 'Que hace de verdad',
     'product.h2': 'Un documento con memoria del encargo.',
     'product.p':
-      'La diferencia no es generar mas texto. Es mantener visibles las condiciones que hacen que ese texto sirva: la guia, el formato, la estructura y la revision.',
+      'La diferencia no es generar mas texto. Es mantener visibles las condiciones que hacen que ese texto sirva: la guia, el formato, la estructura y la revision. Es un workspace documental enfocado, no un clon generalista de Word.',
     'cap.1.t': 'La guia entra en contexto',
     'cap.1.b':
       'El parser identifica tareas, objetivos, restricciones y rubrica para que el documento no empiece a ciegas.',
@@ -163,11 +163,7 @@ export const messages = {
     'login.guestHint': 'Invitado · documentos en este servidor (DynamoDB)',
     'login.optional': 'opcional',
     'login.google': 'Entrar con Google',
-    'login.googleFail': 'Si Google falla (redirect_uri), no pasa nada: usa sin cuenta.',
     'login.workspace': 'Ir directo al workspace',
-    'login.error': 'No se pudo iniciar sesion con Google. Puedes continuar sin cuenta.',
-    'login.errorConfig':
-      'Google OAuth mal configurado (redirect_uri). Puedes continuar sin cuenta.',
     'home.library': '/home · Biblioteca',
     'home.title': 'Tus documentos',
     'home.guest': 'Modo invitado — los docs se guardan en este servidor. Abre cada uno en /studio.',

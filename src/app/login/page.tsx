@@ -13,75 +13,100 @@ function LoginInner() {
   const router = useRouter();
   const { t } = useLocale();
   const callbackUrl = params.get('callbackUrl') || '/home';
-  const error = params.get('error');
 
   return (
-    <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-[#f7f6f3] px-4">
-      <div className="absolute right-4 top-4">
-        <LocaleSwitch />
-      </div>
-      <div className="w-full max-w-sm rounded-3xl border border-neutral-200/90 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.06)]">
-        <div className="mb-6 flex flex-col items-center text-center">
-          <BrandMark size={44} />
-          <h1 className="mt-4 text-[22px] font-semibold tracking-tight text-neutral-900">
-            {t('login.title')}
-          </h1>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500">{t('login.lede')}</p>
-        </div>
-
-        {error && (
-          <p className="mb-4 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-center text-[12px] text-red-700">
-            {error === 'Configuration' || error === 'OAuthCallback'
-              ? t('login.errorConfig')
-              : t('login.error')}
-          </p>
-        )}
-
-        <button
-          type="button"
-          onClick={() => router.push(callbackUrl || '/home')}
-          className={cn(
-            'flex w-full items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-3',
-            'text-[14px] font-semibold text-white shadow-sm transition',
-            'hover:bg-neutral-800 active:scale-[0.99]',
-          )}
-        >
-          {t('login.guest')}
-        </button>
-
-        <p className="mt-3 text-center text-[11px] text-neutral-400">{t('login.guestHint')}</p>
-
-        <div className="my-5 flex items-center gap-3">
-          <span className="h-px flex-1 bg-neutral-200" />
-          <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
-            {t('login.optional')}
+    <div className="relative flex min-h-[100dvh] bg-[#f3f0ea]">
+      {/* Left panel — editorial */}
+      <div className="relative hidden w-[46%] flex-col justify-between overflow-hidden border-r border-neutral-200/80 bg-[#211b17] px-12 py-12 text-[#fff8f0] lg:flex">
+        <div className="pointer-events-none absolute inset-0 opacity-40"
+          style={{
+            background:
+              'radial-gradient(circle at 20% 20%, rgba(139,74,52,0.35), transparent 45%), radial-gradient(circle at 80% 80%, rgba(255,248,240,0.08), transparent 40%)',
+          }}
+        />
+        <div className="relative z-10 flex items-center gap-3">
+          <BrandMark size={36} />
+          <span className="text-[15px] font-semibold tracking-tight">
+            Docs<span className="text-[#d4a574]">S</span>
           </span>
-          <span className="h-px flex-1 bg-neutral-200" />
+        </div>
+        <div className="relative z-10 max-w-sm">
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-white/45">
+            Academic workspace
+          </p>
+          <h2 className="mt-4 text-[2.4rem] font-semibold leading-[1.1] tracking-tight">
+            From brief
+            <br />
+            to file.
+          </h2>
+          <p className="mt-5 text-[14px] leading-relaxed text-white/55">
+            Paginated canvas, reviewable AI edits, math that stays intact. Sign in only if you want
+            your library across devices.
+          </p>
+        </div>
+        <p className="relative z-10 text-[11px] text-white/35">docss.studio</p>
+      </div>
+
+      {/* Right panel — actions */}
+      <div className="relative flex flex-1 flex-col">
+        <div className="absolute right-5 top-5 z-10">
+          <LocaleSwitch />
         </div>
 
-        <button
-          type="button"
-          onClick={() => signIn('google', { callbackUrl })}
-          className={cn(
-            'flex w-full items-center justify-center gap-3 rounded-full border border-neutral-200 bg-white px-4 py-3',
-            'text-[14px] font-semibold text-neutral-800 shadow-sm transition',
-            'hover:bg-neutral-50 hover:shadow-md active:scale-[0.99]',
-          )}
-        >
-          <GoogleIcon />
-          {t('login.google')}
-        </button>
+        <div className="flex flex-1 flex-col items-center justify-center px-6 py-16">
+          <div className="w-full max-w-[360px]">
+            <div className="mb-10 text-center lg:text-left">
+              <div className="mb-5 flex justify-center lg:hidden">
+                <BrandMark size={40} />
+              </div>
+              <h1 className="text-[26px] font-semibold tracking-tight text-neutral-900">
+                {t('login.title')}
+              </h1>
+              <p className="mt-2 text-[14px] leading-relaxed text-neutral-500">{t('login.lede')}</p>
+            </div>
 
-        <p className="mt-4 text-center text-[11px] leading-relaxed text-neutral-400">
-          {t('login.googleFail')}
-        </p>
+            <button
+              type="button"
+              onClick={() => signIn('google', { callbackUrl })}
+              className={cn(
+                'flex w-full items-center justify-center gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3.5',
+                'text-[14px] font-semibold text-neutral-900 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition',
+                'hover:border-neutral-300 hover:bg-neutral-50 hover:shadow-md active:scale-[0.99]',
+              )}
+            >
+              <GoogleIcon />
+              {t('login.google')}
+            </button>
 
-        <a
-          href="/studio"
-          className="mt-4 block text-center text-[12px] font-medium text-neutral-500 underline-offset-2 hover:text-neutral-800 hover:underline"
-        >
-          {t('login.workspace')}
-        </a>
+            <div className="my-6 flex items-center gap-3">
+              <span className="h-px flex-1 bg-neutral-200" />
+              <span className="text-[10px] font-medium uppercase tracking-[0.16em] text-neutral-400">
+                or
+              </span>
+              <span className="h-px flex-1 bg-neutral-200" />
+            </div>
+
+            <button
+              type="button"
+              onClick={() => router.push(callbackUrl || '/home')}
+              className={cn(
+                'flex w-full items-center justify-center rounded-2xl bg-neutral-900 px-4 py-3.5',
+                'text-[14px] font-semibold text-white transition',
+                'hover:bg-neutral-800 active:scale-[0.99]',
+              )}
+            >
+              {t('login.guest')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push('/studio')}
+              className="mt-4 w-full text-center text-[13px] font-medium text-neutral-500 transition hover:text-neutral-800"
+            >
+              {t('login.workspace')}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -114,7 +139,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="flex min-h-[100dvh] items-center justify-center bg-[#f7f6f3] text-sm text-neutral-500">
+        <div className="flex min-h-[100dvh] items-center justify-center bg-[#f3f0ea] text-sm text-neutral-500">
           Loading…
         </div>
       }

@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
+import EquationEditorDialog from '@/components/equation-editor-dialog';
 import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
 import StudioChat, {
   type ActivityStep,
@@ -105,6 +106,11 @@ export default function DocsStudioClient({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
+  const [equationEditor, setEquationEditor] = useState<{
+    target: HTMLElement | null;
+    tex: string;
+    display: boolean;
+  } | null>(null);
 
   const [history, setHistory] = useState<string[]>([EMPTY_DOCUMENT_HTML]);
   const [historyIndex, setHistoryIndex] = useState(0);
@@ -121,10 +127,12 @@ export default function DocsStudioClient({
   const selectionRef = useRef<Range | null>(null);
   const selectedTextRef = useRef('');
   const abortRef = useRef<AbortController | null>(null);
+  const requestStartedAt = useRef<number | null>(null);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [activity, setActivity] = useState<ActivityStep[]>([]);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
   const [activeEditId, setActiveEditId] = useState<string | null>(null);
   const [chatWidth, setChatWidth] = useState(360);
@@ -139,6 +147,23 @@ export default function DocsStudioClient({
   const skipHistory = useRef(false);
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
+
+  const startLatencyTimer = () => {
+    requestStartedAt.current = Date.now();
+    setElapsedSeconds(0);
+  };
+
+  useEffect(() => {
+    if (!isBusy || requestStartedAt.current == null) return;
+    const tick = () => {
+      if (requestStartedAt.current != null) {
+        setElapsedSeconds((Date.now() - requestStartedAt.current) / 1000);
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 100);
+    return () => window.clearInterval(timer);
+  }, [isBusy]);
 
   /** Active page body under caret / selection, else last page */
   const getActiveBody = useCallback((): HTMLElement | null => {
@@ -508,9 +533,8 @@ export default function DocsStudioClient({
           setDocId(data.doc.id);
           lastSavedHtml.current = data.doc.html || documentContent || '';
           lastSavedTitle.current = data.doc.title || documentTitle || '';
-          const url = new URL(window.location.href);
-          url.searchParams.set('doc', data.doc.id);
-          window.history.replaceState({}, '', url.toString());
+          // Canonical document URL: /studio/doc/{id}
+          window.history.replaceState({}, '', `/studio/doc/${data.doc.id}`);
         }
       } catch {
         /* local guest still works */
@@ -637,6 +661,8 @@ export default function DocsStudioClient({
     async (prompt: string) => {
       const p = prompt.trim();
       if (!p) return;
+      const startedAt = Date.now();
+      startLatencyTimer();
       setIsBusy(true);
       setChatInput('');
       setPendingEdits([]);
@@ -743,6 +769,7 @@ export default function DocsStudioClient({
                         draftStatus: 'Documento en el lienzo',
                         streaming: false,
                         isDraftStream: true,
+                        elapsedMs: Date.now() - startedAt,
                       }
                     : m,
                 ),
@@ -762,7 +789,13 @@ export default function DocsStudioClient({
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
-                    ? { ...m, content: ev.message || 'Error', streaming: false, isDraftStream: false }
+                    ? {
+                        ...m,
+                        content: ev.message || 'Error',
+                        streaming: false,
+                        isDraftStream: false,
+                        elapsedMs: Date.now() - startedAt,
+                      }
                     : m,
                 ),
               );
@@ -773,6 +806,7 @@ export default function DocsStudioClient({
         toast({ variant: 'destructive', title: 'Draft failed', description: e?.message });
       } finally {
         setIsBusy(false);
+        if (requestStartedAt.current === startedAt) requestStartedAt.current = null;
       }
     },
     [model, applyHtml, toast, documentTitle, pushEvent],
@@ -780,7 +814,10 @@ export default function DocsStudioClient({
 
   /** Edits / rewrites — propose + ghost / accept */
   const runChat = useCallback(
-    async (userText: string, opts?: { selectedText?: string; intensity?: number }) => {
+    async (
+      userText: string,
+      opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean },
+    ) => {
       const text = userText.trim();
       if (!text) return;
 
@@ -794,6 +831,9 @@ export default function DocsStudioClient({
 
       const userMsg: ChatMessage = { id: uid(), role: 'user', content: text };
       const nextMessages = [...messages, userMsg];
+      const startedAt = Date.now();
+      let proposedSomethingForRequest = false;
+      startLatencyTimer();
       setMessages(nextMessages);
       setChatInput('');
       setIsBusy(true);
@@ -858,7 +898,6 @@ export default function DocsStudioClient({
         const decoder = new TextDecoder();
         let buffer = '';
         let acc = '';
-
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -930,6 +969,7 @@ export default function DocsStudioClient({
               );
             }
             if (ev.type === 'propose_edit') {
+              proposedSomethingForRequest = true;
               const edit = ev.edit as ProposeEditPayload;
               // Always anchor "before" to the live document so structural diffs
               // keep real HTML (headings, LaTeX, tables) instead of model guesses.
@@ -970,6 +1010,7 @@ export default function DocsStudioClient({
                         ...m,
                         content: acc || ev.finalText || m.content,
                         streaming: false,
+                        elapsedMs: ev.durationMs ?? Date.now() - startedAt,
                         toolLogs: (m.toolLogs || []).map((t) =>
                           t.state === 'running'
                             ? { ...t, state: 'done' as const, doneLabel: t.doneLabel || t.label }
@@ -987,8 +1028,13 @@ export default function DocsStudioClient({
         if (e?.name === 'AbortError') {
           setMessages((ms) =>
             ms.map((m) =>
-              m.id === assistantId
-                ? { ...m, content: m.content || 'Detenido.', streaming: false }
+                m.id === assistantId
+                ? {
+                    ...m,
+                    content: m.content || 'Detenido.',
+                    streaming: false,
+                    elapsedMs: Date.now() - startedAt,
+                  }
                 : m,
             ),
           );
@@ -996,8 +1042,13 @@ export default function DocsStudioClient({
           toast({ variant: 'destructive', title: 'Chat failed', description: e?.message });
           setMessages((ms) =>
             ms.map((m) =>
-              m.id === assistantId
-                ? { ...m, content: 'No pude completar eso. Probá de nuevo.', streaming: false }
+                m.id === assistantId
+                ? {
+                    ...m,
+                    content: 'No pude completar eso. Probá de nuevo.',
+                    streaming: false,
+                    elapsedMs: Date.now() - startedAt,
+                  }
                 : m,
             ),
           );
@@ -1006,6 +1057,13 @@ export default function DocsStudioClient({
         setIsBusy(false);
         setActivity([]);
         abortRef.current = null;
+        if (requestStartedAt.current === startedAt) requestStartedAt.current = null;
+        if (opts?.fromComposer && !proposedSomethingForRequest) {
+          // A floating response with no real proposal/tool result is easy to
+          // miss. Reveal the transcript so the user can inspect the answer.
+          setChatCollapsed(false);
+          setAgentOpen(true);
+        }
       }
     },
     [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml],
@@ -1396,34 +1454,61 @@ export default function DocsStudioClient({
   const handleExportPdf = async () => {
     if (!canvasRef.current) return;
     setIsBusy(true);
+    let clone: HTMLDivElement | null = null;
     try {
-      typesetAll();
-      await new Promise((r) => setTimeout(r, 200));
+      const source = document.createElement('div');
+      source.innerHTML = sanitizeDocumentHtml(readEditorHtml());
+      clone = source;
+      clone.className = 'studio-export-pdf';
+      clone.style.position = 'fixed';
+      clone.style.left = '-10000px';
+      clone.style.top = '0';
+      clone.style.width = `${paperSize === 'legal' ? 540 : 540}px`;
+      clone.style.padding = '48px';
+      clone.style.background = '#ffffff';
+      clone.style.color = '#111111';
+      clone.style.fontFamily = fontFamily;
+      clone.style.fontSize = fontSize;
+      clone.style.lineHeight = '1.65';
+      clone.querySelectorAll('table').forEach((table) => {
+        const element = table as HTMLElement;
+        element.style.width = '100%';
+        element.style.borderCollapse = 'collapse';
+        element.style.margin = '14px 0';
+        table.querySelectorAll('th,td').forEach((cell) => {
+          const item = cell as HTMLElement;
+          item.style.border = '1px solid #b9b1a8';
+          item.style.padding = '7px 9px';
+          item.style.verticalAlign = 'top';
+        });
+      });
+      clone.querySelectorAll('img').forEach((image) => {
+        image.style.maxWidth = '100%';
+        image.style.height = 'auto';
+      });
+      document.body.appendChild(clone);
+      const mathJax = (window as any).MathJax;
+      if (mathJax?.startup?.promise) await mathJax.startup.promise;
+      if (mathJax?.typesetPromise) await mathJax.typesetPromise([clone]);
+      await Promise.all(Array.from(clone.querySelectorAll('img')).map((image) => image.complete ? Promise.resolve() : new Promise<void>((resolve) => { image.addEventListener('load', () => resolve(), { once: true }); image.addEventListener('error', () => resolve(), { once: true }); })));
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'pt',
         format: paperSize === 'legal' ? [612, 1008] : 'letter',
       });
-      const clone = document.createElement('div');
-      clone.innerHTML = sanitizeDocumentHtml(readEditorHtml());
-      document.body.appendChild(clone);
-      clone.style.background = 'white';
-      clone.style.color = 'black';
-      clone.style.padding = '48px';
-      clone.style.width = '516pt';
       await pdf.html(clone, {
         callback: (doc) => {
           doc.save(`${documentTitle || 'docs-studio'}.pdf`);
-          document.body.removeChild(clone);
           toast({ title: 'PDF exported' });
         },
-        width: 516,
-        windowWidth: clone.scrollWidth,
+        width: paperSize === 'legal' ? 516 : 516,
+        windowWidth: clone.scrollWidth || 900,
         autoPaging: 'text',
       });
     } catch {
       toast({ variant: 'destructive', title: 'PDF export failed' });
     } finally {
+      clone?.remove();
       setIsBusy(false);
     }
   };
@@ -1527,34 +1612,47 @@ export default function DocsStudioClient({
     return plain.split(/\s+/).filter(Boolean).length;
   };
 
-  const handleInsertMath = () => {
-    const body = getActiveBody();
+  const openEquationEditor = (target: HTMLElement | null = null) => {
+    const source = target ? getMathSource(target) || '' : 'E = mc^2';
+    const display = Boolean(target?.getAttribute('data-display') === '1' || target?.classList.contains('studio-math-block'));
+    setEquationEditor({ target, tex: source, display: target ? display : true });
+  };
+
+  const handleEquationAccept = (tex: string, display: boolean) => {
+    const target = equationEditor?.target;
+    const body = (target?.closest('[data-page-body]') as HTMLElement | null) || getActiveBody();
     if (!body) return;
-    const tex = window.prompt('LaTeX (inline). Ej: x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', 'E = mc^2');
-    if (tex == null || !tex.trim()) return;
-    const display = window.confirm('¿Fórmula en bloque (centrada)?\nOK = bloque · Cancelar = inline');
     skipHistory.current = true;
-    insertMathAtSelection(body, tex.trim(), display);
+    if (target && body.contains(target)) {
+      replaceMathNode(body, target, tex, display);
+    } else {
+      canvasRef.current?.restoreSelection();
+      insertMathAtSelection(body, tex, display);
+    }
     skipHistory.current = false;
     applyHtml(readEditorHtml(), true);
     pushEvent({
       type: 'local_edit',
-      title: 'Fórmula insertada',
-      summary: display ? `Bloque: ${tex.slice(0, 60)}` : `Inline: ${tex.slice(0, 60)}`,
+      title: target ? 'Fórmula actualizada' : 'Fórmula insertada',
+      summary: `${display ? 'Bloque centrado' : 'En línea'} · ${tex.slice(0, 80)}`,
     });
+    setEquationEditor(null);
   };
 
-  const handleInsertTable = () => {
+  const handleInsertMath = () => openEquationEditor();
+
+  const handleInsertTable = (rows = 3, cols = 3) => {
     const body = getActiveBody();
     if (!body) return;
+    canvasRef.current?.restoreSelection();
     skipHistory.current = true;
-    insertTableAtSelection(body, 3, 3);
+    insertTableAtSelection(body, rows, cols);
     skipHistory.current = false;
     applyHtml(readEditorHtml(), true);
     pushEvent({
       type: 'local_edit',
       title: 'Tabla insertada',
-      summary: 'Tabla 3×3 editable en el lienzo.',
+      summary: `Tabla ${rows}×${cols} editable en el lienzo.`,
     });
   };
 
@@ -1562,35 +1660,15 @@ export default function DocsStudioClient({
     imageInputRef.current?.click();
   };
 
-  /** Double-click math to edit TeX source */
+  /** Double-click is also a shortcut for the focused equation editor. */
   const handleEditorDblClick = (e: React.MouseEvent) => {
     const t = e.target as HTMLElement;
     const math =
-      (t.closest('mjx-container') as HTMLElement | null) ||
-      (t.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null);
-    const body = getActiveBody();
-    if (!math || !body) return;
+      (t.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null) ||
+      (t.closest('mjx-container') as HTMLElement | null);
+    if (!math) return;
     e.preventDefault();
-    const src = getMathSource(math) || '';
-    const display =
-      math.getAttribute('data-display') === '1' ||
-      math.classList.contains('studio-math-block') ||
-      math.getAttribute('display') === 'true';
-    const next = window.prompt('Editar LaTeX', src);
-    if (next == null) return;
-    if (!next.trim()) {
-      math.remove();
-    } else {
-      skipHistory.current = true;
-      replaceMathNode(body, math, next.trim(), display);
-      skipHistory.current = false;
-    }
-    applyHtml(readEditorHtml(), true);
-    pushEvent({
-      type: 'local_edit',
-      title: 'Fórmula actualizada',
-      summary: next.trim().slice(0, 80) || 'Fórmula eliminada',
-    });
+    openEquationEditor((math.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null) || math);
   };
 
   const handleEditBlock = (_html: string, plain: string) => {
@@ -1633,9 +1711,6 @@ export default function DocsStudioClient({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => importInputRef.current?.click()}>
-          <FileText className="mr-2 h-4 w-4" /> Importar Word (.docx)
-        </DropdownMenuItem>
         <DropdownMenuItem onClick={handleExportPdf}>
           <FileText className="mr-2 h-4 w-4" /> PDF
         </DropdownMenuItem>
@@ -1699,6 +1774,7 @@ export default function DocsStudioClient({
               onRedo={redo}
               onMouseUp={handleMouseUp}
               onDoubleClick={handleEditorDblClick}
+              onEditMath={(math) => openEquationEditor(math)}
               onEditBlock={handleEditBlock}
               onPageCountChange={setPageCount}
               ghostHtml={pending?.edit.afterHtml ?? null}
@@ -1787,6 +1863,14 @@ export default function DocsStudioClient({
               </div>
             </div>
             </div>
+
+            <EquationEditorDialog
+              open={Boolean(equationEditor)}
+              initialTex={equationEditor?.tex || ''}
+              initialDisplay={equationEditor?.display ?? true}
+              onCancel={() => setEquationEditor(null)}
+              onAccept={handleEquationAccept}
+            />
 
             {hasSelection && selBar && prefs.showSelectionToolbar && (
               <SelectionFormatBar
