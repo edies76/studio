@@ -1016,8 +1016,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     if (skipInput.current || isComposing.current) return;
     rememberSelection();
     // Blur is an idle boundary: compact pages after deletion without
-    // replacing DOM in the middle of normal typing.
-    scheduleRebalance(pageIdx, selectionBookmark(liveBodies()), 0);
+    // replacing DOM in the middle of normal typing. Do not restore a range
+    // here: focus has intentionally moved to a toolbar or another control.
+    scheduleRebalance(pageIdx, null, 0);
   };
 
   const handleCompositionStart = () => {
