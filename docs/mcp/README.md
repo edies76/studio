@@ -5,10 +5,16 @@ Docs Studio exposes the real document loop to external AI clients through the of
 The hosted endpoint is:
 
 ```text
-https://YOUR_DOCS_DOMAIN/api/mcp
+https://docss.studio/api/mcp
 ```
 
-It uses Streamable HTTP in stateless mode, so an AWS serverless instance does not need sticky sessions. Documents are isolated by the authenticated MCP principal and stored through the same Docs Studio document store. In production, that store must be DynamoDB.
+It uses Streamable HTTP in stateless mode, so an AWS instance does not need sticky sessions. Documents are isolated by the authenticated MCP principal and stored through the same Docs Studio document store. In production, that store must be DynamoDB.
+
+## Personal access for any agent
+
+Sign into Docs Studio with Google, then create a credential with `POST /api/mcp/access`. The returned bearer token is shown exactly once. It is tied to that Google user, so Claude Desktop, ChatGPT, Cursor, Codex or any Streamable-HTTP MCP client sees only that user’s documents. New credentials have **all available MCP permissions** by default. Revoke one with `DELETE /api/mcp/access?id=<credential-id>`.
+
+The browser session is never forwarded to an external agent. The bearer credential is the explicit hand-off boundary.
 
 ## Remote client configuration
 
@@ -16,16 +22,16 @@ It uses Streamable HTTP in stateless mode, so an AWS serverless instance does no
 {
   "mcpServers": {
     "docs-studio": {
-      "url": "https://YOUR_DOCS_DOMAIN/api/mcp",
+      "url": "https://docss.studio/api/mcp",
       "headers": {
-        "Authorization": "Bearer YOUR_MCP_API_KEY"
+        "Authorization": "Bearer YOUR_PERSONAL_MCP_TOKEN"
       }
     }
   }
 }
 ```
 
-Configure the token in Amplify or the hosting provider, never in the repository:
+Personal credentials need no deployment secret. Static server tokens below remain optional for a service-owned agent and must never go in the repository:
 
 ```bash
 MCP_API_KEY=long-random-secret
@@ -37,7 +43,7 @@ DEEPSEEK_API_KEY=sk-...
 DOCS_STUDIO_URL=https://YOUR_DOCS_DOMAIN
 ```
 
-For more than one isolated workspace, use `MCP_API_KEYS` as a JSON array:
+For more than one service-owned isolated workspace, use `MCP_API_KEYS` as a JSON array:
 
 ```json
 [

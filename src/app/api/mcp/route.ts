@@ -1,6 +1,6 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { NextRequest } from 'next/server';
-import { authenticateMcpRequest, hasMcpCredentials } from '@/mcp/auth';
+import { authenticateMcpBearer } from '@/mcp/auth';
 import { createCloudDocsStudioMcpServer } from '@/mcp/cloud-server';
 import { storageBackend } from '@/lib/doc-store';
 
@@ -34,18 +34,14 @@ async function handle(request: NextRequest) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders() });
 
   try {
-    if (!hasMcpCredentials()) {
-      return jsonError('MCP is disabled. Configure MCP_API_KEY or MCP_API_KEYS in the cloud environment.', 503);
-    }
-    const principal = authenticateMcpRequest(request);
-    if (!principal) {
-      return jsonError('Missing or invalid MCP bearer token.', 401, { 'WWW-Authenticate': 'Bearer' });
-    }
-
-    // The hosted endpoint must not silently fall back to local files. Set this
-    // only for an intentional local protocol smoke test.
+    // Hosted credentials are stored per Google user in DynamoDB. Static
+    // environment keys remain supported for service agents and migrations.
     if (storageBackend() !== 'dynamodb' && process.env.MCP_ALLOW_LOCAL !== '1') {
       return jsonError('MCP cloud storage is not configured. Set AWS_REGION, DOCS_TABLE, and an AWS runtime role.', 503);
+    }
+    const principal = await authenticateMcpBearer(request);
+    if (!principal) {
+      return jsonError('Missing or invalid MCP bearer token. Create a personal credential from the signed-in Docs Studio workspace.', 401, { 'WWW-Authenticate': 'Bearer' });
     }
 
     const origin = new URL(request.url).origin;

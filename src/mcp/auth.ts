@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto';
 export type McpPrincipal = {
   id: string;
   userId: string;
+  permissions?: 'all';
 };
 
 type ConfiguredKey = McpPrincipal & { token: string };
@@ -54,4 +55,14 @@ export function authenticateMcpRequest(request: Request): McpPrincipal | null {
 
 export function hasMcpCredentials() {
   return keys().length > 0;
+}
+
+export async function authenticateMcpBearer(request: Request): Promise<McpPrincipal | null> {
+  const configured = authenticateMcpRequest(request);
+  if (configured) return { ...configured, permissions: 'all' };
+  const header = request.headers.get('authorization') || '';
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  if (!match) return null;
+  const { authenticateStoredMcpToken } = await import('./credentials');
+  return authenticateStoredMcpToken(match[1].trim());
 }
