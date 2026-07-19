@@ -64,6 +64,11 @@ function openAiTools() {
   }));
 }
 
+function isFastLaneQuestion(text: string, selectedText: string) {
+  if (selectedText.trim() || text.length > 240) return false;
+  return !/\b(documento|lienzo|hoja|p[áa]gina|texto|p[áa]rrafo|selecci[oó]n|ecuaci[oó]n|f[oó]rmula|tabla|imagen|estructura|esquema|outline|brief|norma|apa|ieee|mla|document|canvas|page|text|paragraph|selection|equation|formula|table|image|structure|cambia|cambiar|pon|aplica|formatea|edita|corrige|reescribe|escribe|redacta|genera|crea|inserta|elimina|borra|mueve|inspecciona|analiza|revisa|comprueba|valida|busca|encuentra|resume|deshaz|rehaz|undo|redo|format|change|apply|edit|rewrite|write|draft|generate|create|insert|delete|remove|move|fix|check|review|search|summarize)\b/i.test(text);
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const {
@@ -99,8 +104,23 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const toolStartedAt = new Map<string, number>();
+      const toolDurations: Array<{ name: string; durationMs: number }> = [];
       const send = (ev: object) => {
         try {
+          const event = ev as Record<string, unknown>;
+          const id = typeof event.id === 'string' ? event.id : '';
+          if (event.type === 'tool_start' && id) toolStartedAt.set(id, Date.now());
+          if (event.type === 'tool_end' && id) {
+            const started = toolStartedAt.get(id);
+            if (started) {
+              const durationMs = Date.now() - started;
+              toolDurations.push({ name: String(event.name || 'unknown'), durationMs });
+              toolStartedAt.delete(id);
+              controller.enqueue(new TextEncoder().encode(encode({ ...event, durationMs })));
+              return;
+            }
+          }
           controller.enqueue(new TextEncoder().encode(encode(ev)));
         } catch {
           /* closed */
@@ -117,21 +137,85 @@ export async function POST(req: NextRequest) {
         preferredModel,
       });
 
-      // Working HTML copy for math-safe tools within this request
-      let liveHtml = ensureMathHosts(documentHtml || '');
-      /** Special MATH-SAFE mode: active when doc has equations or user talks math */
-      let mathSafeMode = listEquations(liveHtml).length > 0;
+      // These are initialized after the fast lane. Simple answers must not pay
+      // for document parsing before we even know whether the document matters.
+      let liveHtml = '';
+      let mathSafeMode = false;
 
       try {
         // Immediate first paint — real thinking signal
         send({ type: 'thinking', label: 'Pensando…' });
 
-        const snap0 = mathSafeSnapshot(liveHtml);
-        const eqCount = snap0.equationCount;
         const lastUser = [...(messages || [])]
           .reverse()
           .find((m) => m.role === 'user')
           ?.content || '';
+
+        // Fast lane: no document HTML, no tool schema, no long conversation
+        // history, no second completion. This is the path for greetings and
+        // short informational questions where the canvas is irrelevant.
+        if (isFastLaneQuestion(lastUser, selectedText)) {
+          let quickText = '';
+          let firstTokenMs: number | null = null;
+          const quickModel = process.env.DEEPSEEK_FAST_MODEL || 'deepseek-chat';
+          send({ type: 'status', label: 'Respondiendo rápido…' });
+          try {
+            const quickRes = await deepseekChat({
+              apiKey,
+              model: quickModel,
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are Docs Studio. Answer concisely in the user language. Maximum 3 short sentences. No tools, no document edits, no preamble.',
+                },
+                { role: 'user', content: lastUser },
+              ],
+              stream: true,
+              temperature: 0.2,
+              maxTokens: 192,
+            });
+            if (quickRes.ok && quickRes.body) {
+              for await (const chunk of iterateOpenAiSse(quickRes.body)) {
+                if (chunk.content) {
+                  if (firstTokenMs == null) firstTokenMs = Date.now() - t0;
+                  quickText += chunk.content;
+                  send({ type: 'text', delta: chunk.content });
+                }
+              }
+            }
+          } catch (e: any) {
+            slog.warn('chat', 'fast_path.error', { err: e?.message || String(e) });
+          }
+          if (!quickText.trim()) {
+            quickText = 'No pude responder en este momento.';
+            send({ type: 'text', delta: quickText });
+          }
+          const durationMs = Date.now() - t0;
+          slog.info('chat', 'request.done', {
+            ms: durationMs,
+            model: quickModel,
+            path: 'fast_answer',
+            promptChars: lastUser.length,
+            firstTokenMs,
+            finalLen: quickText.length,
+          });
+          send({
+            type: 'done',
+            finalText: quickText,
+            model: quickModel,
+            durationMs,
+            outcome: 'answer',
+          });
+          return;
+        }
+
+        // Working HTML copy for math-safe tools within this request
+        liveHtml = ensureMathHosts(documentHtml || '');
+        /** Special MATH-SAFE mode: active when doc has equations or user talks math */
+        mathSafeMode = listEquations(liveHtml).length > 0;
+
+        const snap0 = mathSafeSnapshot(liveHtml);
+        const eqCount = snap0.equationCount;
         if (
           /ecuaci[oó]n|f[oó]rmula|latex|math|matriz|matrix|\\frac|\\begin|algebra/i.test(
             lastUser,
@@ -1207,6 +1291,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
           finalText,
           model: usedModel,
           durationMs: Date.now() - t0,
+          toolDurations,
           outcome: proposedSomething ? 'proposal' : 'answer',
         });
       } catch (e: any) {

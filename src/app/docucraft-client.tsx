@@ -373,13 +373,9 @@ export default function DocsStudioClient({
       mode: false | 'cascade' | 'firstReveal' = false,
     ) => {
       const clean = sanitizeDocumentHtml(html) || EMPTY_DOCUMENT_HTML;
-      const withoutBreaks = clean.replace(
-        /<div[^>]*data-studio-break="1"[^>]*>[\s\S]*?<\/div>/gi,
-        '',
-      );
-      setDocumentContent(withoutBreaks);
+      setDocumentContent(clean);
       skipHistory.current = true;
-      canvasRef.current?.setHtml(withoutBreaks, { reveal: mode === 'firstReveal' });
+      canvasRef.current?.setHtml(clean, { reveal: mode === 'firstReveal' });
       requestAnimationFrame(() => {
         if (mode === 'cascade') {
           const first = canvasRef.current?.getBodies()?.[0];
@@ -398,7 +394,7 @@ export default function DocsStudioClient({
         typesetAll();
         skipHistory.current = false;
       });
-      if (recordHistory) pushHistory(withoutBreaks);
+      if (recordHistory) pushHistory(clean);
     },
     [pushHistory, typesetAll],
   );
@@ -737,7 +733,7 @@ export default function DocsStudioClient({
               );
             }
             if (ev.type === 'html_delta') {
-              // Real Gemini tokens — preview only in chat; canvas waits for full doc (first-time reveal)
+              // Streamed agent output is preview-only in chat; the canvas waits for the full draft (first-time reveal).
               htmlAcc += ev.delta || '';
               const now = Date.now();
               if (now - lastChatPaint > 100) {
@@ -978,6 +974,7 @@ export default function DocsStudioClient({
                   id,
                   label: ev.label || ev.name || 'Listo',
                   doneLabel: ev.label || undefined,
+                  durationMs: ev.durationMs,
                   state: ev.ok === false ? 'error' : 'done',
                 });
               } else {
@@ -992,6 +989,7 @@ export default function DocsStudioClient({
                           ...logs[i],
                           state: ev.ok === false ? 'error' : 'done',
                           doneLabel: ev.label || logs[i].label,
+                          durationMs: ev.durationMs,
                         };
                         break;
                       }
