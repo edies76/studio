@@ -549,9 +549,14 @@ export default function DocsStudioClient({
     (async () => {
       try {
         const res = await fetch(`/api/docs/${initialDocumentId}`);
-        if (res.status === 401) return;
+        if (res.status === 401) {
+          window.location.replace('/home?notice=document-unavailable');
+          return;
+        }
         if (!res.ok) {
-          toast({ variant: 'destructive', title: 'Documento no encontrado' });
+          // An arbitrary /studio/doc/:id must never silently become a new
+          // document nor fall back to the last browser draft.
+          window.location.replace('/home?notice=document-not-found');
           return;
         }
         const data = await res.json();
