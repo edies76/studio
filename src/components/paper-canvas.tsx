@@ -145,6 +145,31 @@ function restoreSelectionBookmark(bookmark: SelectionBookmark, bodies: HTMLEleme
   lastSelection.current = range.cloneRange();
 }
 
+function selectionAtBodyEdge(body: HTMLElement, edge: 'start' | 'end'): boolean {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.isCollapsed) return false;
+  const range = selection.getRangeAt(0);
+  if (!body.contains(range.startContainer) && range.startContainer !== body) return false;
+  const boundary = document.createRange();
+  boundary.selectNodeContents(body);
+  boundary.collapse(edge === 'start');
+  return edge === 'start'
+    ? range.compareBoundaryPoints(Range.START_TO_START, boundary) === 0
+    : range.compareBoundaryPoints(Range.END_TO_END, boundary) === 0;
+}
+
+function focusBodyEdge(body: HTMLElement, edge: 'start' | 'end', lastSelection: MutableRefObject<Range | null>) {
+  const range = document.createRange();
+  range.selectNodeContents(body);
+  range.collapse(edge === 'start');
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  body.focus({ preventScroll: true });
+  lastSelection.current = range.cloneRange();
+  body.closest('.studio-page-sheet')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 type ResizeSession = {
   image: HTMLImageElement;
   direction: 'nw' | 'ne' | 'sw' | 'se';
@@ -991,6 +1016,20 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       return;
     }
 
+    // A document has logical continuity across visual sheet bodies. Native
+    // contentEditable cannot cross those roots by itself, so move the caret
+    // explicitly only at the document boundary (not while navigating lines).
+    if (!modifier && ['ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight'].includes(event.key)) {
+      const body = bodyRefs.current[pageIdx];
+      const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
+      const target = backward ? bodyRefs.current[pageIdx - 1] : bodyRefs.current[pageIdx + 1];
+      if (body && target && selectionAtBodyEdge(body, backward ? 'start' : 'end')) {
+        event.preventDefault();
+        focusBodyEdge(target, backward ? 'end' : 'start', lastSelection);
+        return;
+      }
+    }
+
     // Word-boundary keys close out the in-progress word as its own undo
     // step BEFORE they take effect, so Ctrl+Z undoes one word/line/paste at
     // a time (like Word/Docs) instead of an entire fast-typed sentence.
@@ -1055,32 +1094,26 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       }
     }
 
-    // Backspace on empty last page → remove page (Word-like)
+    // Backspace at the beginning of a page joins its visual body with the
+    // previous one. Pages are layout, not document boundaries.
     if (event.key === 'Backspace' && pageIdx > 0) {
       const body = bodyRefs.current[pageIdx];
-      if (body) {
-        const text = (body.innerText || '').replace(/\u00a0/g, ' ').trim();
-        const sel = window.getSelection();
-        const atStart =
-          sel &&
-          sel.isCollapsed &&
-          sel.anchorOffset === 0 &&
-          (sel.anchorNode === body || (sel.anchorNode && body.contains(sel.anchorNode)));
-        if (!text && atStart) {
-          event.preventDefault();
-          setPages((prev) => {
-            if (prev.length <= 1) return prev;
-            const next = prev.filter((_, i) => i !== pageIdx);
-            lastExternalHtml.current = joinPageHtmls(next);
-            return next;
-          });
-          requestAnimationFrame(() => {
-            const prevBody = bodyRefs.current[pageIdx - 1];
-            if (prevBody) placeCaretAtEnd(prevBody);
-            onInput();
-          });
-          return;
-        }
+      const prevBody = bodyRefs.current[pageIdx - 1];
+      if (body && prevBody && selectionAtBodyEdge(body, 'start')) {
+        event.preventDefault();
+        const boundary = prevBody.childNodes.length;
+        prevBody.append(...Array.from(body.childNodes));
+        body.innerHTML = '<p><br></p>';
+        const range = document.createRange();
+        range.setStart(prevBody, boundary);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        lastSelection.current = range.cloneRange();
+        scheduleRebalance(pageIdx - 1, selectionBookmark(liveBodies()));
+        onInput();
+        return;
       }
     }
     rememberSelection();
