@@ -1402,6 +1402,14 @@
     white-space: nowrap;
   }
 
+  /* DocsS: the big S is Studio — and the double-s in docss.studio */
+  .landing-brand__s {
+    font-size: 1.35em;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: var(--landing-acid, #8b4a34);
+  }
+
   .landing-brand__descriptor {
     padding-left: 10px;
     border-left: 1px solid var(--landing-line);

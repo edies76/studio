@@ -16,8 +16,9 @@ const reviewSteps = [
 ];
 
 export const metadata = {
-  title: 'Docs Studio | Del brief al documento',
-  description: 'Un workspace documental para trabajar con briefs, canvas paginado y edición asistida.',
+  title: 'DocsS · docss.studio | Workspace académico',
+  description:
+    'DocsS (Docs Studio): workspace académico en docss.studio — lienzo, normas, ecuaciones y export. No un chat genérico.',
 };
 
 export default function HomePage() {
@@ -26,13 +27,15 @@ export default function HomePage() {
       <div className="landing-noise" aria-hidden="true" />
 
       <header className="landing-nav">
-        <Link className="landing-brand" href="/" aria-label="Docs Studio">
+        <Link className="landing-brand" href="/" aria-label="DocsS — Docs Studio">
           <BrandMark size={34} />
-          <span className="landing-brand__name">Docs Studio</span>
-          <span className="landing-brand__descriptor">Workspace académico</span>
+          <span className="landing-brand__name">
+            Docs<span className="landing-brand__s">S</span>
+          </span>
+          <span className="landing-brand__descriptor">docss.studio · workspace académico</span>
         </Link>
 
-        <nav className="landing-nav__links" aria-label="Secciones de Docs Studio">
+        <nav className="landing-nav__links" aria-label="Secciones de DocsS">
           <a href="#producto">Qué es</a>
           <a href="#canvas">El lienzo</a>
           <a href="#control">Control</a>
@@ -50,7 +53,7 @@ export default function HomePage() {
             <div className="landing-hero__copy">
               <div className="landing-eyebrow">
                 <span className="landing-eyebrow__mark" aria-hidden="true" />
-                Docs Studio · del brief al documento
+                DocsS · la S de Studio · docss.studio
               </div>
               <h1 id="home-hero-heading">
                 El trabajo no termina en el chat.
@@ -58,7 +61,9 @@ export default function HomePage() {
                 <span className="landing-heading-accent">Termina en el archivo.</span>
               </h1>
               <p className="landing-hero__lede">
-                Docs Studio combina una guía o brief, un lienzo documental paginado y un copilot que trabaja sobre el archivo real. La estructura se ve, los cambios se revisan y el resultado se puede exportar.
+                <strong>DocsS</strong> (Docs Studio) — la <strong>S</strong> es de Studio y vive en el dominio{' '}
+                <strong>docss.studio</strong>. Workspace académico: guía o brief, lienzo paginado y un copilot
+                que propone sobre el archivo real. No es un chat genérico.
               </p>
 
               <div className="landing-hero__facts" aria-label="Qué hace Docs Studio">
@@ -159,7 +164,7 @@ export default function HomePage() {
 
         <section className="landing-final home-landing__final" aria-labelledby="home-final-heading">
           <div className="landing-wrap">
-            <span className="landing-final__label">Docs Studio</span>
+            <span className="landing-final__label">DocsS · docss.studio</span>
             <h2 id="home-final-heading">Contexto adentro. Documento afuera.</h2>
             <p>Un lugar para transformar una guía imperfecta en un archivo que podés leer, editar y entregar.</p>
             <Link className="landing-primary-button landing-primary-button--large" href="/studio">Abrir Docs Studio <span aria-hidden="true">↗</span></Link>
@@ -169,8 +174,13 @@ export default function HomePage() {
 
       <footer className="landing-footer">
         <div className="landing-wrap landing-footer__inner">
-          <Link className="landing-brand landing-brand--footer" href="/"><BrandMark size={28} /><span className="landing-brand__name">Docs Studio</span></Link>
-          <span>Workspace académico · el archivo es la verdad</span>
+          <Link className="landing-brand landing-brand--footer" href="/">
+            <BrandMark size={28} />
+            <span className="landing-brand__name">
+              Docs<span className="landing-brand__s">S</span>
+            </span>
+          </Link>
+          <span>docss.studio · la S de Studio · el archivo es la verdad</span>
           <Link href="/mcp">MCP / agent surface ↗</Link>
         </div>
       </footer>
