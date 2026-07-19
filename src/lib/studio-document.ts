@@ -36,6 +36,7 @@ export function modelFromHtml(html: string, pageSize: StudioDocumentModel['page'
       if (current.nodeType === Node.TEXT_NODE) { if (current.textContent) values.push({ text: current.textContent, marks: Object.keys(marks).length ? marks : undefined }); return; }
       if (current.nodeType !== Node.ELEMENT_NODE) return;
       const el = current as HTMLElement; const next = { ...marks };
+      if (el.tagName === 'BR') { values.push({ text: '\n', marks: Object.keys(marks).length ? marks : undefined }); return; }
       if (['STRONG', 'B'].includes(el.tagName)) next.bold = true;
       if (['EM', 'I'].includes(el.tagName)) next.italic = true;
       if (el.tagName === 'U') next.underline = true;

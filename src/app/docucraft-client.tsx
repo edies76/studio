@@ -42,6 +42,12 @@ import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
 import OnlyOfficeEditor from '@/components/onlyoffice-editor';
+import {
+  createStudioDocument,
+  modelFromHtml,
+  modelToHtml,
+  type StudioDocumentModel,
+} from '@/lib/studio-document';
 
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
@@ -91,6 +97,10 @@ export default function DocsStudioClient({
   const [officeOpen, setOfficeOpen] = useState(false);
   const [documentBriefContext, setDocumentBriefContext] = useState('');
   const [documentContent, setDocumentContent] = useState('');
+  // The native model owns persistence. HTML remains the temporary adapter for
+  // the existing contentEditable canvas while it is migrated block by block.
+  const [documentModel, setDocumentModel] = useState<StudioDocumentModel>(() => createStudioDocument());
+  const documentModelRef = useRef<StudioDocumentModel>(createStudioDocument());
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveConflict, setSaveConflict] = useState(false);
@@ -406,6 +416,9 @@ export default function DocsStudioClient({
       mode: false | 'cascade' | 'firstReveal' = false,
     ) => {
       const clean = sanitizeDocumentHtml(html) || EMPTY_DOCUMENT_HTML;
+      const nextModel = modelFromHtml(clean, paperSize);
+      documentModelRef.current = nextModel;
+      setDocumentModel(nextModel);
       setDocumentContent(clean);
       skipHistory.current = true;
       canvasRef.current?.setHtml(clean, { reveal: mode === 'firstReveal' });
@@ -429,8 +442,22 @@ export default function DocsStudioClient({
       });
       if (recordHistory) pushHistory(clean);
     },
-    [pushHistory, typesetAll],
+    [paperSize, pushHistory, typesetAll],
   );
+
+  const applyDocumentModel = useCallback((nextModel: StudioDocumentModel, recordHistory = true) => {
+    const html = modelToHtml(nextModel);
+    documentModelRef.current = nextModel;
+    setDocumentModel(nextModel);
+    setDocumentContent(html);
+    skipHistory.current = true;
+    canvasRef.current?.setHtml(html);
+    requestAnimationFrame(() => {
+      typesetAll();
+      skipHistory.current = false;
+    });
+    if (recordHistory) pushHistory(html);
+  }, [pushHistory, typesetAll]);
 
   /** Full document HTML from canvas, or plain text from Word engine for AI context */
   const readEditorHtml = useCallback(() => {
@@ -490,6 +517,7 @@ export default function DocsStudioClient({
       if (raw) {
         const saved = JSON.parse(raw) as {
           html?: string;
+          model?: StudioDocumentModel;
           title?: string;
           paperSize?: PaperSize;
           fontFamily?: string;
@@ -508,7 +536,11 @@ export default function DocsStudioClient({
           historyIndexRef.current = 0;
           setHistory(historyRef.current);
           setHistoryIndex(0);
-          applyHtml(saved.html, false);
+          if (saved.model?.version === 1 && Array.isArray(saved.model.blocks)) {
+            applyDocumentModel(saved.model, false);
+          } else {
+            applyHtml(saved.html, false);
+          }
         }
       }
     } catch {
@@ -516,7 +548,7 @@ export default function DocsStudioClient({
     } finally {
       setDraftReady(true);
     }
-  }, [applyHtml, draftKey, draftReady, initialDocumentId, isClient]);
+  }, [applyDocumentModel, applyHtml, draftKey, draftReady, initialDocumentId, isClient]);
 
   useEffect(() => {
     if (!draftReady) return;
@@ -527,6 +559,7 @@ export default function DocsStudioClient({
           JSON.stringify({
             version: 1,
             html: documentContent || readEditorHtml(),
+            model: documentModelRef.current,
             title: documentTitle,
             paperSize,
             fontFamily,
@@ -568,11 +601,12 @@ export default function DocsStudioClient({
         if (data.doc.brief) {
           setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
         }
-        setDocumentContent(data.doc.html || EMPTY_DOCUMENT_HTML);
+        const loadedModel = data.doc.model as StudioDocumentModel | undefined;
         documentRevision.current = Number(data.doc.revision || 1);
-        lastSavedHtml.current = data.doc.html || '';
+        lastSavedHtml.current = loadedModel ? modelToHtml(loadedModel) : data.doc.html || '';
         lastSavedTitle.current = data.doc.title || '';
-        applyHtml(data.doc.html || EMPTY_DOCUMENT_HTML, false);
+        if (loadedModel) applyDocumentModel(loadedModel, false);
+        else applyHtml(data.doc.html || EMPTY_DOCUMENT_HTML, false);
         if (Array.isArray(data.doc.chat) && data.doc.chat.length) {
           setMessages(
             data.doc.chat.map((t: { id: string; role: string; content: string }) => ({
@@ -593,7 +627,7 @@ export default function DocsStudioClient({
     return () => {
       cancelled = true;
     };
-  }, [applyHtml, initialDocumentId, isClient, toast]);
+  }, [applyDocumentModel, applyHtml, initialDocumentId, isClient, toast]);
 
   // Ensure we have a server document id (create if opening blank / topic)
   useEffect(() => {
@@ -609,6 +643,7 @@ export default function DocsStudioClient({
           body: JSON.stringify({
             title: documentTitle || 'Untitled',
             html: documentContent || EMPTY_DOCUMENT_HTML,
+            model: documentModelRef.current,
           }),
         });
         if (!res.ok || cancelled) return;
@@ -643,7 +678,7 @@ export default function DocsStudioClient({
         const res = await fetch(`/api/docs/${docId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ html, title, revision: documentRevision.current }),
+          body: JSON.stringify({ html, model: documentModelRef.current, title, revision: documentRevision.current }),
         });
         if (res.status === 409) {
           setSaveConflict(true);
@@ -667,7 +702,7 @@ export default function DocsStudioClient({
     };
     const id = window.setInterval(() => void tick(), 4000);
     return () => clearInterval(id);
-  }, [docId, draftReady, documentContent, documentTitle, readEditorHtml, saveConflict, toast]);
+  }, [docId, draftReady, documentContent, documentModel, documentTitle, readEditorHtml, saveConflict, toast]);
 
   // Persist new chat turns to server
   useEffect(() => {
@@ -706,7 +741,12 @@ export default function DocsStudioClient({
     historyIndexRef.current = nextIndex;
     setHistoryIndex(nextIndex);
     applyHtml(historyRef.current[nextIndex] || '', false);
-    canvasRef.current?.focusEnd();
+    // Restore caret to where it was, not the document end
+    requestAnimationFrame(() => {
+      if (!canvasRef.current?.restoreSelection()) {
+        canvasRef.current?.focusEnd();
+      }
+    });
     pushEvent({
       type: 'local_edit',
       title: 'Deshiciste un cambio',
@@ -722,7 +762,11 @@ export default function DocsStudioClient({
     historyIndexRef.current = nextIndex;
     setHistoryIndex(nextIndex);
     applyHtml(historyRef.current[nextIndex] || '', false);
-    canvasRef.current?.focusEnd();
+    requestAnimationFrame(() => {
+      if (!canvasRef.current?.restoreSelection()) {
+        canvasRef.current?.focusEnd();
+      }
+    });
   }, [applyHtml, flushPendingHistory]);
 
   const setActivityLabel = (label: string, state: ActivityStep['state'] = 'active') => {
@@ -1244,7 +1288,11 @@ export default function DocsStudioClient({
 
   const onEditorInput = () => {
     if (!canvasRef.current || skipHistory.current) return;
-    setDocumentContent(readEditorHtml());
+    const html = readEditorHtml();
+    const nextModel = modelFromHtml(html, paperSize);
+    documentModelRef.current = nextModel;
+    setDocumentModel(nextModel);
+    setDocumentContent(html);
     // Debounced fallback: if the user pauses mid-word (no boundary key hit
     // yet), still checkpoint after a short pause so nothing is ever lost.
     if (localEditTimer.current) clearTimeout(localEditTimer.current);
@@ -2073,7 +2121,15 @@ export default function DocsStudioClient({
             <PaperCanvas
               ref={canvasRef}
               paperSize={paperSize}
-              onPaperSizeChange={setPaperSize}
+              onPaperSizeChange={(nextSize) => {
+                setPaperSize(nextSize);
+                const nextModel = {
+                  ...documentModelRef.current,
+                  page: { ...documentModelRef.current.page, size: nextSize },
+                };
+                documentModelRef.current = nextModel;
+                setDocumentModel(nextModel);
+              }}
               fontFamily={fontFamily}
               fontSize={fontSize}
               contentEditable={!isBusy}
