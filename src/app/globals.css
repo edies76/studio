@@ -240,6 +240,35 @@
     background: #fafafa;
   }
 
+  /* Imported Word tables carry their own OOXML widths, fills and borders.
+     Do not let the generic editor table skin flatten them into a full-width
+     zebra table: that is the main reason a formal brief stopped resembling
+     its Word source after import. */
+  .studio-doc-editor table.docx-fidelity-table {
+    width: auto !important;
+    max-width: 100%;
+    margin: 0.5em 0;
+    font-size: inherit;
+  }
+
+  .studio-doc-editor table.docx-fidelity-table td,
+  .studio-doc-editor table.docx-fidelity-table th {
+    min-width: 0;
+    text-align: inherit;
+  }
+
+  .studio-doc-editor table.docx-fidelity-table tr:nth-child(even) td {
+    background: transparent;
+  }
+
+  .studio-doc-editor .docx-equation {
+    display: inline-block;
+    margin: 0.15em 0.22em;
+    font-family: "Cambria Math", Cambria, serif;
+    font-style: italic;
+    white-space: pre-wrap;
+  }
+
   .studio-doc-editor img,
   .studio-doc-editor svg {
     max-width: 100% !important;
