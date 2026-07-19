@@ -124,6 +124,14 @@ export default function DocsStudioClient({
   const historyIndexRef = useRef(0);
   const [draftReady, setDraftReady] = useState(false);
   const restoredDraft = useRef(false);
+  // A blank editor has no server id yet. It must never share the old generic
+  // "blank" localStorage bucket with another tab, user, or previous document.
+  const freshDraftScope = useRef<string | null>(null);
+  if (!freshDraftScope.current) {
+    freshDraftScope.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : uid();
+  }
 
   const [hasSelection, setHasSelection] = useState(false);
   const [selBar, setSelBar] = useState<{ top: number; left: number } | null>(null);
@@ -463,13 +471,19 @@ export default function DocsStudioClient({
     }
   }, [applyHtml, docId, typesetAll]);
 
-  const draftKey = `docs-studio:draft:${(topic.trim() || 'blank')
-    .toLowerCase()
-    .replace(/[^a-z0-9áéíóúüñ]+/gi, '-')
-    .slice(0, 120)}`;
+  // Server documents are canonical. Local recovery is intentionally limited
+  // to a fresh, unsaved editor, so a stale browser draft can never flash or
+  // overwrite the document selected by its URL.
+  const draftKey = initialDocumentId
+    ? `docs-studio:draft:doc:${initialDocumentId}`
+    : `docs-studio:draft:new:${freshDraftScope.current}`;
 
   useEffect(() => {
     if (!isClient || draftReady) return;
+    if (initialDocumentId) {
+      setDraftReady(true);
+      return;
+    }
     try {
       const raw = localStorage.getItem(draftKey);
       if (raw) {
@@ -479,8 +493,11 @@ export default function DocsStudioClient({
           paperSize?: PaperSize;
           fontFamily?: string;
           fontSize?: string;
+          docId?: string | null;
         };
-        if (saved.html && !isDocEmpty(saved.html)) {
+        // Once a blank editor has received a server document id, its server
+        // copy owns recovery. Do not reapply that content to another new doc.
+        if (!saved.docId && saved.html && !isDocEmpty(saved.html)) {
           restoredDraft.current = true;
           if (saved.title) setDocumentTitle(saved.title);
           if (saved.paperSize === 'letter' || saved.paperSize === 'legal' || saved.paperSize === 'a4') setPaperSize(saved.paperSize);
@@ -498,7 +515,7 @@ export default function DocsStudioClient({
     } finally {
       setDraftReady(true);
     }
-  }, [applyHtml, draftKey, draftReady, isClient]);
+  }, [applyHtml, draftKey, draftReady, initialDocumentId, isClient]);
 
   useEffect(() => {
     if (!draftReady) return;
@@ -1311,8 +1328,12 @@ export default function DocsStudioClient({
       const clickedTopToolbar = target.closest(
         '[data-document-editor-toolbar], [data-studio-toolbar], .document-editor-toolbar',
       );
+      // Radix places toolbar menus in a portal under document.body. Treat a
+      // menu click as part of the active selection interaction, otherwise a
+      // color/highlight choice dismisses the bar before its second use.
+      const clickedToolbarMenu = target.closest('[role="menu"]');
 
-      if (!clickedEditor && !clickedSelectionToolbar && !clickedTopToolbar) {
+      if (!clickedEditor && !clickedSelectionToolbar && !clickedTopToolbar && !clickedToolbarMenu) {
         clearSelectionContext();
       }
     };
@@ -1989,7 +2010,20 @@ export default function DocsStudioClient({
 
   return (
     <div className="relative flex h-[100dvh] max-h-[100dvh] max-w-[100vw] overflow-hidden bg-white text-neutral-900">
-      <div className="pointer-events-none absolute right-3 top-3 z-50 flex items-center">
+      <div className="pointer-events-none absolute right-3 top-3 z-50 flex items-center gap-2">
+        <label className="pointer-events-auto hidden sm:block">
+          <span className="sr-only">Document title</span>
+          <input
+            aria-label="Document title"
+            value={documentTitle}
+            onChange={(event) => setDocumentTitle(event.target.value)}
+            onBlur={() => {
+              if (!documentTitle.trim()) setDocumentTitle('Untitled document');
+            }}
+            placeholder="Untitled document"
+            className="h-8 w-52 rounded-md border border-transparent bg-transparent px-2 text-right text-xs font-medium text-neutral-700 outline-none transition hover:border-neutral-200 hover:bg-white focus:border-neutral-300 focus:bg-white focus:ring-2 focus:ring-neutral-200"
+          />
+        </label>
         <div className="pointer-events-auto">{exportControl}</div>
       </div>
       <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">

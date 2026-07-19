@@ -12,7 +12,7 @@ function StudioDocInner() {
   const params = useParams();
   const id = typeof params?.id === 'string' ? params.id : null;
   if (!id || id === 'new') return <Loading />;
-  return <DocsStudioClient topic="" documentId={id} />;
+  return <DocsStudioClient key={id} topic="" documentId={id} />;
 }
 
 export default function StudioDocPage() {

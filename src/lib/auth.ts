@@ -5,7 +5,7 @@ import { cookies, headers } from 'next/headers';
 
 /**
  * Optional Google auth (Auth.js). Guest mode is the default:
- * - FORCE_AUTH != '1' → always allow userId "local-guest" without session
+ * - FORCE_AUTH != '1' → allow one isolated browser guest without session
  * - Google login is opt-in when AUTH_GOOGLE_* + AUTH_SECRET are set
  */
 const googleClientId = process.env.AUTH_GOOGLE_ID || process.env.GOOGLE_CLIENT_ID;
@@ -70,21 +70,27 @@ export async function requireUserId(): Promise<{
     (await headers()).get('x-docs-guest-id') ||
     undefined;
   const guest = {
-    // Keep the old fallback for direct server calls that predate the cookie;
-    // browser requests receive the cookie from middleware before storage.
-    userId: guestCookie ? `guest-${guestCookie}` : 'local-guest',
+    // There must never be a shared anonymous storage namespace. Middleware
+    // creates this identifier for every browser before it reaches storage.
+    // A missing identity is safer as an error than silently using another
+    // guest's historical "local-guest" workspace.
+    userId: guestCookie ? `guest-${guestCookie}` : '',
     guest: true as const,
     name: 'Invitado local',
     email: null as string | null,
     image: null as string | null,
   };
 
-  if (!isAuthConfigured()) return guest;
+  if (!isAuthConfigured()) {
+    if (!guest.userId) throw new Error('GUEST_ID_MISSING');
+    return guest;
+  }
 
   const session = await auth();
   if (!session?.user?.id) {
     // Dev-friendly: guest allowed unless FORCE_AUTH=1
     if (process.env.FORCE_AUTH === '1') throw new Error('UNAUTHORIZED');
+    if (!guest.userId) throw new Error('GUEST_ID_MISSING');
     return guest;
   }
   return {

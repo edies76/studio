@@ -93,6 +93,7 @@ export const config = {
     '/brief',
     '/studio',
     '/studio/:path*',
+    '/api/docs',
     '/api/docs/:path*',
     '/pre-summary',
   ],

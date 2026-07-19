@@ -51,7 +51,7 @@ function StudioInner() {
   }, [router, searchParams]);
 
   if (!ready) return <Loading />;
-  return <DocsStudioClient topic={topic} documentId={docId} />;
+  return <DocsStudioClient key={docId || 'new-document'} topic={topic} documentId={docId} />;
 }
 
 export default function StudioPage() {

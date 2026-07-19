@@ -21,7 +21,7 @@ export async function GET() {
       },
     });
   } catch (e: any) {
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'list failed' }, { status: 500 });
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json({ doc });
   } catch (e: any) {
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'create failed' }, { status: 500 });

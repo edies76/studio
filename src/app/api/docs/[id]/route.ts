@@ -22,7 +22,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
     if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return NextResponse.json({ doc });
   } catch (e: any) {
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'get failed' }, { status: 500 });
@@ -63,7 +63,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         },
       }, { status: 409 });
     }
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'save failed' }, { status: 500 });
@@ -87,7 +87,7 @@ export async function PATCH(req: NextRequest, ctx: Ctx) {
     }
     return NextResponse.json({ error: 'nothing_to_patch' }, { status: 400 });
   } catch (e: any) {
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'patch failed' }, { status: 500 });
@@ -101,7 +101,7 @@ export async function DELETE(_req: NextRequest, ctx: Ctx) {
     await deleteDocument(user.userId, id);
     return NextResponse.json({ ok: true });
   } catch (e: any) {
-    if (e?.message === 'UNAUTHORIZED') {
+    if (e?.message === 'UNAUTHORIZED' || e?.message === 'GUEST_ID_MISSING') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
     return NextResponse.json({ error: e?.message || 'delete failed' }, { status: 500 });
