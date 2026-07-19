@@ -52,7 +52,7 @@ export function createCloudDocsStudioMcpServer(options: {
     tools: [
       'get_capabilities', 'create_document', 'list_documents', 'delete_document', 'read_document', 'find_in_document', 'check_document',
       'parse_brief', 'draft_document', 'chat_document', 'propose_edit', 'accept_edit', 'reject_edit', 'update_title', 'set_paper_size',
-      'insert_html', 'insert_math', 'insert_table', 'insert_image', 'insert_page_break', 'get_history', 'list_versions', 'restore_version', 'export_document',
+      'insert_html', 'insert_math', 'insert_table', 'edit_table_cell', 'insert_image', 'insert_page_break', 'get_history', 'list_versions', 'restore_version', 'export_document',
     ],
     resources: ['docs://workspace', 'docs://document/{documentId}', 'docs://history/{documentId}'],
     transports: ['streamable-http'],
@@ -244,6 +244,18 @@ export function createCloudDocsStudioMcpServer(options: {
       columns: z.number().int().min(1).max(12).optional(),
     },
   }, async ({ documentId, rows, columns }) => safe(() => workspace.insertTable(documentId, rows, columns)));
+
+  server.registerTool('edit_table_cell', {
+    title: 'Edit table cell',
+    description: 'Change exactly one cell in an existing table and persist the operation as a separate document version.',
+    inputSchema: {
+      documentId: z.string(),
+      tableIndex: z.number().int().min(0),
+      rowIndex: z.number().int().min(0),
+      columnIndex: z.number().int().min(0),
+      content: z.string(),
+    },
+  }, async ({ documentId, tableIndex, rowIndex, columnIndex, content }) => safe(() => workspace.editTableCell(documentId, { tableIndex, rowIndex, columnIndex, content })));
 
   server.registerTool('insert_image', {
     title: 'Insert image',

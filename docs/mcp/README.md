@@ -69,6 +69,7 @@ The remote server exposes 22 tools:
 | `insert_html` | Append sanitized HTML directly. | Yes |
 | `insert_math` | Insert an inline or display MathJax equation. | Yes |
 | `insert_table` | Insert an editable HTML table with headers. | Yes |
+| `edit_table_cell` | Change one indexed table cell without replacing the table. | Yes |
 | `insert_image` | Insert an HTTPS/data image with width and wrap mode. | Yes |
 | `insert_page_break` | Insert a persistent page break. | Yes |
 | `get_history` | Read the document audit trail. | No |

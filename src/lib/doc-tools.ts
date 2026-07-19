@@ -104,6 +104,22 @@ export const STUDIO_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'edit_table_cell',
+    description: 'Change exactly one cell in an existing table as a reviewable proposal. Read or inspect the document first to confirm indexes.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        tableIndex: { type: 'NUMBER', description: '0-based table index.' },
+        rowIndex: { type: 'NUMBER', description: '0-based row index. Header row is usually 0.' },
+        columnIndex: { type: 'NUMBER', description: '0-based column index.' },
+        content: { type: 'STRING', description: 'Plain text content for the cell.' },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: ['tableIndex', 'rowIndex', 'columnIndex', 'content'],
+    },
+  },
+  {
     name: 'insert_table',
     description:
       'Create a real editable HTML table as a reviewable proposal. Use when the user asks for a table, matrix, comparison, schedule, or structured rows and columns.',

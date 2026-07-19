@@ -21,6 +21,7 @@ import {
 import { slog } from '@/lib/server-log';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
 import { buildDocumentIntelligence, buildDocsAgentSystem, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
+import { replaceTableCell } from '@/lib/table-tools';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -962,6 +963,30 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               });
               send({ type: 'tool_end', name, ok: true, label: 'Tabla propuesta · aceptá para insertarla', id: tid });
               await reply({ ok: true, id: proposal.id, rows, columns, note: 'Pending user Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'edit_table_cell') {
+              const tid = `table_cell_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const tableIndex = Math.floor(Number(args.tableIndex));
+              const rowIndex = Math.floor(Number(args.rowIndex));
+              const columnIndex = Math.floor(Number(args.columnIndex));
+              const content = String(args.content || '').trim();
+              send({ type: 'tool_start', name, label: `Editando celda ${rowIndex + 1}:${columnIndex + 1}…`, id: tid });
+              const changed = replaceTableCell(liveHtml, { tableIndex, rowIndex, columnIndex, content });
+              if (!changed) {
+                send({ type: 'tool_end', name, ok: false, label: 'No encontré esa celda', id: tid });
+                await reply({ ok: false, error: 'tableIndex, rowIndex or columnIndex is out of range' });
+                continue;
+              }
+              const proposal = proposeGeneratedDocument({
+                title: args.title || `Editar celda ${rowIndex + 1}:${columnIndex + 1}`,
+                summary: args.summary || 'Preparé un cambio localizado en una sola celda.',
+                nextHtml: changed.html,
+                changeList: [`Tabla ${tableIndex + 1}`, `Fila ${rowIndex + 1}`, `Columna ${columnIndex + 1}`],
+              });
+              send({ type: 'tool_end', name, ok: true, label: 'Celda propuesta · aceptá para aplicarla', id: tid });
+              await reply({ ok: true, id: proposal.id, previous: changed.previousHtml, note: 'Pending user Accept/Reject.' });
               continue;
             }
 

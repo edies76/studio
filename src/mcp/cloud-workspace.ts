@@ -14,6 +14,7 @@ import {
 } from '@/lib/doc-store';
 import { extractDocumentBlocks } from './core';
 import { sanitizeDocumentHtml } from '@/lib/math-html';
+import { replaceTableCell } from '@/lib/table-tools';
 
 export type CloudDocumentInput = {
   title?: string;
@@ -294,6 +295,13 @@ export class CloudDocsStudioWorkspace {
       'inserted',
       `Inserted ${rowCount} × ${columnCount} table`,
     );
+  }
+
+  async editTableCell(id: string, input: { tableIndex: number; rowIndex: number; columnIndex: number; content: string }) {
+    const document = await this.getDocument(id);
+    const changed = replaceTableCell(document.html, input);
+    if (!changed) throw new Error('tableIndex, rowIndex or columnIndex is out of range');
+    return this.replaceContent(id, changed.html, 'edited', `Edited table ${input.tableIndex + 1}, cell ${input.rowIndex + 1}:${input.columnIndex + 1}`);
   }
 
   async insertImage(id: string, input: { src: string; alt?: string; width?: number; wrap?: string; left?: number; top?: number }) {
