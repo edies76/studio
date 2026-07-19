@@ -81,7 +81,6 @@ export default function BriefPage() {
 
   const applyTemplate = (template: Template) => {
     setSelectedTemplate(template.id);
-    setText(template.starter);
     setError('');
   };
 
@@ -115,8 +114,8 @@ export default function BriefPage() {
       text.trim(),
       ...references.map((reference) => `\nDOCUMENTO DE REFERENCIA: ${reference.name}\n${reference.text}`),
     ].filter(Boolean).join('\n\n');
-    if (combined.trim().length < 40) {
-      setError(isEs ? 'Escribe una consigna o elige una plantilla antes de continuar.' : 'Write an assignment or choose a template before continuing.');
+    if (text.trim().length < 20) {
+      setError(isEs ? 'Agrega la consigna real antes de continuar. La plantilla solo define la estructura.' : 'Add the real assignment before continuing. A template only defines structure.');
       return;
     }
     setBusy(true);
@@ -148,55 +147,22 @@ export default function BriefPage() {
   };
 
   return (
-    <main className="brief-room">
-      <header className="brief-header">
-        <div className="brief-header__inner">
-          <button type="button" className="brief-back" onClick={() => router.push('/home')}>← <span>{isEs ? 'Biblioteca' : 'Library'}</span></button>
-          <a href="/" className="brief-brand"><BrandMark size={30} /><span>Docs Studio</span></a>
-          <div className="brief-header__right"><LocaleSwitch /><a href="/mcp">MCP ↗</a></div>
-        </div>
+    <main className="brief-compact">
+      <header className="brief-compact__header">
+        <button type="button" onClick={() => router.push('/home')} className="brief-compact__back">← {isEs ? 'Biblioteca' : 'Library'}</button>
+        <a href="/home" className="brief-compact__brand"><BrandMark size={24} /><span>Docs Studio</span></a>
+        <LocaleSwitch />
       </header>
-
-      <section className="brief-intro">
-        <div>
-          <p className="brief-kicker"><span /> {isEs ? 'Brief room / 01' : 'Brief room / 01'}</p>
-          <h1>{isEs ? 'Primero entiende el encargo. Después escribe.' : 'Understand the assignment first. Then write.'}</h1>
-          <p className="brief-intro__lede">{isEs ? 'Combina una plantilla, la consigna del profesor y tus documentos de referencia. Docs Studio convierte ese material en contexto persistente para el documento y el agente.' : 'Combine a template, the professor’s assignment, and your reference documents. Docs Studio turns that material into persistent context for the document and agent.'}</p>
-        </div>
-        <div className="brief-flow" aria-label="Brief to document flow"><span><b>01</b>{isEs ? 'Reunir' : 'Gather'}</span><i /><span><b>02</b>{isEs ? 'Estructurar' : 'Structure'}</span><i /><span><b>03</b>{isEs ? 'Escribir' : 'Write'}</span></div>
-      </section>
-
-      <section className="brief-workspace">
-        <div className="brief-workspace__main">
-          <div className="brief-section-head"><p className="brief-label">01 / {isEs ? 'Plantilla' : 'Template'}</p><h2>{isEs ? 'Elige un punto de partida.' : 'Choose a starting point.'}</h2><p>{isEs ? 'La plantilla no redacta por ti. Define qué debe aparecer y te ayuda a no perder la forma de la entrega.' : 'The template does not write for you. It defines what should appear and helps preserve the shape of the deliverable.'}</p></div>
-          <div className="brief-template-grid">{templates.map((template) => <button type="button" key={template.id} onClick={() => applyTemplate(template)} className={`brief-template ${selectedTemplate === template.id ? 'is-selected' : ''}`}><span className="brief-template__number">{String(templates.indexOf(template) + 1).padStart(2, '0')}</span><strong>{template.label}</strong><p>{template.description}</p><small>{template.structure}</small></button>)}</div>
-
-          <div className="brief-section-head brief-section-head--assignment"><p className="brief-label">02 / {isEs ? 'Consigna' : 'Assignment'}</p><h2>{isEs ? 'Pon la fuente original junto al trabajo.' : 'Keep the source next to the work.'}</h2><p>{isEs ? 'Pega las instrucciones completas. El parser extrae tareas, objetivos, restricciones y rúbrica; si algo no está, no lo inventa.' : 'Paste the full instructions. The parser extracts tasks, objectives, constraints, and rubric; if something is missing, it does not invent it.'}</p></div>
-          <div className="brief-editor-card"><div className="brief-editor-card__top"><span>{selected.label}</span><span>{text.length.toLocaleString()} {isEs ? 'caracteres' : 'characters'}</span></div><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={isEs ? 'Pega aquí la guía, instrucciones, rúbrica o pregunta central…' : 'Paste the assignment, instructions, rubric, or central question here…'} /><div className="brief-editor-card__foot"><span>{isEs ? 'Editable antes de analizar' : 'Editable before parsing'}</span><button type="button" onClick={() => setText(selected.starter)}>{isEs ? 'Cargar texto de plantilla' : 'Load template text'}</button></div></div>
-
-          <div className="brief-section-head brief-section-head--references"><p className="brief-label">03 / {isEs ? 'Documentos de referencia' : 'Reference documents'}</p><h2>{isEs ? 'Agrega el material que el agente debe conocer.' : 'Add the material the agent should know.'}</h2><p>{isEs ? 'Las referencias se incorporan al brief y quedan registradas junto al documento. Así una fuente no se pierde entre pestañas.' : 'References become part of the brief and are recorded with the document. A source should not get lost between tabs.'}</p></div>
-          <div className="brief-references-card">
-            <input ref={fileRef} type="file" multiple accept=".docx,.txt,.md,text/plain" className="sr-only" onChange={(event) => { const files = Array.from(event.target.files || []); void Promise.all(files.map(readReference)); event.currentTarget.value = ''; }} />
-            <button type="button" className="brief-upload-zone" onClick={() => fileRef.current?.click()}><span className="brief-upload-mark" aria-hidden="true">+</span><span><strong>{isEs ? 'Agregar documentos' : 'Add documents'}</strong><small>{isEs ? 'DOCX, TXT o MD · hasta 8 referencias' : 'DOCX, TXT, or MD · up to 8 references'}</small></span><b>↗</b></button>
-            {references.length > 0 && <div className="brief-reference-list">{references.map((reference) => <div className="brief-reference" key={reference.id}><span className="brief-reference__type">{reference.name.split('.').pop()?.toUpperCase() || 'DOC'}</span><span><strong>{reference.name}</strong><small>{readableSize(reference.size)} · {reference.text.length.toLocaleString()} {isEs ? 'caracteres leídos' : 'characters read'}</small></span><button type="button" onClick={() => setReferences((items) => items.filter((item) => item.id !== reference.id))}>{isEs ? 'Quitar' : 'Remove'}</button></div>)}</div>}
-          </div>
-        </div>
-
-        <aside className="brief-summary">
-          <div className="brief-summary__sticky">
-            <p className="brief-label">04 / {isEs ? 'Antes de abrir' : 'Before opening'}</p>
-            <h2>{isEs ? 'Un contexto que el documento puede recordar.' : 'Context the document can remember.'}</h2>
-            <div className="brief-summary__source"><span>{isEs ? 'Plantilla' : 'Template'}</span><strong>{selected.label}</strong><small>{selected.structure}</small></div>
-            <div className="brief-summary__source"><span>{isEs ? 'Material' : 'Material'}</span><strong>{references.length.toString().padStart(2, '0')} {isEs ? 'referencias' : 'references'}</strong><small>{text.trim() ? (isEs ? 'Consigna lista para analizar' : 'Assignment ready to parse') : (isEs ? 'Falta la consigna' : 'Assignment is missing')}</small></div>
-            <div className="brief-summary__rule" />
-            <p className="brief-summary__note">{isEs ? 'Al continuar, se crea un documento vacío con el brief persistido. El agente podrá leerlo antes de proponer cambios.' : 'Continue to create a blank document with the brief persisted. The agent can read it before proposing changes.'}</p>
-            <button type="button" className="brief-create-button" disabled={busy} onClick={() => void createFromBrief()}>{busy ? (isEs ? 'Analizando brief…' : 'Parsing brief…') : (isEs ? 'Crear documento con este contexto ↗' : 'Create document with this context ↗')}</button>
-            {error && <p className="brief-error" role="alert">{error}</p>}
-          </div>
-        </aside>
-      </section>
-
-      <footer className="brief-footer"><span>Docs Studio / {isEs ? 'brief room' : 'brief room'}</span><span>{isEs ? 'El contexto también es un objeto del documento.' : 'Context is also a document object.'}</span><a href="/home">{isEs ? 'Volver a documentos ↗' : 'Back to documents ↗'}</a></footer>
+      <div className="brief-compact__body">
+        <section className="brief-compact__form" aria-label={isEs ? 'Preparar documento' : 'Prepare document'}>
+          <div className="brief-compact__title"><p>BRIEF / NUEVO DOCUMENTO</p><h1>{isEs ? 'Prepara el contexto.' : 'Prepare the context.'}</h1><span>{isEs ? 'La consigna queda guardada con el documento y guía al agente.' : 'The assignment is saved with the document and guides the agent.'}</span></div>
+          <div className="brief-compact__field"><label>{isEs ? 'Plantilla' : 'Template'}</label><div className="brief-compact__templates">{templates.map((template) => <button type="button" key={template.id} onClick={() => applyTemplate(template)} className={selectedTemplate === template.id ? 'is-selected' : ''}><strong>{template.label}</strong><small>{template.structure}</small></button>)}</div></div>
+          <div className="brief-compact__field brief-compact__field--grow"><div className="brief-compact__field-head"><label>{isEs ? 'Consigna o guía' : 'Assignment or guide'}</label><span>{text.length.toLocaleString()}</span></div><textarea value={text} onChange={(event) => setText(event.target.value)} placeholder={isEs ? 'Pega la guía, rúbrica, pregunta o requisitos completos…' : 'Paste the full guide, rubric, question, or requirements…'} /></div>
+          <div className="brief-compact__references"><input ref={fileRef} type="file" multiple accept=".docx,.txt,.md,text/plain" className="sr-only" onChange={(event) => { const files = Array.from(event.target.files || []); void Promise.all(files.map(readReference)); event.currentTarget.value = ''; }} /><div><label>{isEs ? 'Referencias' : 'References'}</label><small>{isEs ? 'DOCX, TXT o MD · máximo 8' : 'DOCX, TXT, or MD · up to 8'}</small></div><button type="button" onClick={() => fileRef.current?.click()}>+ {isEs ? 'Agregar' : 'Add'}</button></div>
+          {references.length > 0 && <div className="brief-compact__file-list">{references.map((reference) => <div key={reference.id}><span>{reference.name}</span><button type="button" onClick={() => setReferences((items) => items.filter((item) => item.id !== reference.id))}>×</button></div>)}</div>}
+        </section>
+        <aside className="brief-compact__summary"><p>LISTO PARA ABRIR</p><h2>{selected.label}</h2><span>{selected.structure}</span><dl><div><dt>{isEs ? 'Consigna' : 'Assignment'}</dt><dd>{text.trim() ? (isEs ? 'Lista para analizar' : 'Ready to parse') : (isEs ? 'Aún falta' : 'Missing')}</dd></div><div><dt>{isEs ? 'Referencias' : 'References'}</dt><dd>{references.length}</dd></div></dl><p className="brief-compact__note">{isEs ? 'Se crea un documento con este brief persistido. Nada se redacta ni se inventa todavía.' : 'A document is created with this persisted brief. Nothing is drafted or invented yet.'}</p><button type="button" disabled={busy} onClick={() => void createFromBrief()}>{busy ? (isEs ? 'Analizando…' : 'Parsing…') : (isEs ? 'Abrir documento ↗' : 'Open document ↗')}</button>{error && <p className="brief-error" role="alert">{error}</p>}</aside>
+      </div>
     </main>
   );
 }

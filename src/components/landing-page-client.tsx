@@ -193,29 +193,24 @@ export default function LandingPageClient() {
 
         <section className="landing-section home-landing__usecases" aria-labelledby="usecases-heading">
           <div className="landing-wrap home-landing__usecases-grid">
-            <div>
-              <div className="section-rule">
-                <span>{t('usecases.rule')}</span>
-                <span className="section-rule__line" aria-hidden="true" />
-              </div>
-              <h2 id="usecases-heading">{t('usecases.h2')}</h2>
-              <p>{t('usecases.p')}</p>
-              <Link className="landing-inline-link" href="/usecases">
-                {t('usecases.link')} <span>↗</span>
-              </Link>
+            <div className="home-landing__usecases-intro">
+              <p className="landing-micro-label">WHEN A DOCUMENT HAS A JOB</p>
+              <h2 id="usecases-heading">More focused than a general editor.</h2>
+              <p>A blank page is fine when the rules are in your head. Docs is for the moments when they live in a rubric, a brief, a template, or a regulated process—and cannot be lost halfway through the draft.</p>
+              <div className="home-landing__usecases-proof"><span>YOU BRING</span><strong>Rules, source files, and a repeatable structure.</strong><span>DOCS KEEPS</span><strong>The document tied to all of it.</strong></div>
+              <Link className="landing-primary-button" href="/usecases">See concrete use cases <span aria-hidden="true">↗</span></Link>
             </div>
-            <div className="home-landing__usecases-list">
+            <div className="home-landing__usecases-list" aria-label="Examples of documents Docs Studio is made for">
               {[
-                ['01', 'Universities', 'Reports that start from a rubric, guide, or lab procedure.'],
-                ['02', 'Agencies', 'Proposals and client deliverables that stay aligned with the brief.'],
-                ['03', 'Engineering + compliance', 'Specifications, procedures, and reports with required fields.'],
-                ['04', 'Document batches', 'One approved template with different names, sites, dates, or values.'],
-              ].map(([number, title, body]) => (
-                <Link key={number} href="/usecases" className="home-landing__usecase-row">
+                ['01', 'University report', 'A professor’s rubric becomes the required structure, not a PDF you forget to reopen.', 'Rubric · sources · final report'],
+                ['02', 'Client proposal', 'Scope, exclusions, and brand language stay attached while the team revises the draft.', 'Brief · proposal · review'],
+                ['03', 'Technical procedure', 'Mandatory evidence and approval steps remain visible until the document is complete.', 'Requirements · procedure · audit'],
+                ['04', 'Reusable pattern', 'Start the next document from the same approved structure without rebuilding the brief.', 'Brief · structure · review · export'],
+              ].map(([number, title, body, flow]) => (
+                <article key={number} className="home-landing__usecase-row">
                   <span>{number}</span>
-                  <div><strong>{title}</strong><p>{body}</p></div>
-                  <b aria-hidden="true">↗</b>
-                </Link>
+                  <div><strong>{title}</strong><p>{body}</p><small>{flow}</small></div>
+                </article>
               ))}
             </div>
           </div>

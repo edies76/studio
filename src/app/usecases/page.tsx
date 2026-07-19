@@ -11,7 +11,7 @@ const cases = [
   ['01', 'Universities and training programs', 'Turn a rubric into a document students can actually complete.', 'Workshop and lab reports · Capstone submissions · Rubric-led research papers · Technical assignments', 'Required sections · word limits · equations · tables · citation instructions'],
   ['02', 'Consultancies and agencies', 'Make every client deliverable follow the brief and the house style.', 'RFP responses · Client strategy documents · Research summaries · Monthly reports', 'Brand voice · scope · deliverables · exclusions · reusable sections'],
   ['03', 'Engineering, operations, and compliance', 'Turn requirements into documents that do not forget the important parts.', 'Technical specifications · Operating procedures · Change requests · Incident reports', 'Mandatory fields · evidence · risk sections · approval steps · controlled vocabulary'],
-  ['04', 'Repeatable document batches', 'Create one approved document many times with different values.', 'Reports by student · Site-specific plans · Client summaries · Project packs', 'Locked template · variable mapping · per-copy validation · batch export'],
+  ['04', 'Reusable document patterns', 'Reuse an approved structure as the starting point for the next document.', 'Reports by student · Site-specific plans · Client summaries · Project packs', 'Brief context · visible structure · reviewable edits · individual export'],
 ];
 
 export default function UseCasesPage() {

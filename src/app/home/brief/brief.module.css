@@ -1,29 +1,42 @@
-.scope :global(.brief-room) {
-  --workspace-brown: #20201f;
-  --workspace-ink: #20201f;
-  --workspace-muted: #737371;
-  --workspace-line: #e6e6e3;
-  background: #f7f6f3;
-  color: #20201f;
-}
-
-.scope :global(.brief-header) {
-  background: rgba(247, 246, 243, .94);
-  border-color: #e6e6e3;
-}
-
-.scope :global(.brief-brand span span),
-.scope :global(.brief-kicker),
-.scope :global(.brief-label),
-.scope :global(.brief-editor-card__top),
-.scope :global(.brief-summary__source span) { color: #5f5f5b; }
-
-.scope :global(.brief-kicker span) { background: #20201f; }
-.scope :global(.brief-template:hover),
-.scope :global(.brief-template.is-selected) { background: #f0f0ed; }
-.scope :global(.brief-template.is-selected) { box-shadow: inset 3px 0 0 #20201f; }
-.scope :global(.brief-summary__sticky) { background: #f0f0ed; border-color: #20201f; }
-.scope :global(.brief-create-button) { background: #20201f; border-color: #20201f; border-radius: 6px; }
-.scope :global(.brief-create-button:hover) { background: #3b3b38; border-color: #3b3b38; }
-.scope :global(.brief-upload-zone:hover strong) { color: #20201f; }
-.scope :global(.brief-footer) { background: #20201f; }
+.scope { height: 100dvh; overflow: hidden; background: #f7f6f3; color: #20201f; }
+.scope :global(.brief-compact) { display: grid; grid-template-rows: 58px minmax(0, 1fr); height: 100%; font-family: var(--font-geist-sans), "Helvetica Neue", sans-serif; }
+.scope :global(.brief-compact__header) { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 0 24px; border-bottom: 1px solid #e6e4df; background: #fbfbfa; }
+.scope :global(.brief-compact__back) { justify-self: start; border: 0; background: transparent; color: #716d67; font: inherit; font-size: 12px; cursor: pointer; }
+.scope :global(.brief-compact__back:hover) { color: #20201f; }
+.scope :global(.brief-compact__brand) { display: inline-flex; align-items: center; gap: 8px; color: #20201f; font-size: 13px; font-weight: 650; text-decoration: none; }
+.scope :global(.brief-compact__header > :last-child) { justify-self: end; }
+.scope :global(.brief-compact__body) { display: grid; grid-template-columns: minmax(0, 1fr) 312px; min-height: 0; max-width: 1180px; width: 100%; margin: 0 auto; border-left: 1px solid #e6e4df; border-right: 1px solid #e6e4df; }
+.scope :global(.brief-compact__form) { display: grid; grid-template-rows: auto auto minmax(160px, 1fr) auto auto; gap: 18px; min-height: 0; padding: clamp(24px, 4vw, 44px); background: #fbfbfa; }
+.scope :global(.brief-compact__title p), .scope :global(.brief-compact__summary > p:first-child), .scope :global(.brief-compact__field label), .scope :global(.brief-compact__references label) { margin: 0; color: #77736d; font-family: var(--font-geist-mono), monospace; font-size: 10px; font-weight: 650; letter-spacing: .1em; }
+.scope :global(.brief-compact__title h1) { margin: 7px 0 4px; font-family: Newsreader, Georgia, serif; font-size: clamp(32px, 4vw, 48px); font-weight: 500; letter-spacing: -.05em; line-height: .96; }
+.scope :global(.brief-compact__title span) { color: #706b65; font-size: 13px; }
+.scope :global(.brief-compact__field) { min-width: 0; }
+.scope :global(.brief-compact__templates) { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.scope :global(.brief-compact__templates button) { min-width: 0; padding: 10px; border: 1px solid #e4e2de; border-radius: 7px; background: #fff; color: #34312e; text-align: left; cursor: pointer; }
+.scope :global(.brief-compact__templates button:hover), .scope :global(.brief-compact__templates button.is-selected) { border-color: #282624; background: #f0efeb; }
+.scope :global(.brief-compact__templates strong), .scope :global(.brief-compact__templates small) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope :global(.brief-compact__templates strong) { font-size: 12px; }
+.scope :global(.brief-compact__templates small) { margin-top: 5px; color: #807a73; font-size: 10px; }
+.scope :global(.brief-compact__field--grow) { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.scope :global(.brief-compact__field-head) { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.scope :global(.brief-compact__field-head span) { color: #96918a; font: 10px var(--font-geist-mono), monospace; }
+.scope :global(.brief-compact textarea) { width: 100%; min-height: 0; height: 100%; resize: none; box-sizing: border-box; padding: 14px; border: 1px solid #dedbd5; border-radius: 7px; background: #fff; color: #292724; font: 14px/1.6 var(--font-geist-sans), sans-serif; outline: none; }
+.scope :global(.brief-compact textarea:focus) { border-color: #4b4742; }
+.scope :global(.brief-compact__references) { display: flex; align-items: center; gap: 12px; padding: 12px 0 0; border-top: 1px solid #e8e6e1; }
+.scope :global(.brief-compact__references > div) { display: grid; gap: 3px; }
+.scope :global(.brief-compact__references small) { color: #8a857e; font-size: 11px; }
+.scope :global(.brief-compact__references > button) { margin-left: auto; border: 1px solid #dedbd5; border-radius: 5px; background: #fff; padding: 7px 10px; color: #36322f; font: 12px inherit; cursor: pointer; }
+.scope :global(.brief-compact__file-list) { display: flex; flex-wrap: wrap; gap: 6px; max-height: 46px; overflow: auto; }
+.scope :global(.brief-compact__file-list div) { display: flex; align-items: center; gap: 6px; max-width: 220px; border: 1px solid #e4e2de; border-radius: 4px; padding: 4px 7px; color: #5f5a54; font-size: 11px; }
+.scope :global(.brief-compact__file-list span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope :global(.brief-compact__file-list button) { border: 0; background: transparent; color: #8f2f2d; cursor: pointer; }
+.scope :global(.brief-compact__summary) { display: flex; flex-direction: column; padding: clamp(24px, 3vw, 38px); border-left: 1px solid #e6e4df; background: #f0efeb; }
+.scope :global(.brief-compact__summary h2) { margin: 13px 0 4px; font-family: Newsreader, Georgia, serif; font-size: 31px; font-weight: 500; letter-spacing: -.04em; line-height: 1; }
+.scope :global(.brief-compact__summary > span) { color: #746f68; font-size: 12px; line-height: 1.45; }
+.scope :global(.brief-compact__summary dl) { display: grid; gap: 0; margin: 32px 0 0; border-top: 1px solid #dcd9d3; }
+.scope :global(.brief-compact__summary dl div) { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid #dcd9d3; }
+.scope :global(.brief-compact__summary dt) { color: #7c766f; font-size: 11px; }.scope :global(.brief-compact__summary dd) { margin: 0; color: #2b2825; font-size: 11px; font-weight: 650; text-align: right; }
+.scope :global(.brief-compact__note) { margin: auto 0 18px; color: #69635c; font-size: 12px; line-height: 1.55; }
+.scope :global(.brief-compact__summary > button) { min-height: 42px; border: 1px solid #20201f; border-radius: 6px; background: #20201f; color: #fff; font: 600 12px var(--font-geist-sans), sans-serif; cursor: pointer; }.scope :global(.brief-compact__summary > button:hover) { background: #3a3835; }.scope :global(.brief-compact__summary > button:disabled) { opacity: .55; cursor: wait; }
+.scope :global(.brief-error) { margin: 10px 0 0; color: #9f2f2d; font-size: 11px; line-height: 1.4; }
+@media (max-width: 760px) { .scope { overflow: auto; }.scope :global(.brief-compact) { min-height: 100dvh; height: auto; }.scope :global(.brief-compact__body) { grid-template-columns: 1fr; }.scope :global(.brief-compact__summary) { border-top: 1px solid #e6e4df; border-left: 0; min-height: 320px; }.scope :global(.brief-compact__form) { min-height: 620px; }.scope :global(.brief-compact__templates) { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
