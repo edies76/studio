@@ -48,6 +48,7 @@ export const PAPER: Record<
 > = {
   letter: { widthPx: 816, heightPx: 1056, label: 'Letter 8.5×11"' },
   legal: { widthPx: 816, heightPx: 1344, label: 'Legal 8.5×14"' },
+  a4: { widthPx: 794, heightPx: 1123, label: 'A4 210×297 mm' },
 };
 
 export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
@@ -85,6 +86,60 @@ type TableToolsRect = {
   left: number;
   width: number;
 };
+
+type SelectionBookmark = { start: number; end: number };
+
+function selectionBookmark(bodies: HTMLElement[]): SelectionBookmark | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const startBody = bodyContaining(range.startContainer, bodies);
+  const endBody = bodyContaining(range.endContainer, bodies);
+  if (!startBody || !endBody) return null;
+
+  const offsetInBody = (body: HTMLElement, node: Node, offset: number) => {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(body);
+    prefix.setEnd(node, offset);
+    return prefix.toString().length;
+  };
+  const startPrefix = bodies.slice(0, bodies.indexOf(startBody)).reduce((sum, body) => sum + body.textContent!.length, 0);
+  const endPrefix = bodies.slice(0, bodies.indexOf(endBody)).reduce((sum, body) => sum + body.textContent!.length, 0);
+  return {
+    start: startPrefix + offsetInBody(startBody, range.startContainer, range.startOffset),
+    end: endPrefix + offsetInBody(endBody, range.endContainer, range.endOffset),
+  };
+}
+
+function restoreSelectionBookmark(bookmark: SelectionBookmark, bodies: HTMLElement[], lastSelection: MutableRefObject<Range | null>) {
+  const pointAt = (absoluteOffset: number) => {
+    let remaining = Math.max(0, absoluteOffset);
+    for (const body of bodies) {
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const length = node.textContent?.length ?? 0;
+        if (remaining <= length) return { node, offset: remaining, body };
+        remaining -= length;
+        node = walker.nextNode();
+      }
+      if (remaining === 0) return { node: body as Node, offset: body.childNodes.length, body };
+    }
+    const last = bodies[bodies.length - 1];
+    return last ? { node: last as Node, offset: last.childNodes.length, body: last } : null;
+  };
+  const start = pointAt(bookmark.start);
+  const end = pointAt(bookmark.end);
+  if (!start || !end) return;
+  const range = document.createRange();
+  range.setStart(start.node, start.offset);
+  range.setEnd(end.node, end.offset);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  start.body.focus({ preventScroll: true });
+  lastSelection.current = range.cloneRange();
+}
 
 type ResizeSession = {
   image: HTMLImageElement;
@@ -383,7 +438,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   );
 
   const scheduleRebalance = useCallback(
-    (pageIdx: number) => {
+    (pageIdx: number, bookmark?: SelectionBookmark | null) => {
       if (rebalanceTimer.current) clearTimeout(rebalanceTimer.current);
       rebalanceTimer.current = setTimeout(() => {
         const liveCount = Math.max(bodyRefs.current.filter(Boolean).length, 1);
@@ -405,7 +460,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             typesetEditor(el);
             if (wasFocused && !grew) placeCaretAtEnd(el);
           });
-          if (grew) {
+          if (bookmark) {
+            restoreSelectionBookmark(bookmark, bodyRefs.current.filter(Boolean) as HTMLElement[], lastSelection);
+          } else if (grew) {
             const last = bodyRefs.current[next.length - 1];
             if (last) placeCaretAtEnd(last);
           }
@@ -444,7 +501,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         const selected = window.getSelection()?.anchorNode ?? lastSelection.current?.startContainer ?? null;
         const body = bodyContaining(selected, bodies) || bodies[activePage] || bodies[0];
         const index = Math.max(0, bodies.indexOf(body));
-        scheduleRebalance(index);
+        scheduleRebalance(index, selectionBookmark(bodies));
         requestAnimationFrame(() => onInput());
       },
       insertImage: async (file: File) => {
@@ -1124,6 +1181,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const onPageShellClick = (pageIdx: number, e: React.MouseEvent) => {
     if (!contentEditable || hasGhost) return;
     const t = e.target as HTMLElement;
+    if (t.closest('[data-page-footer]')) return;
     if (t.closest(BLOCK_SEL) || t.closest('img') || t.closest('table')) return;
     const body = bodyRefs.current[pageIdx];
     if (!body) return;
@@ -1251,6 +1309,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                     />
                   )}
                   <div
+                    data-page-footer
                     className="pointer-events-none absolute bottom-4 left-0 right-0 z-20 text-center font-mono text-[10px] tracking-wide text-neutral-300"
                     aria-hidden
                   >

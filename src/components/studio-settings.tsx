@@ -36,6 +36,8 @@ export type StudioPrefs = {
   shortcutOpenAgent: string;
   /** Letter after Ctrl for edit selection (default e) */
   shortcutEditSelection: string;
+  /** Extra instruction applied only to the Improve tool. */
+  improvePrompt: string;
 };
 
 export const DEFAULT_PREFS: StudioPrefs = {
@@ -166,11 +168,12 @@ export default function StudioSettings({
                   options={[
                     { id: 'letter', label: 'Letter' },
                     { id: 'legal', label: 'Legal' },
+                    { id: 'a4', label: 'A4' },
                   ]}
                   onChange={(v) => onPaperSizeChange(v as PaperSize)}
                 />
               </Row>
-              <Hint>Letter 8.5×11″ · Legal 8.5×14″. Los márgenes se aplican al lienzo y al export.</Hint>
+              <Hint>Letter 8.5×11″ · Legal 8.5×14″ · A4 210×297 mm. Los márgenes se aplican al lienzo y al export.</Hint>
             </div>
           )}
 
@@ -357,6 +360,9 @@ export default function StudioSettings({
               </Row>
 
               <div className="rounded-xl border border-neutral-200 bg-neutral-50/80 p-3">
+                <label className="mb-3 block text-[12px] font-medium text-neutral-700">Improve instruction
+                  <textarea value={prefs.improvePrompt} onChange={(event) => set({ improvePrompt: event.target.value })} rows={4} className="mt-2 block w-full resize-y rounded-lg border border-neutral-200 bg-white p-2.5 text-[11px] leading-relaxed text-neutral-700 outline-none focus:border-neutral-500" />
+                </label>
                 <div className="mb-2 flex items-center gap-1.5 text-[12px] font-semibold text-neutral-800">
                   <Keyboard className="h-3.5 w-3.5" strokeWidth={1.75} />
                   Atajos de teclado

@@ -19,7 +19,7 @@ import StudioChat, {
 import ToolsDock, { type ImproveStyle, type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History, Settings2 } from 'lucide-react';
+import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History, Plus, Settings2 } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -483,7 +483,7 @@ export default function DocsStudioClient({
         if (saved.html && !isDocEmpty(saved.html)) {
           restoredDraft.current = true;
           if (saved.title) setDocumentTitle(saved.title);
-          if (saved.paperSize === 'letter' || saved.paperSize === 'legal') setPaperSize(saved.paperSize);
+          if (saved.paperSize === 'letter' || saved.paperSize === 'legal' || saved.paperSize === 'a4') setPaperSize(saved.paperSize);
           if (saved.fontFamily) setFontFamily(saved.fontFamily);
           if (saved.fontSize) setFontSize(saved.fontSize);
           historyRef.current = [sanitizeDocumentHtml(saved.html) || EMPTY_DOCUMENT_HTML];
@@ -934,6 +934,16 @@ export default function DocsStudioClient({
 
       const assistantId = uid();
       setMessages((m) => [...nextMessages, { id: assistantId, role: 'assistant', content: '', streaming: true }]);
+      const trace = (stage: string, detail: Record<string, unknown> = {}) => {
+        console.debug('[Docs Studio latency]', {
+          stage,
+          elapsedMs: Date.now() - startedAt,
+          documentChars: liveDocumentHtml.length,
+          selectedChars: (opts?.selectedText || selectedTextRef.current || '').length,
+          ...detail,
+        });
+      };
+      trace('request:start', { promptChars: text.length });
 
       try {
         abortRef.current?.abort();
@@ -1001,6 +1011,7 @@ export default function DocsStudioClient({
             },
           }),
         });
+        trace('request:response-headers', { status: res.status });
 
         if (!res.ok || !res.body) throw new Error('Chat failed');
 
@@ -1024,6 +1035,7 @@ export default function DocsStudioClient({
               continue;
             }
             if (ev.type === 'thinking' || ev.type === 'status') {
+              trace('stream:status', { label: ev.label || '' });
               const lab = ev.label || 'Trabajando…';
               if (/^done$/i.test(String(lab).trim())) {
                 setActivityLabel(lab, 'done');
@@ -1036,6 +1048,7 @@ export default function DocsStudioClient({
               const label = ev.label || ev.name || 'Tool…';
               setActivityLabel(label, 'active');
               pushToolLog(assistantId, { id, label, state: 'running' });
+              trace('tool:start', { name: ev.name || '', label, id });
               // stash id for matching end if server reuses
               (ev as any).__tid = id;
             }
@@ -1045,6 +1058,7 @@ export default function DocsStudioClient({
                 prev.map((s) => (s.state === 'active' ? { ...s, state: 'done' as const } : s)),
               );
               if (id) {
+                trace('tool:end', { name: ev.name || '', label: ev.label || '', id, durationMs: ev.durationMs });
                 pushToolLog(assistantId, {
                   id,
                   label: ev.label || ev.name || 'Listo',
@@ -1081,6 +1095,7 @@ export default function DocsStudioClient({
               );
             }
             if (ev.type === 'propose_edit') {
+              trace('proposal:received', { mode: ev.edit?.mode || '', title: ev.edit?.title || '' });
               proposedSomethingForRequest = true;
               const edit = ev.edit as ProposeEditPayload;
               // Always anchor "before" to the live document so structural diffs
@@ -1123,6 +1138,7 @@ export default function DocsStudioClient({
               toast({ variant: 'destructive', title: 'Chat error', description: ev.message });
             }
             if (ev.type === 'done') {
+              trace('request:done', { serverDurationMs: ev.durationMs, outcome: ev.outcome || '', model: ev.model || '' });
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
@@ -1145,6 +1161,7 @@ export default function DocsStudioClient({
           }
         }
       } catch (e: any) {
+        trace('request:error', { message: e?.message || String(e) });
         if (e?.name === 'AbortError') {
           setMessages((ms) =>
             ms.map((m) =>
@@ -2052,6 +2069,7 @@ export default function DocsStudioClient({
                   {saveState === 'saving' ? <CloudUpload className="h-4 w-4 animate-pulse" /> : saveConflict || saveState === 'error' ? <CloudOff className="h-4 w-4 text-amber-700" /> : <CircleCheck className="h-4 w-4 text-emerald-700" />}
                 </span>
                 <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Import Word" aria-label="Import Word"><FileUp className="h-4 w-4" /></button>
+                <button type="button" onClick={() => setInsertOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Insert" aria-label="Insert"><Plus className="h-4 w-4" /></button>
                 <button type="button" onClick={() => setSettingsOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Settings" aria-label="Settings"><Settings2 className="h-4 w-4" /></button>
               </div>
               <div className="pointer-events-auto absolute left-1/2 top-0 max-w-[min(980px,calc(100vw-210px))] -translate-x-1/2 overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
@@ -2065,7 +2083,8 @@ export default function DocsStudioClient({
                   onInsertMath={handleInsertMath}
                   onInsertTable={handleInsertTable}
                   onInsertImage={handleInsertImage}
-                  onImportWord={() => importInputRef.current?.click()}
+                  insertOpen={insertOpen}
+                  onInsertOpenChange={setInsertOpen}
                   onBeforeFormat={() => {
                     canvasRef.current?.restoreSelection();
                   }}
