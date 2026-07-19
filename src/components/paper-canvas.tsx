@@ -1342,6 +1342,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       data-studio-editor={i === 0 ? '1' : undefined}
                       contentEditable={contentEditable}
                       suppressContentEditableWarning
+                      onScroll={(e) => { (e.currentTarget as HTMLElement).scrollTop = 0; }}
                       onInput={() => handlePageInput(i)}
                       onPaste={(e) => handlePaste(i, e)}
                       onKeyDown={(e) => handleKeyDown(i, e)}

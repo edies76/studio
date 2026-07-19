@@ -58,6 +58,8 @@ function cmd(command: string, value?: string) {
   document.execCommand(command, false, value);
 }
 
+const FONT_STEPS = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48, 72];
+
 function selectionFontSize(): number {
   const sel = window.getSelection();
   const node = sel?.anchorNode;
@@ -67,21 +69,35 @@ function selectionFontSize(): number {
       : node.parentElement
     : null;
   const px = Number.parseFloat(element ? window.getComputedStyle(element).fontSize : '');
-  return Number.isFinite(px) ? px : 12;
+  return Number.isFinite(px) && px > 0 ? px : 12;
+}
+
+function stepFontSize(current: number, direction: 1 | -1): number {
+  // Find the nearest step in the direction requested
+  if (direction === 1) {
+    const next = FONT_STEPS.find((s) => s > current + 0.5);
+    return next ?? FONT_STEPS[FONT_STEPS.length - 1];
+  } else {
+    const steps = [...FONT_STEPS].reverse();
+    const prev = steps.find((s) => s < current - 0.5);
+    return prev ?? FONT_STEPS[0];
+  }
 }
 
 /**
- * Applies a real inline style to exactly the selected range. Unlike the
- * legacy execCommand(fontSize) path, this does not depend on browser-specific
- * <font size="7"> output, so it remains independent per character/range.
+ * Applies a real inline style to exactly the selected range using Word-like
+ * size steps. Reads current size BEFORE touching DOM to avoid rebalance races.
  */
-function adjustSelectionFontSize(delta: number) {
+function adjustSelectionFontSize(direction: 1 | -1) {
   const sel = window.getSelection();
   if (!sel?.rangeCount) return;
   const range = sel.getRangeAt(0);
   if (range.collapsed) return;
 
-  const nextSize = Math.min(96, Math.max(6, Math.round(selectionFontSize() + delta)));
+  // Read size now, before any DOM mutation
+  const current = selectionFontSize();
+  const nextSize = stepFontSize(current, direction);
+
   const wrapper = document.createElement('span');
   wrapper.style.fontSize = `${nextSize}px`;
   wrapper.appendChild(range.extractContents());
@@ -123,9 +139,9 @@ export default function SelectionFormatBar({
     cmd(command, value);
     onFormatChange?.();
   };
-  const adjustSize = (delta: number) => {
+  const adjustSize = (direction: 1 | -1) => {
     onBeforeFormat?.();
-    adjustSelectionFontSize(delta);
+    adjustSelectionFontSize(direction);
     onFormatChange?.();
   };
 
