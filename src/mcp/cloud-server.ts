@@ -64,7 +64,7 @@ export function createCloudDocsStudioMcpServer(options: {
     inputSchema: {
       title: z.string().optional(),
       html: z.string().optional(),
-      paperSize: z.enum(['letter', 'legal']).optional(),
+      paperSize: z.enum(['letter', 'legal', 'a4']).optional(),
     },
   }, async ({ title, html, paperSize }) => safe(() => workspace.createDocument({ title, html, paperSize })));
 
@@ -220,7 +220,7 @@ export function createCloudDocsStudioMcpServer(options: {
   server.registerTool('set_paper_size', {
     title: 'Set paper size',
     description: 'Set the document canvas/export size to Letter or Legal.',
-    inputSchema: { documentId: z.string(), paperSize: z.enum(['letter', 'legal']) },
+    inputSchema: { documentId: z.string(), paperSize: z.enum(['letter', 'legal', 'a4']) },
   }, async ({ documentId, paperSize }) => safe(() => workspace.setPaperSize(documentId, paperSize)));
 
   server.registerTool('insert_html', {

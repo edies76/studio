@@ -38,6 +38,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const doc = await saveDocument(user.userId, id, {
       title: body.title,
       html: body.html,
+      paperSize: body.paperSize,
       chat: body.chat as ChatTurn[] | undefined,
     }, typeof body.revision === 'number' ? body.revision : undefined);
     if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });

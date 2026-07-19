@@ -7,11 +7,14 @@
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { sanitizeDocumentHtml } from '@/lib/math-html';
+import type { PaperSize } from '@/lib/doc-tools';
 
 export type DocxImportResult = {
   html: string;
   /** OOXML-first variant: preserves Word's direct visual formatting. */
   fidelityHtml?: string;
+  /** Sheet family inferred from Word's section geometry. */
+  paperSize?: PaperSize;
   titleHint: string;
   warnings: string[];
   /** Short user-facing summary (no OOXML schema noise) */
@@ -469,10 +472,26 @@ export async function importDocxToHtml(
   }
 
   const titleHint = extractTitleHint(html, fileName);
+  const paperSize = await inferWordPaperSize(buffer).catch(() => undefined);
   const userSummary =
     warnings.length === 0
       ? `Importado «${titleHint}» con formato editable (estilos, listas, tablas e imágenes).`
       : `Importado «${titleHint}» con ${warnings.length} aviso(s): ${warnings.slice(0, 2).join(' · ')}`;
 
-  return { html, fidelityHtml: fidelityHtml ? sanitizeDocumentHtml(fidelityHtml) : undefined, titleHint, warnings, userSummary };
+  return { html, fidelityHtml: fidelityHtml ? sanitizeDocumentHtml(fidelityHtml) : undefined, titleHint, paperSize, warnings, userSummary };
+}
+
+/** Word stores section dimensions in twips. Keep the closest editable sheet
+ * family so imported content is paginated on the same kind of paper. */
+async function inferWordPaperSize(buffer: ArrayBuffer): Promise<PaperSize | undefined> {
+  const zip = await JSZip.loadAsync(buffer);
+  const file = zip.file('word/document.xml');
+  if (!file) return undefined;
+  const xml = new DOMParser().parseFromString(await file.async('string'), 'application/xml');
+  const pgSz = xml.querySelector('sectPr > pgSz');
+  const width = Number(wAttr(pgSz, 'w')); const height = Number(wAttr(pgSz, 'h'));
+  if (!width || !height) return undefined;
+  if (Math.abs(width - 11906) < 90 && Math.abs(height - 16838) < 100) return 'a4';
+  if (Math.abs(width - 12240) < 90 && height >= 19500) return 'legal';
+  return 'letter';
 }

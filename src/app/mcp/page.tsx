@@ -6,7 +6,7 @@ import LocaleSwitch from '@/components/locale-switch';
 const tools = [
   ['01', 'get_capabilities', 'Return the server contract, transports, and honest session boundary.'],
   ['02', 'create_document', 'Open a blank Letter or Legal workspace, optionally seeded with HTML.'],
-  ['03', 'list_documents', 'List documents currently held by this MCP process.'],
+  ['03', 'list_documents', 'List persistent documents belonging to the authenticated workspace.'],
   ['04', 'read_document', 'Return HTML, plain text, blocks, word count, brief context, and pending edits.'],
   ['05', 'parse_brief', 'Extract tasks, objectives, constraints, learning outcome, and rubric weights.'],
   ['06', 'draft_document', 'Run the same streaming draft endpoint used by the Docs Studio canvas.'],
@@ -17,20 +17,20 @@ const tools = [
   ['11', 'insert_math', 'Add an editable MathJax equation to the document.'],
   ['12', 'insert_table', 'Add an editable HTML table with a header row.'],
   ['13', 'get_history', 'Return recent document events for review and audit.'],
-  ['14', 'export_document', 'Return HTML, DOCX, or a text-layout PDF as content/base64.'],
+  ['14', 'export_document', 'Return HTML, DOCX, or PDF as content/base64.'],
 ];
 
 const resources = [
-  ['docs://workspace', 'Current process workspace', 'List documents held by the MCP process.'],
+  ['docs://workspace', 'Authenticated workspace', 'List persistent documents for the signed-in owner.'],
   ['docs://document/{documentId}', 'Document state', 'HTML, text, blocks, brief, and pending review proposals.'],
   ['docs://history/{documentId}', 'Audit trail', 'Created, drafted, proposed, accepted, rejected, inserted, exported.'],
 ];
 
 const boundaries = [
   ['Available now', 'The same document loop', 'Create → draft → read → propose → accept/reject → export.'],
-  ['Available now', 'Local + remote transports', 'stdio for a spawned client; Streamable HTTP at /mcp for a running server.'],
-  ['Needs a session bridge', 'Live browser sync', 'The MCP workspace is process-scoped; it does not silently change an open browser tab.'],
-  ['Next integration', 'Identity and persistence', 'Add auth plus durable document IDs before making a hosted endpoint multi-user.'],
+  ['Available now', 'Remote authenticated workspace', 'Streamable HTTP at https://docss.studio/api/mcp with a personal Bearer credential.'],
+  ['Available now', 'Review boundary', 'Consequential edits can remain proposals until an agent or user explicitly accepts them.'],
+  ['Still explicit', 'Live browser sync', 'An agent works on persistent documents, not silently on the cursor or selection in an open browser tab.'],
 ];
 
 const stdioConfig = [
@@ -49,15 +49,16 @@ const stdioConfig = [
 ].join('\n');
 
 const httpConfig = [
-  'npm run dev',
-  'npm run mcp:http',
-  '',
-  'MCP endpoint',
-  'http://localhost:8787/mcp',
-  '',
-  '# optional',
-  'MCP_PORT=8787',
-  'DOCS_STUDIO_URL=http://localhost:9003',
+  '{',
+  '  "mcpServers": {',
+  '    "docs-studio": {',
+  '      "url": "https://docss.studio/api/mcp",',
+  '      "headers": {',
+  '        "Authorization": "Bearer dsm_YOUR_PERSONAL_TOKEN"',
+  '      }',
+  '    }',
+  '  }',
+  '}',
 ].join('\n');
 
 function CodeBlock({ children }: { children: string }) {
@@ -95,10 +96,10 @@ export default function McpPage() {
               Docs Studio MCP exposes the real loop behind the app: parse a brief, draft onto a document, inspect blocks, propose reviewable edits, and export the result.
             </p>
             <div className="mcp-hero__actions">
-              <a className="mcp-button mcp-button--dark" href="#connect">Connect the server <span>↓</span></a>
+              <a className="mcp-button mcp-button--dark" href="#connect">Connect your agent <span>↓</span></a>
               <Link className="mcp-button mcp-button--quiet" href="/home">Abrir biblioteca <span>↗</span></Link>
             </div>
-            <p className="mcp-hero__note">Built on the official TypeScript SDK · stdio + Streamable HTTP · Zod-validated inputs</p>
+            <p className="mcp-hero__note">Official TypeScript SDK · persistent DynamoDB workspace · Streamable HTTP</p>
           </div>
 
           <div className="mcp-hero__diagram" aria-label="MCP document flow diagram">
@@ -125,7 +126,7 @@ export default function McpPage() {
         </section>
 
         <section className="mcp-proof-row" aria-label="MCP surface summary">
-          <div><span>14</span><small>document tools</small></div>
+          <div><span>25</span><small>document tools</small></div>
           <div><span>03</span><small>read-only resources</small></div>
           <div><span>03</span><small>workflow prompts</small></div>
           <div><span>02</span><small>transport modes</small></div>
@@ -183,19 +184,19 @@ export default function McpPage() {
         <section id="connect" className="mcp-section mcp-connect">
           <div className="mcp-section__intro">
             <p className="mcp-label">CONNECT IN A MINUTE</p>
-            <h2>Local first. Remote when the workspace is ready.</h2>
-            <p>Run the web app for the AI draft and DOCX routes, then start the MCP server in another process. The server defaults to <code>http://localhost:9003</code>; set <code>DOCS_STUDIO_URL</code> when it lives elsewhere.</p>
+            <h2>Connect an agent to your own documents.</h2>
+            <p>Sign into Docs Studio with Google and create a personal MCP credential. Any client that supports Streamable HTTP can use it; the credential sees only that user&apos;s persistent workspace.</p>
           </div>
           <div className="mcp-connect-grid">
             <article className="mcp-code-card">
-              <div className="mcp-code-card__head"><span>STDIO / CLAUDE DESKTOP, CURSOR, ETC.</span><b>local</b></div>
+              <div className="mcp-code-card__head"><span>STDIO / LOCAL DEVELOPMENT</span><b>local</b></div>
               <CodeBlock>{stdioConfig}</CodeBlock>
               <p>Or run <code>npm run mcp:stdio</code> from the repository.</p>
             </article>
             <article className="mcp-code-card mcp-code-card--paper">
-              <div className="mcp-code-card__head"><span>STREAMABLE HTTP</span><b>remote-ready</b></div>
+              <div className="mcp-code-card__head"><span>STREAMABLE HTTP / ANY MCP CLIENT</span><b>remote</b></div>
               <CodeBlock>{httpConfig}</CodeBlock>
-              <p>HTTP sessions are held in memory by this process. Add auth and persistence before exposing it to multiple users.</p>
+              <p>The token is created once from the signed-in workspace, stored hashed, and can be revoked. It starts with all currently available MCP permissions.</p>
             </article>
           </div>
         </section>

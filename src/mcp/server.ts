@@ -63,7 +63,7 @@ export function createDocsStudioMcpServer() {
     inputSchema: {
       title: z.string().optional(),
       html: z.string().optional(),
-      paperSize: z.enum(['letter', 'legal']).optional(),
+      paperSize: z.enum(['letter', 'legal', 'a4']).optional(),
     },
   }, async ({ title, html, paperSize }) => safe(() => publicDocument(docsWorkspace.createDocument({ title, html, paperSize }))));
 
@@ -308,4 +308,3 @@ if (process.argv[1]?.endsWith('server.ts') || process.argv[1]?.endsWith('server.
     process.exit(1);
   });
 }
-

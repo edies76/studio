@@ -103,13 +103,13 @@ export default function HomePage() {
     void load();
   }, [load]);
 
-  const createDoc = async (title = 'Untitled', html = '<p><br></p>') => {
+  const createDoc = async (title = 'Untitled', html = '<p><br></p>', paperSize?: 'letter' | 'legal' | 'a4') => {
     setCreating(true);
     try {
       const res = await fetch('/api/docs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, html }),
+        body: JSON.stringify({ title, html, paperSize }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'create failed');
@@ -129,7 +129,7 @@ export default function HomePage() {
     setCreating(true);
     try {
       const imported = await importDocxToHtml(await file.arrayBuffer(), file.name);
-      await createDoc(imported.titleHint, imported.fidelityHtml || imported.html);
+      await createDoc(imported.titleHint, imported.fidelityHtml || imported.html, imported.paperSize);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'No se pudo abrir el documento', description: error?.message || 'Revisa el archivo Word.' });
     } finally {

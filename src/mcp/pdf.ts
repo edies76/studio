@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { extractDocumentBlocks } from './core';
 
-export function documentPdf(html: string, title: string, paperSize: 'letter' | 'legal' = 'letter') {
+export function documentPdf(html: string, title: string, paperSize: 'letter' | 'legal' | 'a4' = 'letter') {
   const doc = new jsPDF({ format: paperSize });
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -39,4 +39,3 @@ export function documentPdf(html: string, title: string, paperSize: 'letter' | '
 
   return Buffer.from(doc.output('arraybuffer'));
 }
-

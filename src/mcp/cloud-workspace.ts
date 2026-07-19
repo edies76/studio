@@ -19,7 +19,7 @@ import { replaceTableCell } from '@/lib/table-tools';
 export type CloudDocumentInput = {
   title?: string;
   html?: string;
-  paperSize?: 'letter' | 'legal';
+  paperSize?: 'letter' | 'legal' | 'a4';
   brief?: AssignmentBrief;
 };
 
@@ -63,7 +63,7 @@ function escapeHtml(value: string) {
 }
 
 function normalize(document: StudioDocument): StudioDocument {
-  document.paperSize = document.paperSize === 'legal' ? 'legal' : 'letter';
+  document.paperSize = document.paperSize === 'legal' || document.paperSize === 'a4' ? document.paperSize : 'letter';
   document.history = Array.isArray(document.history) ? document.history : [];
   document.pendingEdits = Array.isArray(document.pendingEdits) ? document.pendingEdits : [];
   document.versions = Array.isArray(document.versions) ? document.versions : [];
@@ -197,9 +197,9 @@ export class CloudDocsStudioWorkspace {
     return publicCloudDocument(await this.save(document));
   }
 
-  async setPaperSize(id: string, paperSize: 'letter' | 'legal') {
+  async setPaperSize(id: string, paperSize: 'letter' | 'legal' | 'a4') {
     const document = await this.getDocument(id);
-    document.paperSize = paperSize === 'legal' ? 'legal' : 'letter';
+    document.paperSize = paperSize === 'legal' || paperSize === 'a4' ? paperSize : 'letter';
     document.updatedAt = Date.now();
     this.addHistory(document, 'edited', `Set paper size to ${document.paperSize}`);
     return publicCloudDocument(await this.save(document));

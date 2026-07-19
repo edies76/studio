@@ -1,6 +1,6 @@
 /** Tool schemas for Studio document chat (client + server safe names). */
 
-export type PaperSize = 'letter' | 'legal';
+export type PaperSize = 'letter' | 'legal' | 'a4';
 
 export type ProposeEditPayload = {
   title: string;

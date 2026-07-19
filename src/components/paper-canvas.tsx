@@ -16,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
 } from 'react';
 import { cn } from '@/lib/utils';
 import type { PaperSize } from '@/lib/doc-tools';

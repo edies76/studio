@@ -51,7 +51,7 @@ export type StudioDocument = {
   userId: string;
   title: string;
   html: string;
-  paperSize: 'letter' | 'legal';
+  paperSize: 'letter' | 'legal' | 'a4';
   brief?: AssignmentBrief;
   history: StoredHistoryEntry[];
   pendingEdits: StoredPendingEdit[];
@@ -230,7 +230,7 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     userId: String(it.userId),
     title: String(it.title || 'Untitled'),
     html: String(it.html || ''),
-    paperSize: it.paperSize === 'legal' ? 'legal' : 'letter',
+    paperSize: it.paperSize === 'legal' || it.paperSize === 'a4' ? it.paperSize : 'letter',
     brief: it.brief as AssignmentBrief | undefined,
     history: Array.isArray(it.history) ? (it.history as StoredHistoryEntry[]) : [],
     pendingEdits: Array.isArray(it.pendingEdits) ? (it.pendingEdits as StoredPendingEdit[]) : [],
@@ -304,7 +304,7 @@ export async function getDocument(userId: string, id: string): Promise<StudioDoc
 
 export async function createDocument(
   userId: string,
-  opts?: { title?: string; html?: string; paperSize?: 'letter' | 'legal'; brief?: AssignmentBrief },
+  opts?: { title?: string; html?: string; paperSize?: 'letter' | 'legal' | 'a4'; brief?: AssignmentBrief },
 ): Promise<StudioDocument> {
   const now = Date.now();
   const doc: StudioDocument = {
@@ -312,7 +312,7 @@ export async function createDocument(
     userId,
     title: opts?.title || 'Untitled',
     html: opts?.html || '<p><br></p>',
-    paperSize: opts?.paperSize === 'legal' ? 'legal' : 'letter',
+    paperSize: opts?.paperSize === 'legal' || opts?.paperSize === 'a4' ? opts.paperSize : 'letter',
     brief: opts?.brief,
     history: [],
     pendingEdits: [],
@@ -333,7 +333,7 @@ export async function saveDocument(
   patch: {
     title?: string;
     html?: string;
-    paperSize?: 'letter' | 'legal';
+    paperSize?: 'letter' | 'legal' | 'a4';
     brief?: AssignmentBrief;
     history?: StoredHistoryEntry[];
     pendingEdits?: StoredPendingEdit[];

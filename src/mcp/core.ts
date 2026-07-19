@@ -1,7 +1,7 @@
 import type { AssignmentBrief } from '../lib/assignment-types';
 import { sanitizeDocumentHtml } from '../lib/math-html';
 
-export type DocumentPaperSize = 'letter' | 'legal';
+export type DocumentPaperSize = 'letter' | 'legal' | 'a4';
 
 export type HistoryEntry = {
   id: string;

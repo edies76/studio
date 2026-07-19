@@ -108,6 +108,7 @@ export default function DocsStudioClient({
   const [model] = useState(DEFAULT_STUDIO_MODEL);
   const [prefs, setPrefs] = useState<StudioPrefs>(DEFAULT_PREFS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [insertOpen, setInsertOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
   const [versions, setVersions] = useState<VersionSnapshot[]>([]);

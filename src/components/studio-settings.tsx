@@ -50,6 +50,7 @@ export const DEFAULT_PREFS: StudioPrefs = {
   showSelectionAi: true,
   shortcutOpenAgent: 'i',
   shortcutEditSelection: 'e',
+  improvePrompt: 'Preserve the document language, meaning, facts, citations, and formatting. Do not invent information.',
 };
 
 type Section = 'document' | 'margins' | 'images' | 'editor' | 'agent';
