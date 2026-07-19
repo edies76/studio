@@ -21,9 +21,9 @@ const monoFont = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'DocsS · docss.studio | Workspace académico',
+  title: 'Docs Studio | Del brief al documento',
   description:
-    'DocsS (Docs Studio) en docss.studio: workspace académico — lienzo, normas APA/IEEE, ecuaciones MATH-SAFE, Accept/Reject y export PDF/Word.',
+    'Workspace académico: lienzo papel, normas APA/IEEE, ecuaciones, Accept/Reject y export PDF/Word.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
