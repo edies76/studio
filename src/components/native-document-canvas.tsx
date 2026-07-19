@@ -43,11 +43,11 @@ export default function NativeDocumentCanvas({ document, paperSize, fontFamily, 
     <div className="mx-auto flex w-fit flex-col gap-7">
       {layout.pages.map((page, index) => <section key={index} className="relative bg-white shadow-sm" style={{ width: paper.widthPx, height: paper.heightPx }}>
         {page.map(({ block, x, y, width, height }) => {
-          const common = { key: block.id, style: { position: 'absolute' as const, left: x, top: y, width, minHeight: height } };
-          if (block.type === 'image') return <img {...common} src={block.src} alt={block.alt} style={{ ...common.style, width: block.width || width, height: block.height || 'auto' }} draggable={false} />;
-          if (block.type === 'table') return <table {...common} className="border-collapse text-sm"><tbody>{block.rows.map((row) => <tr key={row.id}>{row.cells.map((cell) => <td key={cell.id} className="border border-neutral-300 px-2 py-1">{cell.runs.map((run) => run.text).join('')}</td>)}</tr>)}</tbody></table>;
-          if (block.type === 'list') return <div {...common} className="whitespace-pre-wrap" contentEditable={editable} suppressContentEditableWarning onInput={(event) => updateText(block.id, event.currentTarget.textContent || '')}>{blockText(block)}</div>;
-          if ('runs' in block) return <div {...common} className={block.type === 'heading' ? 'font-bold' : ''} contentEditable={editable} suppressContentEditableWarning onInput={(event) => updateText(block.id, event.currentTarget.textContent || '')}>{blockText(block)}</div>;
+          const common = { style: { position: 'absolute' as const, left: x, top: y, width, minHeight: height } };
+          if (block.type === 'image') return <img key={block.id} {...common} src={block.src} alt={block.alt} style={{ ...common.style, width: block.width || width, height: block.height || 'auto' }} draggable={false} />;
+          if (block.type === 'table') return <table key={block.id} {...common} className="border-collapse text-sm"><tbody>{block.rows.map((row) => <tr key={row.id}>{row.cells.map((cell) => <td key={cell.id} className="border border-neutral-300 px-2 py-1">{cell.runs.map((run) => run.text).join('')}</td>)}</tr>)}</tbody></table>;
+          if (block.type === 'list') return <div key={block.id} {...common} className="whitespace-pre-wrap" contentEditable={editable} suppressContentEditableWarning onInput={(event) => updateText(block.id, event.currentTarget.textContent || '')}>{blockText(block)}</div>;
+          if ('runs' in block) return <div key={block.id} {...common} className={block.type === 'heading' ? 'font-bold' : ''} contentEditable={editable} suppressContentEditableWarning onInput={(event) => updateText(block.id, event.currentTarget.textContent || '')}>{blockText(block)}</div>;
           return null;
         })}
       </section>)}
