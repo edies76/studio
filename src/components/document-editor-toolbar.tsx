@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -274,9 +275,9 @@ export default function DocumentEditorToolbar({
         </span>
       )}
 
-      {insertOpen && (
+      {insertOpen && typeof document !== 'undefined' && createPortal(
         <div
-          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/15 px-4"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/20 px-4 py-6"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setInsertOpen(false);
@@ -286,52 +287,53 @@ export default function DocumentEditorToolbar({
             role="dialog"
             aria-modal="true"
             aria-labelledby="insert-dialog-title"
-            className="w-full max-w-[620px] rounded-2xl border border-[#d8d1c8] bg-[#fffdfa] p-5 text-[#211b17] shadow-[0_24px_80px_rgba(38,29,23,0.2)]"
+            className="flex max-h-[min(760px,calc(100vh-48px))] w-full max-w-[820px] flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white p-6 text-neutral-900 shadow-[0_18px_55px_rgba(0,0,0,0.12)]"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-[#8b4a34]">Biblioteca de objetos</p>
-                <h2 id="insert-dialog-title" className="mt-1 text-lg font-semibold tracking-[-0.02em]">Insertar en el lienzo</h2>
-                <p className="mt-1 max-w-[470px] text-xs leading-5 text-[#75695e]">Elegí una pieza y ajustá lo necesario antes de llevarla al documento.</p>
+                <p className="font-mono text-[9px] uppercase tracking-[0.16em] text-neutral-400">Biblioteca de objetos</p>
+                <h2 id="insert-dialog-title" className="mt-1 text-xl font-semibold tracking-[-0.02em]">Insertar en el lienzo</h2>
+                <p className="mt-1 max-w-[560px] text-sm leading-5 text-neutral-500">Elige un objeto y configura sus propiedades antes de añadirlo al documento.</p>
               </div>
-              <button type="button" onClick={() => setInsertOpen(false)} className="rounded-lg px-2 py-1 text-lg text-[#75695e] hover:bg-[#f0ece6]" aria-label="Cerrar">×</button>
+              <button type="button" onClick={() => setInsertOpen(false)} className="rounded-md px-2 py-1 text-lg text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900" aria-label="Cerrar">×</button>
             </div>
 
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <div className="mt-6 grid min-h-0 gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
               {onInsertMath && (
-                <button type="button" onClick={() => { setInsertOpen(false); onInsertMath(); }} className="flex items-start gap-3 rounded-xl border border-[#ded6cd] p-3 text-left hover:border-[#8b4a34] hover:bg-[#fbf7f1]">
-                  <Sigma className="mt-0.5 h-5 w-5 text-[#8b4a34]" strokeWidth={1.5} />
-                  <span><strong className="block text-sm">Ecuación</strong><small className="mt-1 block text-[11px] leading-4 text-[#75695e]">LaTeX, vista previa y bloque centrado.</small></span>
+                <button type="button" onClick={() => { setInsertOpen(false); onInsertMath(); }} className="flex min-h-28 items-start gap-3 rounded-lg border border-neutral-200 p-4 text-left transition-colors hover:border-neutral-400 hover:bg-neutral-50">
+                  <Sigma className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
+                  <span><strong className="block text-sm">Ecuación</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">LaTeX, vista previa y bloque centrado.</small></span>
                 </button>
               )}
               {onInsertImage && (
-                <button type="button" onClick={() => { setInsertOpen(false); onInsertImage(); }} className="flex items-start gap-3 rounded-xl border border-[#ded6cd] p-3 text-left hover:border-[#8b4a34] hover:bg-[#fbf7f1]">
-                  <ImagePlus className="mt-0.5 h-5 w-5 text-[#8b4a34]" strokeWidth={1.5} />
-                  <span><strong className="block text-sm">Imagen</strong><small className="mt-1 block text-[11px] leading-4 text-[#75695e]">Tamaño, posición y ajuste de texto.</small></span>
+                <button type="button" onClick={() => { setInsertOpen(false); onInsertImage(); }} className="flex min-h-28 items-start gap-3 rounded-lg border border-neutral-200 p-4 text-left transition-colors hover:border-neutral-400 hover:bg-neutral-50">
+                  <ImagePlus className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
+                  <span><strong className="block text-sm">Imagen</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">Tamaño, posición y ajuste de texto.</small></span>
                 </button>
               )}
               {onImportWord && (
-                <button type="button" onClick={() => { setInsertOpen(false); onImportWord(); }} className="flex items-start gap-3 rounded-xl border border-[#ded6cd] p-3 text-left hover:border-[#8b4a34] hover:bg-[#fbf7f1]">
-                  <FileUp className="mt-0.5 h-5 w-5 text-[#8b4a34]" strokeWidth={1.5} />
-                  <span><strong className="block text-sm">Importar Word</strong><small className="mt-1 block text-[11px] leading-4 text-[#75695e]">.docx con texto, tablas y fórmulas detectables.</small></span>
+                <button type="button" onClick={() => { setInsertOpen(false); onImportWord(); }} className="flex min-h-28 items-start gap-3 rounded-lg border border-neutral-200 p-4 text-left transition-colors hover:border-neutral-400 hover:bg-neutral-50">
+                  <FileUp className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
+                  <span><strong className="block text-sm">Importar Word</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">.docx con texto, tablas y fórmulas detectables.</small></span>
                 </button>
               )}
               {onInsertTable && (
-                <div className="rounded-xl border border-[#ded6cd] p-3">
+                <div className="rounded-lg border border-neutral-200 p-4">
                   <div className="flex items-start gap-3">
-                    <Table2 className="mt-0.5 h-5 w-5 text-[#8b4a34]" strokeWidth={1.5} />
-                    <div className="min-w-0 flex-1"><strong className="block text-sm">Tabla</strong><small className="mt-1 block text-[11px] leading-4 text-[#75695e]">Empieza con encabezado y queda editable.</small></div>
+                    <Table2 className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
+                    <div className="min-w-0 flex-1"><strong className="block text-sm">Tabla</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">Empieza con encabezado y queda editable.</small></div>
                   </div>
                   <div className="mt-3 flex items-end gap-2">
-                    <label className="text-[10px] text-[#75695e]">Filas<input type="number" min={2} max={20} value={tableRows} onChange={(event) => setTableRows(Math.min(20, Math.max(2, Number(event.target.value) || 2)))} className="mt-1 block h-7 w-14 rounded-md border border-[#cfc5ba] bg-white px-2 text-xs outline-none focus:border-[#8b4a34]" /></label>
-                    <label className="text-[10px] text-[#75695e]">Columnas<input type="number" min={1} max={12} value={tableCols} onChange={(event) => setTableCols(Math.min(12, Math.max(1, Number(event.target.value) || 1)))} className="mt-1 block h-7 w-14 rounded-md border border-[#cfc5ba] bg-white px-2 text-xs outline-none focus:border-[#8b4a34]" /></label>
-                    <button type="button" onClick={() => { setInsertOpen(false); onInsertTable(tableRows, tableCols); }} className="ml-auto rounded-md bg-[#3d3229] px-3 py-1.5 text-[11px] font-semibold text-[#fffaf4] hover:bg-[#2a221c]">Insertar</button>
+                    <label className="text-[10px] text-neutral-500">Filas<input type="number" min={2} max={20} value={tableRows} onChange={(event) => setTableRows(Math.min(20, Math.max(2, Number(event.target.value) || 2)))} className="mt-1 block h-8 w-16 rounded-md border border-neutral-200 bg-white px-2 text-xs outline-none focus:border-neutral-500" /></label>
+                    <label className="text-[10px] text-neutral-500">Columnas<input type="number" min={1} max={12} value={tableCols} onChange={(event) => setTableCols(Math.min(12, Math.max(1, Number(event.target.value) || 1)))} className="mt-1 block h-8 w-16 rounded-md border border-neutral-200 bg-white px-2 text-xs outline-none focus:border-neutral-500" /></label>
+                    <button type="button" onClick={() => { setInsertOpen(false); onInsertTable(tableRows, tableCols); }} className="ml-auto rounded-md bg-neutral-900 px-3 py-2 text-xs font-semibold text-white hover:bg-neutral-700">Insertar</button>
                   </div>
                 </div>
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
