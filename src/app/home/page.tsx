@@ -4,13 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
+  ArrowUpRight,
   FilePlus2,
   FileText,
   Loader2,
   LogIn,
   LogOut,
-  MoreHorizontal,
+  Sparkles,
   Trash2,
+  Upload,
 } from 'lucide-react';
 import BrandMark from '@/components/brand-mark';
 import LocaleSwitch from '@/components/locale-switch';
@@ -26,38 +28,53 @@ type DocItem = {
   createdAt: number;
 };
 
-function formatRelative(ts: number) {
+function formatRelative(ts: number, locale: string) {
   const d = Date.now() - ts;
   const m = Math.floor(d / 60000);
-  if (m < 1) return 'Ahora';
-  if (m < 60) return `Hace ${m} min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `Hace ${h} h`;
-  const days = Math.floor(h / 24);
-  if (days < 14) return `Hace ${days} d`;
-  return new Date(ts).toLocaleDateString();
+  if (locale === 'es') {
+    if (m < 1) return 'Ahora';
+    if (m < 60) return `Hace ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `Hace ${h} h`;
+    const days = Math.floor(h / 24);
+    if (days < 14) return `Hace ${days} d`;
+  } else {
+    if (m < 1) return 'Just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    if (days < 14) return `${days}d ago`;
+  }
+  return new Date(ts).toLocaleDateString(locale === 'es' ? 'es' : 'en');
 }
 
+/**
+ * Reading this as: product library (Docs-like) for academic users,
+ * calm Linear-style language, sans type, one primary action.
+ */
 export default function HomePage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const { toast } = useToast();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [guest, setGuest] = useState(true);
-  const [userLabel, setUserLabel] = useState('Invitado local');
+  const [userLabel, setUserLabel] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/docs');
-      // Guest is always allowed unless FORCE_AUTH=1 on server
       if (res.status === 401) {
         toast({
-          title: 'Sesión requerida',
-          description: 'El servidor está en FORCE_AUTH. Entrá con Google o desactivá FORCE_AUTH.',
+          title: locale === 'es' ? 'Sesion requerida' : 'Sign-in required',
+          description:
+            locale === 'es'
+              ? 'El servidor tiene FORCE_AUTH activo.'
+              : 'Server has FORCE_AUTH enabled.',
         });
         return;
       }
@@ -66,15 +83,20 @@ export default function HomePage() {
       setGuest(Boolean(data.user?.guest ?? true));
       setUserLabel(
         data.user?.guest
-          ? 'Invitado (sin cuenta)'
-          : data.user?.name || data.user?.email || 'Usuario',
+          ? locale === 'es'
+            ? 'Guest'
+            : 'Guest'
+          : data.user?.name || data.user?.email || 'User',
       );
     } catch {
-      toast({ variant: 'destructive', title: 'No se pudieron cargar los documentos' });
+      toast({
+        variant: 'destructive',
+        title: locale === 'es' ? 'No se pudieron cargar los documentos' : 'Could not load documents',
+      });
     } finally {
       setLoading(false);
     }
-  }, [router, toast]);
+  }, [locale, toast]);
 
   useEffect(() => {
     void load();
@@ -94,7 +116,7 @@ export default function HomePage() {
     } catch (e: any) {
       toast({
         variant: 'destructive',
-        title: 'No se pudo crear',
+        title: locale === 'es' ? 'No se pudo crear' : 'Could not create',
         description: e?.message,
       });
     } finally {
@@ -103,25 +125,30 @@ export default function HomePage() {
   };
 
   const removeDoc = async (id: string) => {
-    if (!confirm('¿Eliminar este documento?')) return;
+    const ok =
+      typeof window !== 'undefined' &&
+      window.confirm(locale === 'es' ? 'Eliminar este documento?' : 'Delete this document?');
+    if (!ok) return;
     try {
       const res = await fetch(`/api/docs/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('delete failed');
       setDocs((d) => d.filter((x) => x.id !== id));
     } catch {
-      toast({ variant: 'destructive', title: 'No se pudo eliminar' });
+      toast({
+        variant: 'destructive',
+        title: locale === 'es' ? 'No se pudo eliminar' : 'Could not delete',
+      });
     }
   };
 
   return (
-    <div className="min-h-[100dvh] overflow-y-auto bg-[#f7f6f3] text-neutral-900">
-      {/* Top bar — minimal Docs-like */}
-      <header className="sticky top-0 z-20 border-b border-neutral-200/80 bg-[#f7f6f3]/90 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
+    <div className="home-lib min-h-[100dvh] overflow-y-auto bg-[#f6f5f2] text-neutral-900">
+      <header className="sticky top-0 z-20 border-b border-black/[0.06] bg-[#f6f5f2]/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-[1080px] items-center justify-between px-5 sm:px-8">
           <a href="/" className="flex items-center gap-2.5 no-underline">
-            <BrandMark size={28} />
-            <span className="text-[15px] font-semibold tracking-tight text-neutral-900">
-              Docs Studio
+            <BrandMark size={26} />
+            <span className="text-[14px] font-semibold tracking-tight text-neutral-900">
+              Docs<span className="text-[#8b4a34]">S</span>
             </span>
           </a>
           <div className="flex items-center gap-2">
@@ -152,7 +179,7 @@ export default function HomePage() {
               <button
                 type="button"
                 onClick={() => signIn('google', { callbackUrl: '/home' })}
-                className="flex h-9 items-center gap-1.5 rounded-full bg-neutral-900 px-3.5 text-[12px] font-semibold text-white shadow-sm hover:bg-neutral-800"
+                className="flex h-9 items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3.5 text-[12px] font-semibold text-neutral-800 shadow-sm hover:bg-neutral-50"
               >
                 <LogIn className="h-3.5 w-3.5" />
                 {t('home.google')}
@@ -162,16 +189,14 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
-        <div className="mb-8 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <main className="mx-auto max-w-[1080px] px-5 pb-20 pt-12 sm:px-8">
+        {/* Page title — product UI, not marketing serif */}
+        <div className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              {t('home.library')}
-            </p>
-            <h1 className="mt-1 text-[28px] font-semibold tracking-tight text-neutral-900">
+            <h1 className="font-[family-name:var(--font-display)] text-[1.75rem] font-semibold tracking-[-0.03em] text-neutral-900 sm:text-[2rem]">
               {t('home.title')}
             </h1>
-            <p className="mt-1 text-[13px] text-neutral-500">
+            <p className="mt-1.5 text-[13px] text-neutral-500">
               {guest ? t('home.guest') : userLabel}
             </p>
           </div>
@@ -180,9 +205,9 @@ export default function HomePage() {
             disabled={creating}
             onClick={() => void createDoc()}
             className={cn(
-              'mt-4 inline-flex h-11 items-center justify-center gap-2 rounded-full bg-neutral-900 px-5',
-              'text-[13px] font-semibold text-white shadow-md transition hover:bg-neutral-800',
-              'disabled:opacity-50 sm:mt-0',
+              'inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-neutral-900 px-5',
+              'text-[13px] font-semibold text-white transition hover:bg-neutral-800',
+              'disabled:opacity-50',
             )}
           >
             {creating ? (
@@ -190,99 +215,125 @@ export default function HomePage() {
             ) : (
               <FilePlus2 className="h-4 w-4" />
             )}
-            {t('home.blank')}
+            {t('home.new')}
           </button>
         </div>
 
-        {/* Quick start cards */}
-        <div className="mb-10 grid gap-3 sm:grid-cols-3">
-          <button
-            type="button"
-            onClick={() => void createDoc('Untitled')}
-            className="group flex flex-col items-start rounded-2xl border border-dashed border-neutral-300 bg-white/70 p-5 text-left transition hover:border-neutral-400 hover:bg-white hover:shadow-sm"
-          >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700 group-hover:bg-neutral-900 group-hover:text-white">
-              <FilePlus2 className="h-5 w-5" />
-            </span>
-            <span className="mt-3 text-[14px] font-semibold">{t('home.blank')}</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">/studio</span>
-          </button>
+        {/* Two distinct entry paths — not three blank docs */}
+        <div className="mb-12 grid gap-3 sm:grid-cols-2">
           <button
             type="button"
             onClick={() => router.push('/')}
-            className="group flex flex-col items-start rounded-2xl border border-neutral-200 bg-white p-5 text-left shadow-sm transition hover:shadow-md"
+            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
-              <FileText className="h-5 w-5" />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f0ebe4] text-[#8b4a34]">
+              <Sparkles className="h-5 w-5" strokeWidth={1.75} />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">{t('home.fromGuide')}</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">{t('home.fromGuideSub')}</span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
+                {t('home.fromGuide')}
+                <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" />
+              </span>
+              <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
+                {t('home.fromGuideSub')}
+              </span>
+            </span>
           </button>
-          <a
-            href="/studio"
-            onClick={(e) => {
-              e.preventDefault();
-              void createDoc('Import / edit');
-            }}
-            className="group flex flex-col items-start rounded-2xl border border-neutral-200 bg-white p-5 text-left shadow-sm transition hover:shadow-md"
+          <button
+            type="button"
+            onClick={() => router.push('/studio')}
+            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md"
           >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
-              <MoreHorizontal className="h-5 w-5" />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
+              <Upload className="h-5 w-5" strokeWidth={1.75} />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">{t('home.openStudio')}</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">{t('home.openStudioSub')}</span>
-          </a>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
+                {t('home.openStudio')}
+                <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" />
+              </span>
+              <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
+                {t('home.openStudioSub')}
+              </span>
+            </span>
+          </button>
         </div>
 
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[13px] font-semibold text-neutral-700">{t('home.recent')}</h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-[12px] font-semibold uppercase tracking-[0.08em] text-neutral-400">
+            {t('home.recent')}
+          </h2>
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />}
+          {!loading && docs.length > 0 && (
+            <span className="font-mono text-[11px] text-neutral-400">{docs.length}</span>
+          )}
         </div>
 
         {!loading && docs.length === 0 && (
-          <div className="rounded-2xl border border-neutral-200 bg-white px-6 py-14 text-center shadow-sm">
-            <FileText className="mx-auto h-8 w-8 text-neutral-300" />
-            <p className="mt-3 text-[14px] font-medium text-neutral-700">{t('home.empty')}</p>
-            <p className="mt-1 text-[12px] text-neutral-500">{t('home.emptySub')}</p>
+          <div className="flex flex-col items-center rounded-2xl border border-dashed border-neutral-200 bg-white/60 px-6 py-16 text-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-neutral-100 text-neutral-400">
+              <FileText className="h-5 w-5" strokeWidth={1.5} />
+            </span>
+            <p className="mt-4 text-[15px] font-semibold tracking-tight text-neutral-800">
+              {t('home.empty')}
+            </p>
+            <p className="mt-1.5 max-w-xs text-[13px] leading-relaxed text-neutral-500">
+              {t('home.emptySub')}
+            </p>
+            <button
+              type="button"
+              disabled={creating}
+              onClick={() => void createDoc()}
+              className="mt-6 inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-4 text-[13px] font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+            >
+              {creating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FilePlus2 className="h-4 w-4" />
+              )}
+              {t('home.new')}
+            </button>
           </div>
         )}
 
-        <ul className="divide-y divide-neutral-100 overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-          {docs.map((d) => (
-            <li key={d.id}>
-              <div className="flex items-center gap-3 px-4 py-3.5 transition hover:bg-neutral-50/80 sm:px-5">
-                <button
-                  type="button"
-                  onClick={() => router.push(`/studio/doc/${d.id}`)}
-                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
-                >
-                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600">
-                    <FileText className="h-4 w-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[14px] font-semibold text-neutral-900">
-                      {d.title || 'Untitled'}
+        {docs.length > 0 && (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {docs.map((d) => (
+              <li key={d.id}>
+                <div className="group flex items-stretch overflow-hidden rounded-2xl border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md">
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/studio/doc/${d.id}`)}
+                    className="flex min-w-0 flex-1 items-start gap-3.5 p-4 text-left"
+                  >
+                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#f0ebe4] text-[#6b5344]">
+                      <FileText className="h-4 w-4" strokeWidth={1.75} />
                     </span>
-                    <span className="mt-0.5 block truncate text-[12px] text-neutral-500">
-                      {d.preview || 'Documento vacío'}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-semibold tracking-tight text-neutral-900">
+                        {d.title || 'Untitled'}
+                      </span>
+                      <span className="mt-0.5 line-clamp-2 block text-[12px] leading-snug text-neutral-500">
+                        {d.preview || (locale === 'es' ? 'Documento vacio' : 'Empty document')}
+                      </span>
+                      <span className="mt-2 block font-mono text-[10px] uppercase tracking-wide text-neutral-400">
+                        {formatRelative(d.updatedAt, locale)}
+                      </span>
                     </span>
-                  </span>
-                  <span className="hidden shrink-0 text-[11px] text-neutral-400 sm:block">
-                    {formatRelative(d.updatedAt)}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  title="Eliminar"
-                  onClick={() => void removeDoc(d.id)}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+                  </button>
+                  <button
+                    type="button"
+                    title={locale === 'es' ? 'Eliminar' : 'Delete'}
+                    onClick={() => void removeDoc(d.id)}
+                    className="flex w-11 shrink-0 items-center justify-center border-l border-neutral-100 text-neutral-300 transition hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </main>
     </div>
   );
