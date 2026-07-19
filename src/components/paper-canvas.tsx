@@ -255,6 +255,8 @@ type Props = {
   zoom?: number;
   marginPreset?: StudioPrefs['marginPreset'];
   showEditButton?: boolean;
+  allowImages?: boolean;
+  imageMaxMb?: number;
   className?: string;
   documentHtml?: string;
 };
@@ -278,6 +280,8 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     ghostBeforeHtml,
     zoom = 1,
     marginPreset = 'normal',
+    allowImages = true,
+    imageMaxMb = 5,
     className,
     documentHtml,
   },
@@ -285,6 +289,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
 ) {
   const spec = PAPER[paperSize];
   const margin = MARGIN_PRESETS[marginPreset] ?? 72;
+  const maxImageBytes = Math.max(1, imageMaxMb) * 1024 * 1024;
   const metrics = useMemo(
     () => pageMetrics(spec.heightPx, margin, PAGE_GAP, spec.widthPx),
     [spec.heightPx, spec.widthPx, margin],
@@ -442,7 +447,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         requestAnimationFrame(() => onInput());
       },
       insertImage: async (file: File) => {
-        if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) return false;
+        if (!allowImages || !file.type.startsWith('image/') || file.size > maxImageBytes) return false;
         const bodies = liveBodies();
         let el =
           bodyContaining(lastSelection.current?.startContainer ?? null, bodies) ||
@@ -867,7 +872,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         event.preventDefault();
         void (async () => {
           const el = bodyRefs.current[pageIdx];
-          if (!el || file.size > 12 * 1024 * 1024) return;
+          if (!el || !allowImages || file.size > maxImageBytes) return;
           rememberSelection();
           const src = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -1036,7 +1041,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     rememberSelection();
     void (async () => {
       const el = bodyRefs.current[pageIdx];
-      if (!el || file.size > 12 * 1024 * 1024) return;
+      if (!el || !allowImages || file.size > maxImageBytes) return;
       const src = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result || ''));

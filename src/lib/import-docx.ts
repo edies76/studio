@@ -10,11 +10,107 @@ import { sanitizeDocumentHtml } from '@/lib/math-html';
 
 export type DocxImportResult = {
   html: string;
+  /** OOXML-first variant: preserves Word's direct visual formatting. */
+  fidelityHtml?: string;
   titleHint: string;
   warnings: string[];
   /** Short user-facing summary (no OOXML schema noise) */
   userSummary: string;
 };
+
+type OoxmlStyle = { name?: string; basedOn?: string; css: string; heading?: number };
+export type WordImportProfile = { title: string; styles: string[]; tables: number; headings: number; source: 'docx-ooxml' };
+const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const ooxmlChildren = (node: Element, name: string) => Array.from(node.children).filter((child) => child.localName === name) as Element[];
+const ooxmlChild = (node: Element, name: string) => ooxmlChildren(node, name)[0] || null;
+const wAttr = (node: Element | null, name: string) => node?.getAttributeNS(W, name) || node?.getAttribute(`w:${name}`) || node?.getAttribute(name) || '';
+const escapeHtml = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+function ooxmlText(node: Element): string {
+  return Array.from(node.querySelectorAll('t')).map((part) => part.textContent || '').join('');
+}
+
+function cssFromProperties(properties: Element | null): string {
+  if (!properties) return '';
+  const css: string[] = [];
+  const color = wAttr(ooxmlChild(properties, 'color'), 'val');
+  const size = Number(wAttr(ooxmlChild(properties, 'sz'), 'val'));
+  const font = wAttr(ooxmlChild(properties, 'rFonts'), 'ascii') || wAttr(ooxmlChild(properties, 'rFonts'), 'hAnsi');
+  const highlight = wAttr(ooxmlChild(properties, 'highlight'), 'val');
+  if (color && color !== 'auto') css.push(`color:#${color}`);
+  if (Number.isFinite(size) && size) css.push(`font-size:${size / 2}pt`);
+  if (font) css.push(`font-family:${escapeHtml(font)}`);
+  if (ooxmlChild(properties, 'b')) css.push('font-weight:700');
+  if (ooxmlChild(properties, 'i')) css.push('font-style:italic');
+  if (ooxmlChild(properties, 'u')) css.push('text-decoration:underline');
+  if (highlight) css.push(`background-color:${highlight === 'yellow' ? '#fff59d' : highlight}`);
+  return css.join(';');
+}
+
+function paragraphCss(properties: Element | null): string {
+  if (!properties) return '';
+  const css: string[] = [];
+  const jc = wAttr(ooxmlChild(properties, 'jc'), 'val');
+  const spacing = ooxmlChild(properties, 'spacing');
+  const ind = ooxmlChild(properties, 'ind');
+  const map: Record<string, string> = { both: 'justify', center: 'center', right: 'right', left: 'left' };
+  if (map[jc]) css.push(`text-align:${map[jc]}`);
+  const before = Number(wAttr(spacing, 'before')), after = Number(wAttr(spacing, 'after'));
+  if (before) css.push(`margin-top:${before / 20}pt`);
+  if (after) css.push(`margin-bottom:${after / 20}pt`);
+  const left = Number(wAttr(ind, 'left') || wAttr(ind, 'start'));
+  if (left) css.push(`margin-left:${left / 20}pt`);
+  return css.join(';');
+}
+
+/** Direct OOXML reader for the fidelity path. It intentionally keeps Word's
+ * visual properties rather than mapping custom styles into generic headings. */
+export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<string> {
+  const zip = await JSZip.loadAsync(buffer);
+  const readXml = async (path: string) => {
+    const file = zip.file(path); if (!file) return null;
+    return new DOMParser().parseFromString(await file.async('string'), 'application/xml');
+  };
+  const documentXml = await readXml('word/document.xml');
+  if (!documentXml) throw new Error('No se encontró word/document.xml.');
+  const stylesXml = await readXml('word/styles.xml');
+  const styles = new Map<string, OoxmlStyle>();
+  stylesXml?.querySelectorAll('style').forEach((style) => {
+    const id = wAttr(style, 'styleId'); const name = wAttr(ooxmlChild(style, 'name'), 'val');
+    const heading = /heading\s*(\d)|título apartado\s*(\d)/i.exec(name)?.slice(1).find(Boolean);
+    styles.set(id, { name, basedOn: wAttr(ooxmlChild(style, 'basedOn'), 'val'), css: cssFromProperties(ooxmlChild(style, 'rPr')), heading: heading ? Number(heading) : undefined });
+  });
+  const resolveStyle = (id: string): OoxmlStyle => {
+    const own: OoxmlStyle = styles.get(id) || { css: '' }; const parent: OoxmlStyle = own.basedOn && own.basedOn !== id ? resolveStyle(own.basedOn) : { css: '' };
+    return { ...parent, ...own, css: [parent.css, own.css].filter(Boolean).join(';'), heading: own.heading || parent.heading };
+  };
+  const renderRun = (run: Element) => {
+    const text = ooxmlText(run); if (!text) return '';
+    const css = cssFromProperties(ooxmlChild(run, 'rPr'));
+    return `<span${css ? ` style="${css}"` : ''}>${escapeHtml(text)}</span>`;
+  };
+  const renderTable = (table: Element) => `<table class="studio-table docx-fidelity-table">${ooxmlChildren(table, 'tr').map((row) => `<tr>${ooxmlChildren(row, 'tc').map((cell) => { const props = ooxmlChild(cell, 'tcPr'); const shade = wAttr(ooxmlChild(props || cell, 'shd'), 'fill'); const width = Number(wAttr(ooxmlChild(props || cell, 'tcW'), 'w')); const style = [shade && shade !== 'auto' ? `background:#${shade}` : '', width ? `width:${width / 20}pt` : ''].filter(Boolean).join(';'); return `<td${style ? ` style="${style}"` : ''}>${ooxmlChildren(cell, 'p').map(renderParagraph).join('')}</td>`; }).join('')}</tr>`).join('')}</table>`;
+  const renderParagraph = (paragraph: Element) => {
+    const props = ooxmlChild(paragraph, 'pPr'); const styleId = wAttr(ooxmlChild(props || paragraph, 'pStyle'), 'val'); const style = resolveStyle(styleId);
+    const css = [style.css, paragraphCss(props)].filter(Boolean).join(';');
+    const content = ooxmlChildren(paragraph, 'r').map(renderRun).join('') || escapeHtml(ooxmlText(paragraph));
+    const tag = style.heading ? `h${Math.min(6, style.heading)}` : 'p';
+    return `<${tag} class="docx-fidelity-paragraph"${css ? ` style="${css}"` : ''}>${content || '<br>'}</${tag}>`;
+  };
+  const body = documentXml.querySelector('body');
+  if (!body) return '<p><br></p>';
+  return Array.from(body.children).map((node) => node.localName === 'p' ? renderParagraph(node) : node.localName === 'tbl' ? renderTable(node) : '').join('') || '<p><br></p>';
+}
+
+export async function inspectWordProfile(buffer: ArrayBuffer, title: string): Promise<WordImportProfile> {
+  const zip = await JSZip.loadAsync(buffer); const file = zip.file('word/document.xml');
+  if (!file) throw new Error('No se encontró el documento Word.');
+  const xml = new DOMParser().parseFromString(await file.async('string'), 'application/xml');
+  const paragraphs = Array.from(xml.querySelectorAll('p'));
+  const styles = Array.from(new Set(paragraphs.map((p) => wAttr(ooxmlChild(ooxmlChild(p, 'pPr') || p, 'pStyle'), 'val')).filter(Boolean)));
+  return { title, styles, tables: xml.querySelectorAll('tbl').length, headings: paragraphs.filter((p) => /t.tulo|heading/i.test(wAttr(ooxmlChild(ooxmlChild(p, 'pPr') || p, 'pStyle'), 'val'))).length, source: 'docx-ooxml' };
+}
 
 /** Map common Word / Spanish / academic styles → semantic HTML */
 const STYLE_MAP = [
@@ -235,6 +331,7 @@ export async function importDocxToHtml(
   buffer: ArrayBuffer,
   fileName = 'documento.docx',
 ): Promise<DocxImportResult> {
+  const fidelityHtml = await importDocxFidelityHtml(buffer).catch(() => '');
   const prepared = await prepareDocxBuffer(buffer);
   const result = await mammoth.convertToHtml(
     { arrayBuffer: prepared.buffer },
@@ -276,5 +373,5 @@ export async function importDocxToHtml(
       ? `Importado «${titleHint}» con formato editable (estilos, listas, tablas e imágenes).`
       : `Importado «${titleHint}» con ${warnings.length} aviso(s): ${warnings.slice(0, 2).join(' · ')}`;
 
-  return { html, titleHint, warnings, userSummary };
+  return { html, fidelityHtml: fidelityHtml ? sanitizeDocumentHtml(fidelityHtml) : undefined, titleHint, warnings, userSummary };
 }

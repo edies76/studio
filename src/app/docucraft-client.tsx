@@ -20,7 +20,7 @@ import StudioChat, {
 import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History } from 'lucide-react';
+import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History, Settings2 } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -1770,10 +1770,13 @@ export default function DocsStudioClient({
     setIsBusy(true);
     try {
       const buf = await file.arrayBuffer();
-      const { html, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
+      const { html, fidelityHtml, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
+      const useFidelity = Boolean(fidelityHtml) && window.confirm(
+        '¿Importar con fidelidad visual de Word?\n\nAceptar: conserva tamaño, color, sangrías y tablas.\nCancelar: usa el modo editable semántico.',
+      );
       setDocumentTitle(titleHint.slice(0, 80));
-      applyHtml(html, true, 'cascade');
-      toast({ title: 'Word importado al lienzo', description: userSummary.slice(0, 240) });
+      applyHtml(useFidelity ? fidelityHtml! : html, true, 'cascade');
+      toast({ title: 'Word importado al lienzo', description: `${useFidelity ? 'Modo fidelidad visual. ' : 'Modo editable. '}${userSummary}`.slice(0, 240) });
       pushEvent({ type: 'local_edit', title: 'Import Word', summary: userSummary.slice(0, 160) }, true);
       setMessages((ms) => [
         ...ms,
@@ -1981,6 +1984,8 @@ export default function DocsStudioClient({
               zoom={zoom}
               marginPreset={prefs.marginPreset}
               showEditButton={prefs.showEditButton}
+              allowImages={prefs.allowImages}
+              imageMaxMb={prefs.imageMaxMb}
             />
             <input
               ref={importInputRef}
@@ -2017,21 +2022,21 @@ export default function DocsStudioClient({
             <div
               data-studio-toolbar
               data-document-editor-toolbar
-              className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
+              className="pointer-events-none absolute inset-x-0 top-3 z-30 h-10"
             >
-              <div className="pointer-events-auto flex max-w-[min(980px,100%)] items-center gap-2">
-              <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 p-1 backdrop-blur-md">
+              <div className="pointer-events-auto absolute left-3 top-0 flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 p-1 backdrop-blur-md">
                 <a href="/home" className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Volver a biblioteca" aria-label="Volver a biblioteca"><ArrowLeft className="h-4 w-4" /></a>
                 <span className="h-4 w-px bg-neutral-200" aria-hidden="true" />
                 <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'} aria-label={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'}>
                   {saveState === 'saving' ? <CloudUpload className="h-4 w-4 animate-pulse" /> : saveConflict || saveState === 'error' ? <CloudOff className="h-4 w-4 text-amber-700" /> : <CircleCheck className="h-4 w-4 text-emerald-700" />}
                 </span>
                 <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Importar Word" aria-label="Importar Word"><FileUp className="h-4 w-4" /></button>
+                <button type="button" onClick={() => setSettingsOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Configuración" aria-label="Configuración"><Settings2 className="h-4 w-4" /></button>
               </div>
-              <div className="pointer-events-auto">
+              <div className="pointer-events-auto absolute right-3 top-0">
                 <LocaleSwitch />
               </div>
-              <div className="pointer-events-auto max-w-[min(980px,100%)] overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
+              <div className="pointer-events-auto absolute left-1/2 top-0 max-w-[min(980px,calc(100vw-210px))] -translate-x-1/2 overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
                 <DocumentEditorToolbar
                   onRequestLink={() => {
                     const url = window.prompt('URL');
@@ -2055,7 +2060,6 @@ export default function DocsStudioClient({
                   }}
                   onFormatChange={() => canvasRef.current?.commitExternalMutation()}
                 />
-              </div>
             </div>
             </div>
 
