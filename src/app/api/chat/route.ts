@@ -299,7 +299,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
         // shorter" take ~14s. This fast lane skips all of that: one short,
         // untooled completion, then a local replace_selection proposal.
         const quickRewriteMatch = !mathSafeMode
-          ? /^(Improve|Make shorter|Expand|Fix grammar|More academic) the selected text at intensity (\d+)%\./i.exec(
+          ? /^(Improve|Make shorter|Expand|Fix grammar) the selected text(?: at intensity (\d+)%|\.)/i.exec(
               lastUser,
             )
           : null;
@@ -376,6 +376,66 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
             finalLen: finalText.length,
           });
           send({ type: 'done', finalText, model: 'quick-rewrite', durationMs, outcome: 'proposal' });
+          return;
+        }
+
+        // Replacing a document wholesale is also a single, bounded operation.
+        // Do not make “delete everything and write a short story” pay for a
+        // multi-round read/tool/reply loop: one focused completion can produce
+        // a reviewable replacement much faster.
+        const replacesWholeDocument = !selectedText.trim() &&
+          /(?:delete|remove|clear|erase|elimina|borra|quita).{0,80}(?:all|everything|todo).{0,160}(?:write|create|draft|escribe|crea|redacta)/i.test(lastUser);
+        if (replacesWholeDocument && workspaceContext?.agentPermission !== 'read') {
+          const tid = `quick_document_${Date.now()}`;
+          send({ type: 'status', label: 'Drafting replacement…' });
+          send({ type: 'tool_start', name: 'quick_document_rewrite', label: 'Drafting replacement…', id: tid });
+          let draft = '';
+          try {
+            const rewriteRes = await deepseekChat({
+              apiKey,
+              model: resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL),
+              messages: [
+                {
+                  role: 'system',
+                  content: 'Write the requested replacement document. Match the user language. Return plain text only, with paragraphs separated by blank lines; no markdown, notes, or preamble.',
+                },
+                { role: 'user', content: lastUser },
+              ],
+              stream: false,
+              temperature: 0.7,
+              maxTokens: 1800,
+            });
+            const data = await rewriteRes.json().catch(() => null);
+            draft = String(data?.choices?.[0]?.message?.content || '').trim();
+          } catch (error: any) {
+            slog.warn('chat', 'quick_document_rewrite.error', { err: error?.message || String(error) });
+          }
+          if (!draft) {
+            send({ type: 'tool_end', name: 'quick_document_rewrite', ok: false, label: 'No response', id: tid });
+            send({ type: 'error', message: 'I could not draft the replacement document.' });
+            send({ type: 'done', durationMs: Date.now() - t0, outcome: 'error' });
+            return;
+          }
+          const afterHtml = draft
+            .split(/\n\s*\n/)
+            .map((paragraph) => `<p>${escapeAgentHtml(paragraph).replace(/\n/g, '<br>')}</p>`)
+            .join('');
+          const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          send({
+            type: 'propose_edit',
+            id,
+            edit: {
+              title: 'Replace document',
+              summary: 'A complete replacement is ready to review.',
+              mode: 'replace_document',
+              beforeHtml: liveHtml,
+              afterHtml,
+              changeList: ['Replaced the document with a newly drafted version.'],
+            },
+          });
+          send({ type: 'tool_end', name: 'quick_document_rewrite', ok: true, label: 'Replacement ready to review', id: tid });
+          send({ type: 'text', delta: 'The replacement is ready to accept or reject.' });
+          send({ type: 'done', model: 'quick-document-rewrite', durationMs: Date.now() - t0, outcome: 'proposal' });
           return;
         }
 

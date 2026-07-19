@@ -19,7 +19,7 @@ import StudioChat, {
 import ToolsDock, { type ImproveStyle, type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History, Plus, Settings2 } from 'lucide-react';
+import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, History, Plus, Settings2 } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -2068,7 +2068,6 @@ export default function DocsStudioClient({
                 <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title={saveState === 'saving' ? 'Saving changes' : saveConflict || saveState === 'error' ? 'Could not save' : 'Changes saved'} aria-label={saveState === 'saving' ? 'Saving changes' : saveConflict || saveState === 'error' ? 'Could not save' : 'Changes saved'}>
                   {saveState === 'saving' ? <CloudUpload className="h-4 w-4 animate-pulse" /> : saveConflict || saveState === 'error' ? <CloudOff className="h-4 w-4 text-amber-700" /> : <CircleCheck className="h-4 w-4 text-emerald-700" />}
                 </span>
-                <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Import Word" aria-label="Import Word"><FileUp className="h-4 w-4" /></button>
                 <button type="button" onClick={() => setInsertOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Insert" aria-label="Insert"><Plus className="h-4 w-4" /></button>
                 <button type="button" onClick={() => setSettingsOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Settings" aria-label="Settings"><Settings2 className="h-4 w-4" /></button>
               </div>
@@ -2083,6 +2082,7 @@ export default function DocsStudioClient({
                   onInsertMath={handleInsertMath}
                   onInsertTable={handleInsertTable}
                   onInsertImage={handleInsertImage}
+                  onImportWord={() => importInputRef.current?.click()}
                   insertOpen={insertOpen}
                   onInsertOpenChange={setInsertOpen}
                   onBeforeFormat={() => {

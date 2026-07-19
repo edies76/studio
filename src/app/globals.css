@@ -7,6 +7,16 @@
   --font-ui: 'Segoe UI', 'Segoe UI Variable', system-ui, sans-serif;
 }
 
+/* Account-linked remote MCP access: a small operational panel, not marketing. */
+.mcp-access-panel { max-width: 760px; margin: 30px auto 0; padding: 24px; border: 1px solid #ded9d1; border-radius: 10px; background: #fbfbfa; }
+.mcp-access-panel h3 { margin: 9px 0; color: #25211e; font-family: var(--font-serif, Georgia, serif); font-size: 28px; font-weight: 500; letter-spacing: -.035em; }
+.mcp-access-panel > p:not(.mcp-label) { max-width: 630px; margin: 0 0 16px; color: #69625b; font-size: 13px; line-height: 1.55; }
+.mcp-access-panel__button { display: inline-flex; align-items: center; justify-content: center; min-height: 38px; border: 1px solid #28231f; border-radius: 6px; background: #28231f; color: #fff; padding: 0 12px; font: 650 12px inherit; text-decoration: none; cursor: pointer; }
+.mcp-access-panel__button:disabled { opacity: .55; cursor: wait; }
+.mcp-access-panel__endpoint { display: block; margin: 12px 0; overflow: auto; border: 1px solid #e4dfd8; background: #f2f0ec; padding: 8px; color: #554f49; font-size: 11px; }
+.mcp-access-panel__token { display: grid; gap: 8px; margin: 16px 0; border: 1px solid #d6c8b8; background: #fbf3e8; padding: 12px; }.mcp-access-panel__token span { color: #765638; font-size: 11px; }.mcp-access-panel__token code { overflow-wrap: anywhere; color: #312a24; font-size: 11px; }.mcp-access-panel__token button { justify-self: start; border: 0; background: transparent; color: #5c4030; font: 650 11px inherit; cursor: pointer; }
+.mcp-access-panel__list { display: grid; gap: 0; margin-top: 18px; border-top: 1px solid #e6e2dc; }.mcp-access-panel__list > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e6e2dc; }.mcp-access-panel__list span { display: grid; gap: 2px; }.mcp-access-panel__list strong { font-size: 12px; }.mcp-access-panel__list small { color: #847d75; font-size: 10px; }.mcp-access-panel__list button { border: 0; background: transparent; color: #9f2f2d; font: 600 11px inherit; cursor: pointer; }.mcp-access-panel__error { color: #9f2f2d !important; }
+
 /* Docs Studio palette: white + gray + dark brown (surfaces/buttons) */
 @layer base {
   :root {
@@ -5100,6 +5110,24 @@
 .home-landing__agent-mark i:nth-of-type(3) { right: 131px; bottom: 83px; }
 .home-landing__agent h2 { margin-top: 21px; color: #211b17; }
 .home-landing__agent > .landing-wrap > div:last-child > p:not(.landing-micro-label) { max-width: 570px; margin-top: 23px; color: #75695e; font-size: 15px; line-height: 1.65; }
+
+/* Use cases are a decision aid, not a secondary directory of links. */
+.home-landing__usecases { border-top: 1px solid var(--landing-line); background: #f7f3ed; }
+.home-landing__usecases-grid { display: grid; grid-template-columns: minmax(300px, .88fr) minmax(460px, 1.12fr); gap: clamp(48px, 9vw, 140px); align-items: start; }
+.home-landing__usecases-intro { position: sticky; top: 106px; }
+.home-landing__usecases h2 { max-width: 8.8ch; margin: 21px 0 0; color: #211b17; font-size: clamp(3.3rem, 5.8vw, 6.4rem); line-height: .91; }
+.home-landing__usecases-intro > p:not(.landing-micro-label) { max-width: 475px; margin: 26px 0 0; color: #75695e; font-size: 15px; line-height: 1.65; }
+.home-landing__usecases-proof { display: grid; grid-template-columns: auto 1fr; gap: 7px 17px; margin: 33px 0 32px; padding: 17px 0; border-top: 1px solid #d8cfc5; border-bottom: 1px solid #d8cfc5; }
+.home-landing__usecases-proof span { color: #8b4a34; font-family: var(--font-mono, monospace); font-size: 9px; font-weight: 700; letter-spacing: .1em; }
+.home-landing__usecases-proof strong { color: #4f453d; font-size: 12px; font-weight: 600; line-height: 1.4; }
+.home-landing__usecases .landing-primary-button { border-radius: 6px; background: #302a26; color: #fffdfa; box-shadow: none; }
+.home-landing__usecases-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid #d8cfc5; border-left: 1px solid #d8cfc5; }
+.home-landing__usecase-row { display: flex; min-height: 255px; flex-direction: column; justify-content: space-between; padding: 21px; border-right: 1px solid #d8cfc5; border-bottom: 1px solid #d8cfc5; background: #fbfaf8; }
+.home-landing__usecase-row > span { color: #9b8e82; font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .12em; }
+.home-landing__usecase-row div { display: grid; gap: 11px; }
+.home-landing__usecase-row strong { color: #29221e; font-family: 'Newsreader', Georgia, serif; font-size: clamp(25px, 2.5vw, 35px); font-weight: 500; letter-spacing: -.045em; line-height: .96; }
+.home-landing__usecase-row p { margin: 0; color: #71675f; font-size: 12px; line-height: 1.6; }
+.home-landing__usecase-row small { color: #8b4a34; font-family: var(--font-mono, monospace); font-size: 9px; letter-spacing: .07em; text-transform: uppercase; }
 .home-landing__final { border-top: 1px solid var(--landing-line); }
 .home-landing__final h2 { max-width: 8ch; }
 .home-landing__final p:not(.landing-final__label) { max-width: 460px; }
@@ -5109,7 +5137,9 @@
   .home-landing__section-heading--control { grid-template-columns: 1fr; gap: 25px; }
   .home-landing__capabilities { grid-template-columns: repeat(2, 1fr); }
   .home-landing__canvas-grid,
-  .home-landing__agent-grid { grid-template-columns: 1fr; gap: 52px; }
+  .home-landing__agent-grid,
+  .home-landing__usecases-grid { grid-template-columns: 1fr; gap: 52px; }
+  .home-landing__usecases-intro { position: static; }
   .home-landing__paper-preview { max-width: 720px; }
 }
 
@@ -5119,7 +5149,8 @@
   .landing-page .landing-nav__links { display: none; }
   .landing-page .landing-wrap { width: calc(100% - 38px); }
   .home-landing__capabilities,
-  .home-landing__review-rail { grid-template-columns: 1fr; }
+  .home-landing__review-rail,
+  .home-landing__usecases-list { grid-template-columns: 1fr; }
   .home-landing__capabilities h3,
   .home-landing__review-rail h3 { margin-top: 33px; }
   .home-landing__paper-body { min-height: 360px; padding: 38px 28px 30px; }

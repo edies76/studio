@@ -10,6 +10,7 @@ export type PageMetrics = {
   pageGap: number;
   usableHeight: number;
   contentWidth: number;
+  footerReserve: number;
 };
 
 export function pageMetrics(
@@ -17,13 +18,15 @@ export function pageMetrics(
   margin: number,
   pageGap: number,
   contentWidth: number,
+  footerReserve = 0,
 ): PageMetrics {
   return {
     pageHeight,
     margin,
     pageGap,
-    usableHeight: Math.max(200, pageHeight - margin * 2),
+    usableHeight: Math.max(200, pageHeight - margin * 2 - footerReserve),
     contentWidth: Math.max(200, contentWidth - margin * 2),
+    footerReserve,
   };
 }
 

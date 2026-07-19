@@ -2,6 +2,7 @@ import Link from 'next/link';
 import BrandMark from '@/components/brand-mark';
 import AnimatedBrand from '@/components/animated-brand';
 import LocaleSwitch from '@/components/locale-switch';
+import McpAccessPanel from '@/components/mcp-access-panel';
 
 const tools = [
   ['01', 'get_capabilities', 'Return the server contract, transports, and honest session boundary.'],
@@ -199,6 +200,7 @@ export default function McpPage() {
               <p>The token is created once from the signed-in workspace, stored hashed, and can be revoked. It starts with all currently available MCP permissions.</p>
             </article>
           </div>
+          <McpAccessPanel />
         </section>
 
         <section id="boundaries" className="mcp-section mcp-boundaries">

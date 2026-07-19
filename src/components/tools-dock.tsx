@@ -5,7 +5,6 @@ import { cn } from '@/lib/utils';
 import {
   ArrowUp,
   BookMarked,
-  GraduationCap,
   Maximize2,
   MessageSquarePlus,
   Minimize2,
@@ -20,13 +19,14 @@ export type OrbitAction =
   | 'shorter'
   | 'expand'
   | 'grammar'
-  | 'academic'
   | 'norms';
+
+export type ImproveStyle = 'direct' | 'detailed' | 'informal' | 'professional';
 
 type Props = {
   busy?: boolean;
   hasSelection?: boolean;
-  onAction: (action: OrbitAction, intensity: number) => void;
+  onAction: (action: OrbitAction, intensity: number, improveStyle?: ImproveStyle) => void;
   onOpenAgent?: () => void;
   showAgentOption?: boolean;
 };
@@ -36,7 +36,6 @@ const ACTIONS: { id: OrbitAction; label: string; sendLabel: string; icon: ReactN
   { id: 'shorter', label: 'Shorter', sendLabel: 'Send shorter', icon: <Minimize2 className="h-5 w-5" strokeWidth={1.75} /> },
   { id: 'expand', label: 'Expand', sendLabel: 'Send expand', icon: <Maximize2 className="h-5 w-5" strokeWidth={1.75} /> },
   { id: 'grammar', label: 'Grammar', sendLabel: 'Send grammar', icon: <SpellCheck className="h-5 w-5" strokeWidth={1.75} /> },
-  { id: 'academic', label: 'Academic', sendLabel: 'Send academic', icon: <GraduationCap className="h-5 w-5" strokeWidth={1.75} /> },
   {
     id: 'norms',
     label: 'Aplicar normas',
@@ -70,6 +69,13 @@ const NORMS_DOTS = NORM_LEVELS.map((n) => ({
   short: NORM_SHORT[n.id] || n.id.toUpperCase(),
 }));
 
+const IMPROVE_STYLES: { id: ImproveStyle; label: string; tip: string }[] = [
+  { id: 'direct', label: 'Direct', tip: 'Clearer and more concise' },
+  { id: 'detailed', label: 'Detailed', tip: 'Add helpful context and explanation' },
+  { id: 'informal', label: 'Informal', tip: 'Natural, conversational language' },
+  { id: 'professional', label: 'Professional', tip: 'Polished, neutral workplace tone' },
+];
+
 export default function ToolsDock({
   busy,
   hasSelection,
@@ -80,6 +86,7 @@ export default function ToolsDock({
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<OrbitAction | null>(null);
   const [intensity, setIntensity] = useState(50);
+  const [improveStyle, setImproveStyle] = useState<ImproveStyle>('direct');
   const [hoverKey, setHoverKey] = useState<string | null>(null);
   const [panelVisible, setPanelVisible] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -120,7 +127,7 @@ export default function ToolsDock({
 
   const run = () => {
     if (!action || busy) return;
-    onAction(action, intensity);
+    onAction(action, intensity, action === 'improve' ? improveStyle : undefined);
     reset();
   };
 
@@ -132,8 +139,7 @@ export default function ToolsDock({
   const hoverDisc = (active: boolean) =>
     cn('absolute inset-0 rounded-full transition-colors duration-150', active ? 'bg-neutral-100' : 'bg-transparent');
 
-  const optionCount =
-    (showAgentOption && onOpenAgent ? 1 : 0) + (action ? levels.length : ACTIONS.length);
+  const optionCount = (showAgentOption && onOpenAgent ? 1 : 0) + (action ? action === 'improve' ? IMPROVE_STYLES.length : levels.length : ACTIONS.length);
   const maxH = action ? 400 : Math.min(560, 64 + optionCount * 56);
 
   const sendTitle =
@@ -197,6 +203,7 @@ export default function ToolsDock({
                   setAction(a.id);
                   // Normas: default APA (top, most strict) as reference point
                   setIntensity(a.id === 'norms' ? 100 : 50);
+                  if (a.id === 'improve') setImproveStyle('direct');
                 }}
                 className={cn(cell, busy && 'opacity-40')}
               >
@@ -205,7 +212,17 @@ export default function ToolsDock({
               </button>
             ))}
 
-          {action &&
+          {action === 'improve' &&
+            IMPROVE_STYLES.map((style) => {
+              const active = improveStyle === style.id;
+              return (
+                <button key={style.id} type="button" title={style.tip} disabled={busy} onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setHoverKey(`style-${style.id}`)} onMouseLeave={() => setHoverKey(null)} onClick={() => setImproveStyle(style.id)} className={cn(cell, busy && 'opacity-40')}>
+                  <span className={hoverDisc(hoverKey === `style-${style.id}` || active)} />
+                  <span className={cn('relative z-10 text-[10px] font-semibold', active ? 'text-neutral-900' : 'text-neutral-400')}>{style.label}</span>
+                </button>
+              );
+            })}
+          {action && action !== 'improve' &&
             levels.map((lv) => {
               const active = intensity === lv.value;
               const isNorms = action === 'norms';

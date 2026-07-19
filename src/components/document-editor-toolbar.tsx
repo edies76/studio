@@ -19,7 +19,6 @@ import {
   Code,
   Highlighter,
   Italic,
-  Link2,
   List,
   ListOrdered,
   Redo2,
@@ -31,10 +30,9 @@ import {
   ChevronDown,
   Sigma,
   Table2,
-  Settings2,
-  FileUp,
   ImagePlus,
   Palette,
+  FileUp,
 } from 'lucide-react';
 function ensureEditMode() {
   try {
@@ -51,28 +49,33 @@ function cmd(command: string, value?: string) {
 
 const FONTS = [
   { name: 'Inter', value: 'Inter, Segoe UI, system-ui, sans-serif' },
+  { name: 'Aptos', value: 'Aptos, Calibri, Candara, sans-serif' },
+  { name: 'Garamond', value: 'Garamond, Georgia, serif' },
+  { name: 'Palatino', value: 'Palatino Linotype, Book Antiqua, Palatino, serif' },
+  { name: 'Cambria', value: 'Cambria, Georgia, serif' },
   { name: 'Times New Roman', value: 'Times New Roman, Times, serif' },
   { name: 'Georgia', value: 'Georgia, serif' },
   { name: 'Arial', value: 'Arial, Helvetica, sans-serif' },
+  { name: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
+  { name: 'Trebuchet MS', value: 'Trebuchet MS, Arial, sans-serif' },
   { name: 'Calibri', value: 'Calibri, Candara, sans-serif' },
   { name: 'Courier New', value: 'Courier New, monospace' },
+  { name: 'Consolas', value: 'Consolas, Monaco, monospace' },
 ];
 
 type Props = {
-  onRequestLink: () => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
   fontFamily: string;
   onFontFamily: (f: string) => void;
-  pageCount?: number;
-  wordCount?: number;
   onInsertMath?: () => void;
   onInsertTable?: (rows?: number, cols?: number) => void;
   onInsertImage?: () => void;
-  onOpenSettings?: () => void;
   onImportWord?: () => void;
+  insertOpen?: boolean;
+  onInsertOpenChange?: (open: boolean) => void;
   /** Restores the canvas range after a toolbar click steals focus. */
   onBeforeFormat?: () => void;
   /** Persists the DOM command and rebalances pages after formatting. */
@@ -90,26 +93,29 @@ const TEXT_COLORS = [
 
 /** Clean white Word-style toolbar (restored look) */
 export default function DocumentEditorToolbar({
-  onRequestLink,
   onUndo,
   onRedo,
   canUndo,
   canRedo,
   fontFamily,
   onFontFamily,
-  pageCount,
-  wordCount,
   onInsertMath,
   onInsertTable,
   onInsertImage,
-  onOpenSettings,
   onImportWord,
+  insertOpen: controlledInsertOpen,
+  onInsertOpenChange,
   onBeforeFormat,
   onFormatChange,
 }: Props) {
-  const [insertOpen, setInsertOpen] = useState(false);
+  const [internalInsertOpen, setInternalInsertOpen] = useState(false);
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(3);
+  const insertOpen = controlledInsertOpen ?? internalInsertOpen;
+  const setInsertOpen = (open: boolean) => {
+    onInsertOpenChange?.(open);
+    if (controlledInsertOpen === undefined) setInternalInsertOpen(open);
+  };
 
   const applyFont = (value: string, name: string) => {
     onBeforeFormat?.();
@@ -181,18 +187,8 @@ export default function DocumentEditorToolbar({
       <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('underline')} title="Underline">
         <Underline className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className={btn}
-        onClick={() => {
-          onBeforeFormat?.();
-          onRequestLink();
-          onFormatChange?.();
-        }}
-        title="Link"
-      >
-        <Link2 className="h-4 w-4" strokeWidth={1.5} />
+      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('strikeThrough')} title="Strikethrough">
+        <Strikethrough className="h-4 w-4" strokeWidth={1.5} />
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -209,19 +205,6 @@ export default function DocumentEditorToolbar({
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      {(onInsertMath || onInsertTable || onInsertImage || onImportWord) && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 rounded-md px-2 text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900"
-          onClick={() => setInsertOpen(true)}
-          title="Insertar o importar"
-        >
-          <FileUp className="h-4 w-4" strokeWidth={1.5} />
-          <span className="hidden sm:inline">Insertar</span>
-        </Button>
-      )}
-
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" className="h-8 px-2 text-neutral-600 hover:bg-neutral-100">
@@ -229,9 +212,6 @@ export default function DocumentEditorToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-52">
-          <DropdownMenuItem onClick={() => applyCommand('strikeThrough')}>
-            <Strikethrough className="mr-2 h-4 w-4" /> Strikethrough
-          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'pre')}>
             <Code className="mr-2 h-4 w-4" /> Code
           </DropdownMenuItem>
@@ -266,29 +246,6 @@ export default function DocumentEditorToolbar({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-
-      <div className="mx-1 h-5 w-px bg-neutral-200" />
-      {onOpenSettings && (
-        <Button
-          variant="ghost"
-          size="icon"
-          className={btn}
-          onClick={onOpenSettings}
-          title="Ajustes"
-        >
-          <Settings2 className="h-4 w-4" strokeWidth={1.5} />
-        </Button>
-      )}
-      {typeof pageCount === 'number' && (
-        <span className="ml-0.5 shrink-0 px-1 font-mono text-[10px] text-neutral-400" title="Páginas">
-          {pageCount}p
-        </span>
-      )}
-      {typeof wordCount === 'number' && (
-        <span className="shrink-0 px-1 font-mono text-[10px] text-neutral-400" title="Palabras">
-          {wordCount}w
-        </span>
-      )}
 
       {insertOpen && typeof document !== 'undefined' && createPortal(
         <div
@@ -329,7 +286,7 @@ export default function DocumentEditorToolbar({
               {onImportWord && (
                 <button type="button" onClick={() => { setInsertOpen(false); onImportWord(); }} className="flex min-h-28 items-start gap-3 rounded-lg border border-neutral-200 p-4 text-left transition-colors hover:border-neutral-400 hover:bg-neutral-50">
                   <FileUp className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
-                  <span><strong className="block text-sm">Importar Word</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">.docx y archivos OOXML con extensión .doc.</small></span>
+                  <span><strong className="block text-sm">Import Word</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">Import a .docx file into the canvas.</small></span>
                 </button>
               )}
               {onInsertTable && (

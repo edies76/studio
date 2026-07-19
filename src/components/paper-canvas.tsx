@@ -60,6 +60,7 @@ export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
 
 /** Visual gap between real sheets — empty DOM space, not painted under text */
 const PAGE_GAP = 28;
+const FOOTER_RESERVE = 48;
 const REBALANCE_MS = 160;
 const BLOCK_SEL = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table';
 
@@ -347,7 +348,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const margin = MARGIN_PRESETS[marginPreset] ?? 72;
   const maxImageBytes = Math.max(1, imageMaxMb) * 1024 * 1024;
   const metrics = useMemo(
-    () => pageMetrics(spec.heightPx, margin, PAGE_GAP, spec.widthPx),
+    () => pageMetrics(spec.heightPx, margin, PAGE_GAP, spec.widthPx, FOOTER_RESERVE),
     [spec.heightPx, spec.widthPx, margin],
   );
   const styleOpts = useMemo(() => ({ fontFamily, fontSize }), [fontFamily, fontSize]);
@@ -1262,7 +1263,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       className="studio-doc-editor studio-diff-layer pointer-events-none h-full max-w-none overflow-hidden text-neutral-900"
                       style={{
                         boxSizing: 'border-box',
-                        padding: margin,
+                        padding: `${margin}px ${margin}px ${margin + FOOTER_RESERVE}px ${margin}px`,
                         fontFamily,
                         fontSize,
                         lineHeight: 1.65,
@@ -1298,7 +1299,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       )}
                       style={{
                         boxSizing: 'border-box',
-                        padding: margin,
+                        padding: `${margin}px ${margin}px ${margin + FOOTER_RESERVE}px ${margin}px`,
                         fontFamily,
                         fontSize,
                         lineHeight: 1.65,
@@ -1308,13 +1309,6 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       }}
                     />
                   )}
-                  <div
-                    data-page-footer
-                    className="pointer-events-none absolute bottom-4 left-0 right-0 z-20 text-center font-mono text-[10px] tracking-wide text-neutral-300"
-                    aria-hidden
-                  >
-                    {i + 1}
-                  </div>
                 </div>
               ))}
             </div>
