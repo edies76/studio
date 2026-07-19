@@ -58,9 +58,18 @@ export type StudioDocument = {
   preview?: string;
   createdAt: number;
   updatedAt: number;
+  /** Monotonic revision used to reject stale autosaves from another tab/client. */
+  revision: number;
   chat: ChatTurn[];
   versions: DocumentVersion[];
 };
+
+export class DocumentConflictError extends Error {
+  code = 'DOCUMENT_CONFLICT' as const;
+  constructor(public readonly latest: StudioDocument) {
+    super('This document changed somewhere else. Reload the latest revision before saving again.');
+  }
+}
 
 export type DocListItem = {
   id: string;
@@ -228,17 +237,24 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     preview: String(it.preview || ''),
     createdAt: Number(it.createdAt || 0),
     updatedAt: Number(it.updatedAt || 0),
+    revision: Number(it.revision || 1),
     chat: Array.isArray(it.chat) ? (it.chat as ChatTurn[]) : [],
     versions: Array.isArray(it.versions) ? (it.versions as DocumentVersion[]) : [],
   };
 }
 
-async function dynamoSave(doc: StudioDocument): Promise<StudioDocument> {
+async function dynamoSave(doc: StudioDocument, expectedRevision?: number): Promise<StudioDocument> {
   const { PutCommand } = await import('@aws-sdk/lib-dynamodb');
   const db = await dynamoClient();
   await db.send(
     new PutCommand({
       TableName: table(),
+      ...(typeof expectedRevision === 'number'
+        ? {
+            ConditionExpression: 'revision = :expectedRevision',
+            ExpressionAttributeValues: { ':expectedRevision': expectedRevision },
+          }
+        : {}),
       Item: {
         pk: `USER#${doc.userId}`,
         sk: `DOC#${doc.id}`,
@@ -253,6 +269,7 @@ async function dynamoSave(doc: StudioDocument): Promise<StudioDocument> {
         preview: doc.preview || previewFromHtml(doc.html),
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
+        revision: doc.revision,
         chat: doc.chat || [],
         versions: doc.versions || [],
         gsi1pk: 'DOC',
@@ -302,6 +319,7 @@ export async function createDocument(
     preview: previewFromHtml(opts?.html || ''),
     createdAt: now,
     updatedAt: now,
+    revision: 1,
     chat: [],
     versions: [],
   };
@@ -322,9 +340,13 @@ export async function saveDocument(
     chat?: ChatTurn[];
     versions?: DocumentVersion[];
   },
+  expectedRevision?: number,
 ): Promise<StudioDocument | null> {
   const existing = await getDocument(userId, id);
   if (!existing) return null;
+  if (typeof expectedRevision === 'number' && existing.revision !== expectedRevision) {
+    throw new DocumentConflictError(existing);
+  }
   const next: StudioDocument = {
     ...existing,
     title: patch.title ?? existing.title,
@@ -336,9 +358,20 @@ export async function saveDocument(
     chat: patch.chat ?? existing.chat,
     versions: patch.versions ?? existing.versions ?? [],
     updatedAt: Date.now(),
+    revision: (existing.revision || 1) + 1,
   };
   next.preview = previewFromHtml(next.html);
-  if (useDynamo()) return dynamoSave(next);
+  if (useDynamo()) {
+    try {
+      return await dynamoSave(next, existing.revision || 1);
+    } catch (error: any) {
+      if (error?.name === 'ConditionalCheckFailedException') {
+        const latest = await getDocument(userId, id);
+        if (latest) throw new DocumentConflictError(latest);
+      }
+      throw error;
+    }
+  }
   return localSave(next);
 }
 

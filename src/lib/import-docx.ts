@@ -5,6 +5,7 @@
  */
 
 import mammoth from 'mammoth';
+import JSZip from 'jszip';
 import { sanitizeDocumentHtml } from '@/lib/math-html';
 
 export type DocxImportResult = {
@@ -50,6 +51,83 @@ const STYLE_MAP = [
   "r[style-name='Code'] => code",
   "table => table.studio-table:fresh",
 ];
+
+// Mammoth already keeps semantic emphasis. Its document model also exposes
+// direct point sizes, but does not emit them unless we map them explicitly.
+// This covers normal Word authoring sizes without depending on a Word layout
+// engine in the browser.
+const FONT_SIZE_STYLE_MAP = Array.from({ length: 43 }, (_, index) => index + 6)
+  .map((size) => `r[style-name='Docs Studio ${size}pt'] => span[style='font-size: ${size}pt']`);
+
+function xmlDecode(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Mammoth intentionally ignores OMML. Replacing each equation with its Word
+ * text runs before conversion is deliberately conservative: formulas remain
+ * editable and visible, even though advanced notation is not yet LaTeX.
+ */
+function ommlToEditableText(omml: string): string {
+  const parts = Array.from(omml.matchAll(/<m:t\b[^>]*>([\s\S]*?)<\/m:t>/gi))
+    .map((match) => xmlDecode(match[1] || ''));
+  return parts.join('').replace(/\s+/g, ' ').trim() || 'Ecuación de Word';
+}
+
+async function prepareDocxBuffer(buffer: ArrayBuffer): Promise<{ buffer: ArrayBuffer; equationCount: number }> {
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(buffer);
+  } catch {
+    throw new Error(
+      'Este archivo .doc usa el formato binario antiguo. Ábrelo en Word y guárdalo como .docx para importarlo; los .docx aunque terminen en .doc sí se detectan automáticamente.',
+    );
+  }
+
+  const documentPart = zip.file('word/document.xml');
+  const contentTypes = zip.file('[Content_Types].xml');
+  if (!documentPart || !contentTypes) {
+    throw new Error('El archivo no contiene un documento Word OOXML válido.');
+  }
+
+  let xml = await documentPart.async('string');
+  const equations = Array.from(xml.matchAll(/<m:oMath\b[\s\S]*?<\/m:oMath>/gi));
+  if (equations.length) {
+    xml = xml.replace(/<m:oMath\b[\s\S]*?<\/m:oMath>/gi, (omml) => {
+      const text = xmlEscape(ommlToEditableText(omml));
+      return `<w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">${text}</w:t></w:r>`;
+    });
+    zip.file('word/document.xml', xml);
+  }
+
+  return {
+    buffer: await zip.generateAsync({ type: 'arraybuffer' }),
+    equationCount: equations.length,
+  };
+}
+
+function preserveDirectFontSizes(element: any): any {
+  const children = Array.isArray(element?.children)
+    ? element.children.map(preserveDirectFontSizes)
+    : element?.children;
+  const next = children ? { ...element, children } : element;
+  if (next?.type !== 'run' || !next.fontSize || next.styleName) return next;
+  return { ...next, styleName: `Docs Studio ${Math.round(next.fontSize)}pt` };
+}
 
 function humanizeWarning(msg: string): string | null {
   if (!msg) return null;
@@ -147,7 +225,7 @@ function extractTitleHint(html: string, fileName: string): string {
     const t = (h?.textContent || '').trim();
     if (t && t.length < 100) return t;
   }
-  return fileName.replace(/\.docx$/i, '').trim() || 'Documento importado';
+  return fileName.replace(/\.docx?$/i, '').trim() || 'Documento importado';
 }
 
 /**
@@ -157,11 +235,13 @@ export async function importDocxToHtml(
   buffer: ArrayBuffer,
   fileName = 'documento.docx',
 ): Promise<DocxImportResult> {
+  const prepared = await prepareDocxBuffer(buffer);
   const result = await mammoth.convertToHtml(
-    { arrayBuffer: buffer },
+    { arrayBuffer: prepared.buffer },
     {
-      styleMap: STYLE_MAP,
+      styleMap: [...STYLE_MAP, ...FONT_SIZE_STYLE_MAP],
       includeDefaultStyleMap: true,
+      transformDocument: preserveDirectFontSizes,
       convertImage: mammoth.images.imgElement((image) =>
         image.read('base64').then((base64) => ({
           src: `data:${image.contentType};base64,${base64}`,
@@ -184,11 +264,16 @@ export async function importDocxToHtml(
   const warnings = Array.from(
     new Set(rawWarnings.map(humanizeWarning).filter(Boolean) as string[]),
   );
+  if (prepared.equationCount) {
+    warnings.unshift(
+      `${prepared.equationCount} fórmula(s) de Word se importaron como texto editable; revisa la notación matemática compleja.`,
+    );
+  }
 
   const titleHint = extractTitleHint(html, fileName);
   const userSummary =
     warnings.length === 0
-      ? `Importado «${titleHint}» con formato (estilos, tablas, imágenes).`
+      ? `Importado «${titleHint}» con formato editable (estilos, listas, tablas e imágenes).`
       : `Importado «${titleHint}» con ${warnings.length} aviso(s): ${warnings.slice(0, 2).join(' · ')}`;
 
   return { html, titleHint, warnings, userSummary };

@@ -27,6 +27,8 @@ type Props = {
   showAiPencil?: boolean;
   /** e.g. "Ctrl+E" shown under the pencil */
   aiShortcutLabel?: string;
+  onBeforeFormat?: () => void;
+  onFormatChange?: () => void;
 };
 
 const COLORS = [
@@ -96,6 +98,8 @@ export default function SelectionFormatBar({
   onEditWithAi,
   showAiPencil = true,
   aiShortcutLabel = 'Ctrl+E',
+  onBeforeFormat,
+  onFormatChange,
 }: Props) {
   const [mounted, setMounted] = useState(false);
 
@@ -108,6 +112,16 @@ export default function SelectionFormatBar({
 
   const btn =
     'flex h-8 w-8 items-center justify-center rounded-md text-neutral-600 transition hover:bg-neutral-100 hover:text-neutral-900';
+  const applyCommand = (command: string, value?: string) => {
+    onBeforeFormat?.();
+    cmd(command, value);
+    onFormatChange?.();
+  };
+  const applySize = (size: number) => {
+    onBeforeFormat?.();
+    applyFontSizePx(size);
+    onFormatChange?.();
+  };
 
   return (
     <div
@@ -122,13 +136,13 @@ export default function SelectionFormatBar({
         e.preventDefault();
       }}
     >
-      <button type="button" className={btn} title="Negrita" onClick={() => cmd('bold')}>
+      <button type="button" className={btn} title="Negrita" onClick={() => applyCommand('bold')}>
         <Bold className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
-      <button type="button" className={btn} title="Cursiva" onClick={() => cmd('italic')}>
+      <button type="button" className={btn} title="Cursiva" onClick={() => applyCommand('italic')}>
         <Italic className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
-      <button type="button" className={btn} title="Subrayado" onClick={() => cmd('underline')}>
+      <button type="button" className={btn} title="Subrayado" onClick={() => applyCommand('underline')}>
         <Underline className="h-3.5 w-3.5" strokeWidth={1.75} />
       </button>
 
@@ -144,7 +158,7 @@ export default function SelectionFormatBar({
           {COLORS.map((c) => (
             <DropdownMenuItem
               key={c.value}
-              onClick={() => cmd('foreColor', c.value)}
+              onClick={() => applyCommand('foreColor', c.value)}
               className="gap-2 text-[12px]"
             >
               <span className="h-3 w-3 rounded-full border border-neutral-200" style={{ background: c.value }} />
@@ -164,7 +178,7 @@ export default function SelectionFormatBar({
           {HIGHLIGHTS.map((h) => (
             <DropdownMenuItem
               key={h.value}
-              onClick={() => cmd('hiliteColor', h.value)}
+              onClick={() => applyCommand('hiliteColor', h.value)}
               className="gap-2 text-[12px]"
             >
               <span
@@ -185,7 +199,7 @@ export default function SelectionFormatBar({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="center" className="max-h-64 overflow-y-auto">
           {FONT_SIZES.map((px) => (
-            <DropdownMenuItem key={px} onClick={() => applyFontSizePx(px)} className="text-[12px]">
+            <DropdownMenuItem key={px} onClick={() => applySize(px)} className="text-[12px]">
               {px} pt
             </DropdownMenuItem>
           ))}

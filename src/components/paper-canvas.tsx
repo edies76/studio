@@ -225,6 +225,8 @@ export type PaperCanvasHandle = {
   restoreSelection: () => boolean;
   getBodies: () => HTMLElement[];
   insertImage: (file: File) => Promise<boolean>;
+  /** Commits a toolbar/selection command that mutates contentEditable DOM. */
+  commitExternalMutation: () => void;
 };
 
 type Props = {
@@ -431,6 +433,14 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         return true;
       },
       getBodies: () => liveBodies(),
+      commitExternalMutation: () => {
+        const bodies = liveBodies();
+        const selected = window.getSelection()?.anchorNode ?? lastSelection.current?.startContainer ?? null;
+        const body = bodyContaining(selected, bodies) || bodies[activePage] || bodies[0];
+        const index = Math.max(0, bodies.indexOf(body));
+        scheduleRebalance(index);
+        requestAnimationFrame(() => onInput());
+      },
       insertImage: async (file: File) => {
         if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) return false;
         const bodies = liveBodies();

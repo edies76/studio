@@ -67,7 +67,7 @@ export function htmlToBlockHtmls(html: string): string[] {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
-    if (tag === 'div' && !el.className) {
+    if (tag === 'div' && !el.className && !el.getAttribute('style') && el.attributes.length === 0) {
       // flatten simple wrappers
       if (el.children.length) {
         Array.from(el.children).forEach((c) => blocks.push((c as HTMLElement).outerHTML));
@@ -75,6 +75,24 @@ export function htmlToBlockHtmls(html: string): string[] {
         blocks.push(`<p>${el.innerHTML}</p>`);
       }
       return;
+    }
+    if (tag === 'ol' || tag === 'ul') {
+      const items = Array.from(el.children).filter((child) => child.tagName.toLowerCase() === 'li') as HTMLElement[];
+      // A long list used to be one indivisible block. Once it exceeded a
+      // sheet, the lower items were clipped by the page's overflow:hidden.
+      // Keep each item as a valid one-item list so pagination can move it to
+      // the next sheet while preserving markers, nesting and ordered starts.
+      if (items.length > 1) {
+        const attributes = Array.from(el.attributes)
+          .filter((attribute) => attribute.name.toLowerCase() !== 'start')
+          .map((attribute) => ` ${attribute.name}="${attribute.value.replace(/"/g, '&quot;')}"`)
+          .join('');
+        items.forEach((item, index) => {
+          const start = tag === 'ol' && index > 0 ? ` start="${index + 1}"` : '';
+          blocks.push(`<${tag}${attributes}${start}>${item.outerHTML}</${tag}>`);
+        });
+        return;
+      }
     }
     blocks.push(el.outerHTML);
   });

@@ -3,6 +3,7 @@ import { requireUserId } from '@/lib/auth';
 import {
   appendChat,
   deleteDocument,
+  DocumentConflictError,
   getDocument,
   saveDocument,
   type ChatTurn,
@@ -38,17 +39,29 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
       title: body.title,
       html: body.html,
       chat: body.chat as ChatTurn[] | undefined,
-    });
+    }, typeof body.revision === 'number' ? body.revision : undefined);
     if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return NextResponse.json({
       doc: {
         id: doc.id,
         title: doc.title,
         updatedAt: doc.updatedAt,
+        revision: doc.revision,
         preview: doc.preview,
       },
     });
   } catch (e: any) {
+    if (e instanceof DocumentConflictError || e?.code === 'DOCUMENT_CONFLICT') {
+      return NextResponse.json({
+        error: 'conflict',
+        latest: {
+          title: e.latest.title,
+          html: e.latest.html,
+          updatedAt: e.latest.updatedAt,
+          revision: e.latest.revision,
+        },
+      }, { status: 409 });
+    }
     if (e?.message === 'UNAUTHORIZED') {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }

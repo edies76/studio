@@ -93,11 +93,13 @@ export default function DocsStudioClient({
   const [documentContent, setDocumentContent] = useState('');
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [saveConflict, setSaveConflict] = useState(false);
   const [isClient, setIsClient] = useState(false);
   const serverLoaded = useRef(false);
   const lastSavedHtml = useRef('');
   const lastSavedTitle = useRef('');
   const lastSavedChatLen = useRef(0);
+  const documentRevision = useRef(1);
   const [isBusy, setIsBusy] = useState(false);
   const [paperSize, setPaperSize] = useState<PaperSize>('letter');
   const [fontFamily, setFontFamily] = useState(DEFAULT_FONT);
@@ -533,6 +535,7 @@ export default function DocsStudioClient({
           setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
         }
         setDocumentContent(data.doc.html || EMPTY_DOCUMENT_HTML);
+        documentRevision.current = Number(data.doc.revision || 1);
         lastSavedHtml.current = data.doc.html || '';
         lastSavedTitle.current = data.doc.title || '';
         applyHtml(data.doc.html || EMPTY_DOCUMENT_HTML, false);
@@ -578,6 +581,7 @@ export default function DocsStudioClient({
         const data = await res.json();
         if (data.doc?.id) {
           setDocId(data.doc.id);
+          documentRevision.current = Number(data.doc.revision || 1);
           lastSavedHtml.current = data.doc.html || documentContent || '';
           lastSavedTitle.current = data.doc.title || documentTitle || '';
           // Canonical document URL: /studio/doc/{id}
@@ -595,7 +599,7 @@ export default function DocsStudioClient({
 
   // Server autosave every ~4s when dirty
   useEffect(() => {
-    if (!docId || !draftReady) return;
+    if (!docId || !draftReady || saveConflict) return;
     const tick = async () => {
       const html = documentContent || readEditorHtml();
       const title = documentTitle || 'Untitled';
@@ -605,9 +609,21 @@ export default function DocsStudioClient({
         const res = await fetch(`/api/docs/${docId}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ html, title }),
+          body: JSON.stringify({ html, title, revision: documentRevision.current }),
         });
+        if (res.status === 409) {
+          setSaveConflict(true);
+          setSaveState('error');
+          toast({
+            variant: 'destructive',
+            title: 'Hay una versión más nueva',
+            description: 'Tu copia local se conservó. Recargá antes de volver a guardar para no sobrescribir cambios externos.',
+          });
+          return;
+        }
         if (!res.ok) throw new Error('save failed');
+        const data = await res.json().catch(() => null);
+        documentRevision.current = Number(data?.doc?.revision || documentRevision.current + 1);
         lastSavedHtml.current = html;
         lastSavedTitle.current = title;
         setSaveState('saved');
@@ -617,7 +633,7 @@ export default function DocsStudioClient({
     };
     const id = window.setInterval(() => void tick(), 4000);
     return () => clearInterval(id);
-  }, [docId, draftReady, documentContent, documentTitle, readEditorHtml]);
+  }, [docId, draftReady, documentContent, documentTitle, readEditorHtml, saveConflict, toast]);
 
   // Persist new chat turns to server
   useEffect(() => {
@@ -1743,11 +1759,11 @@ export default function DocsStudioClient({
   const handleImportWord = async (file: File) => {
     if (!file) return;
     const name = file.name || '';
-    if (!/\.docx$/i.test(name) && file.type !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+    if (!/\.docx?$/i.test(name) && !file.type.includes('word')) {
       toast({
         variant: 'destructive',
         title: 'Formato no soportado',
-        description: 'Importá un archivo .docx (Word).',
+        description: 'Importá un archivo Word .docx o .doc.',
       });
       return;
     }
@@ -1758,7 +1774,7 @@ export default function DocsStudioClient({
       setDocumentTitle(titleHint.slice(0, 80));
       applyHtml(html, true, 'cascade');
       toast({ title: 'Word importado al lienzo', description: userSummary.slice(0, 240) });
-      pushEvent({ type: 'local_edit', title: 'Import .docx', summary: userSummary.slice(0, 160) }, true);
+      pushEvent({ type: 'local_edit', title: 'Import Word', summary: userSummary.slice(0, 160) }, true);
       setMessages((ms) => [
         ...ms,
         {
@@ -1775,7 +1791,7 @@ export default function DocsStudioClient({
       toast({
         variant: 'destructive',
         title: 'No se pudo importar',
-        description: e?.message || 'Error leyendo el .docx',
+        description: e?.message || 'Error leyendo el documento Word',
       });
     } finally {
       setIsBusy(false);
@@ -1969,7 +1985,7 @@ export default function DocsStudioClient({
             <input
               ref={importInputRef}
               type="file"
-              accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
@@ -2017,7 +2033,9 @@ export default function DocsStudioClient({
                 <span className="pointer-events-none hidden rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 font-mono text-[10px] text-neutral-400 sm:inline">
                   {saveState === 'saving'
                     ? 'Guardando…'
-                    : saveState === 'error'
+                    : saveConflict
+                      ? 'Cambios externos · recargá'
+                      : saveState === 'error'
                       ? 'Error al guardar'
                       : saveState === 'saved'
                         ? 'Guardado'
@@ -2043,6 +2061,10 @@ export default function DocsStudioClient({
                   onInsertImage={handleInsertImage}
                   onImportWord={() => importInputRef.current?.click()}
                   onOpenSettings={() => setSettingsOpen(true)}
+                  onBeforeFormat={() => {
+                    canvasRef.current?.restoreSelection();
+                  }}
+                  onFormatChange={() => canvasRef.current?.commitExternalMutation()}
                 />
               </div>
             </div>
@@ -2064,6 +2086,10 @@ export default function DocsStudioClient({
                 showAiPencil={prefs.showSelectionAi && prefs.agentVisibility !== 'hidden'}
                 onEditWithAi={openAgentForSelection}
                 aiShortcutLabel={`Ctrl+${(prefs.shortcutEditSelection || 'e').toUpperCase()}`}
+                onBeforeFormat={() => {
+                  canvasRef.current?.restoreSelection();
+                }}
+                onFormatChange={() => canvasRef.current?.commitExternalMutation()}
               />
             )}
 

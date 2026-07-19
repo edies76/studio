@@ -34,6 +34,7 @@ import {
   Settings2,
   FileUp,
   ImagePlus,
+  Palette,
 } from 'lucide-react';
 function ensureEditMode() {
   try {
@@ -72,7 +73,20 @@ type Props = {
   onInsertImage?: () => void;
   onOpenSettings?: () => void;
   onImportWord?: () => void;
+  /** Restores the canvas range after a toolbar click steals focus. */
+  onBeforeFormat?: () => void;
+  /** Persists the DOM command and rebalances pages after formatting. */
+  onFormatChange?: () => void;
 };
+
+const TEXT_COLORS = [
+  { name: 'Negro', value: '#171717' },
+  { name: 'Gris', value: '#525252' },
+  { name: 'Rojo', value: '#dc2626' },
+  { name: 'Azul', value: '#2563eb' },
+  { name: 'Verde', value: '#059669' },
+  { name: 'Marrón', value: '#78350f' },
+];
 
 /** Clean white Word-style toolbar (restored look) */
 export default function DocumentEditorToolbar({
@@ -90,15 +104,25 @@ export default function DocumentEditorToolbar({
   onInsertImage,
   onOpenSettings,
   onImportWord,
+  onBeforeFormat,
+  onFormatChange,
 }: Props) {
   const [insertOpen, setInsertOpen] = useState(false);
   const [tableRows, setTableRows] = useState(3);
   const [tableCols, setTableCols] = useState(3);
 
   const applyFont = (value: string, name: string) => {
+    onBeforeFormat?.();
     onFontFamily(value);
     ensureEditMode();
     document.execCommand('fontName', false, name);
+    onFormatChange?.();
+  };
+
+  const applyCommand = (command: string, value?: string) => {
+    onBeforeFormat?.();
+    cmd(command, value);
+    onFormatChange?.();
   };
 
   const btn =
@@ -122,11 +146,11 @@ export default function DocumentEditorToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'p')}>Paragraph</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'h1')}>Heading 1</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'h2')}>Heading 2</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'h3')}>Heading 3</DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'blockquote')}>Quote</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'p')}>Paragraph</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'h1')}>Heading 1</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'h2')}>Heading 2</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'h3')}>Heading 3</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'blockquote')}>Quote</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -148,18 +172,33 @@ export default function DocumentEditorToolbar({
 
       <div className="mx-1 h-5 w-px bg-neutral-200" />
 
-      <Button variant="ghost" size="icon" className={btn} onClick={() => cmd('bold')} title="Bold">
+      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('bold')} title="Bold">
         <Bold className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={() => cmd('italic')} title="Italic">
+      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('italic')} title="Italic">
         <Italic className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={() => cmd('underline')} title="Underline">
+      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('underline')} title="Underline">
         <Underline className="h-4 w-4" strokeWidth={1.5} />
       </Button>
       <Button variant="ghost" size="icon" className={btn} onClick={onRequestLink} title="Link">
         <Link2 className="h-4 w-4" strokeWidth={1.5} />
       </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className={btn} title="Color de texto">
+            <Palette className="h-4 w-4" strokeWidth={1.5} />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="center" className="min-w-[9rem]">
+          {TEXT_COLORS.map((color) => (
+            <DropdownMenuItem key={color.value} onClick={() => applyCommand('foreColor', color.value)} className="gap-2">
+              <span className="h-3 w-3 rounded-full border border-neutral-200" style={{ background: color.value }} />
+              {color.name}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
       {(onInsertMath || onInsertTable || onInsertImage || onImportWord) && (
         <Button
           variant="ghost"
@@ -180,39 +219,39 @@ export default function DocumentEditorToolbar({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-52">
-          <DropdownMenuItem onClick={() => cmd('strikeThrough')}>
+          <DropdownMenuItem onClick={() => applyCommand('strikeThrough')}>
             <Strikethrough className="mr-2 h-4 w-4" /> Strikethrough
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('formatBlock', 'pre')}>
+          <DropdownMenuItem onClick={() => applyCommand('formatBlock', 'pre')}>
             <Code className="mr-2 h-4 w-4" /> Code
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('hiliteColor', '#fef08a')}>
+          <DropdownMenuItem onClick={() => applyCommand('hiliteColor', '#fef08a')}>
             <Highlighter className="mr-2 h-4 w-4" /> Highlight
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('subscript')}>
+          <DropdownMenuItem onClick={() => applyCommand('subscript')}>
             <Subscript className="mr-2 h-4 w-4" /> Subscript
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('superscript')}>
+          <DropdownMenuItem onClick={() => applyCommand('superscript')}>
             <Superscript className="mr-2 h-4 w-4" /> Superscript
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => cmd('justifyLeft')}>
+          <DropdownMenuItem onClick={() => applyCommand('justifyLeft')}>
             <AlignLeft className="mr-2 h-4 w-4" /> Align left
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('justifyCenter')}>
+          <DropdownMenuItem onClick={() => applyCommand('justifyCenter')}>
             <AlignCenter className="mr-2 h-4 w-4" /> Center
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('justifyRight')}>
+          <DropdownMenuItem onClick={() => applyCommand('justifyRight')}>
             <AlignRight className="mr-2 h-4 w-4" /> Right
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('justifyFull')}>
+          <DropdownMenuItem onClick={() => applyCommand('justifyFull')}>
             <AlignJustify className="mr-2 h-4 w-4" /> Justify
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => cmd('insertUnorderedList')}>
+          <DropdownMenuItem onClick={() => applyCommand('insertUnorderedList')}>
             <List className="mr-2 h-4 w-4" /> Bullets
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => cmd('insertOrderedList')}>
+          <DropdownMenuItem onClick={() => applyCommand('insertOrderedList')}>
             <ListOrdered className="mr-2 h-4 w-4" /> Numbers
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -280,7 +319,7 @@ export default function DocumentEditorToolbar({
               {onImportWord && (
                 <button type="button" onClick={() => { setInsertOpen(false); onImportWord(); }} className="flex min-h-28 items-start gap-3 rounded-lg border border-neutral-200 p-4 text-left transition-colors hover:border-neutral-400 hover:bg-neutral-50">
                   <FileUp className="mt-0.5 h-5 w-5 text-neutral-700" strokeWidth={1.5} />
-                  <span><strong className="block text-sm">Importar Word</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">.docx con texto, tablas y fórmulas detectables.</small></span>
+                  <span><strong className="block text-sm">Importar Word</strong><small className="mt-1 block text-xs leading-4 text-neutral-500">.docx y archivos OOXML con extensión .doc.</small></span>
                 </button>
               )}
               {onInsertTable && (
