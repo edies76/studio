@@ -1,0 +1,29 @@
+.scope :global(.brief-room) {
+  --workspace-brown: #20201f;
+  --workspace-ink: #20201f;
+  --workspace-muted: #737371;
+  --workspace-line: #e6e6e3;
+  background: #f7f6f3;
+  color: #20201f;
+}
+
+.scope :global(.brief-header) {
+  background: rgba(247, 246, 243, .94);
+  border-color: #e6e6e3;
+}
+
+.scope :global(.brief-brand span span),
+.scope :global(.brief-kicker),
+.scope :global(.brief-label),
+.scope :global(.brief-editor-card__top),
+.scope :global(.brief-summary__source span) { color: #5f5f5b; }
+
+.scope :global(.brief-kicker span) { background: #20201f; }
+.scope :global(.brief-template:hover),
+.scope :global(.brief-template.is-selected) { background: #f0f0ed; }
+.scope :global(.brief-template.is-selected) { box-shadow: inset 3px 0 0 #20201f; }
+.scope :global(.brief-summary__sticky) { background: #f0f0ed; border-color: #20201f; }
+.scope :global(.brief-create-button) { background: #20201f; border-color: #20201f; border-radius: 6px; }
+.scope :global(.brief-create-button:hover) { background: #3b3b38; border-color: #3b3b38; }
+.scope :global(.brief-upload-zone:hover strong) { color: #20201f; }
+.scope :global(.brief-footer) { background: #20201f; }

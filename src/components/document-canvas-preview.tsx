@@ -1,42 +1,8 @@
-'use client';
-
-import { useState, type PointerEvent } from 'react';
-import { ArrowRight, Check, MousePointer2 } from 'lucide-react';
-
-type PointerPosition = {
-  x: number;
-  y: number;
-  active: boolean;
-};
-
-const clamp = (value: number) => Math.max(0, Math.min(100, value));
+import { ArrowRight, Check } from 'lucide-react';
 
 export default function DocumentCanvasPreview() {
-  const [pointer, setPointer] = useState<PointerPosition>({ x: 50, y: 50, active: false });
-
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    setPointer({
-      x: clamp(((event.clientX - rect.left) / rect.width) * 100),
-      y: clamp(((event.clientY - rect.top) / rect.height) * 100),
-      active: true,
-    });
-  };
-
   return (
-    <div
-      className="document-preview"
-      aria-label="Interactive preview of the Docs Studio workflow"
-      onPointerMove={handlePointerMove}
-      onPointerLeave={() => setPointer((current) => ({ ...current, active: false }))}
-    >
-      <div
-        className="document-preview__spotlight"
-        aria-hidden="true"
-        style={{ left: `${pointer.x}%`, top: `${pointer.y}%`, opacity: pointer.active ? 1 : 0.45 }}
-      />
+    <div className="document-preview" aria-label="Preview of the Docs Studio workflow">
 
       <div className="document-preview__chrome">
         <div className="document-preview__chrome-title">
@@ -88,13 +54,6 @@ export default function DocumentCanvasPreview() {
         <span><i className="document-preview__legend document-preview__legend--voice" /> your voice</span>
       </div>
 
-      <div
-        className="document-preview__cursor"
-        aria-hidden="true"
-        style={{ left: `${pointer.x}%`, top: `${pointer.y}%`, opacity: pointer.active ? 1 : 0 }}
-      >
-        <MousePointer2 size={16} strokeWidth={1.7} />
-      </div>
     </div>
   );
 }

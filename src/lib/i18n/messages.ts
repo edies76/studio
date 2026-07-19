@@ -9,13 +9,15 @@ export const messages = {
     'nav.canvas': 'Canvas',
     'nav.control': 'Control',
     'nav.mcp': 'MCP',
+    'nav.usecases': 'Use cases',
+    'nav.origin': 'Why Docs Studio',
     'nav.open': 'Open workspace',
     'nav.save': 'Save progress',
     'hero.eyebrow': 'From brief to document',
-    'hero.title1': 'Work does not end in chat.',
-    'hero.title2': 'It ends in the file.',
+    'hero.title1': 'A brief is not a document.',
+    'hero.title2': 'Docs Studio turns it into one you can review.',
     'hero.lede':
-      'An academic workspace: bring the assignment brief, work on a paginated canvas, and let the copilot propose. You accept or reject. Export when the file is ready to submit.',
+      'Generate reports, proposals, specifications, and technical documents from a brief, rubric, or template. Keep the rules close, review the draft, and export when it is ready.',
     'hero.positioning':
       'Docs Studio is not a Word replacement. It is the working layer between an imperfect brief and a reviewable document, with context, proposals, and document objects an agent can control.',
     'hero.fact1k': 'Context',
@@ -37,7 +39,7 @@ export const messages = {
     'cap.2.t': 'The canvas keeps the work',
     'cap.2.b':
       'A paginated Letter/Legal canvas holds text, tables, equations, images, margins, and zoom.',
-    'cap.3.t': 'AI proposes changes',
+    'cap.3.t': 'The agent proposes changes',
     'cap.3.b':
       'The agent can read blocks and prepare specific edits. You decide what enters the document.',
     'cap.4.t': 'The file ships complete',
@@ -63,6 +65,11 @@ export const messages = {
     'agent.p':
       'An external agent can read, search, validate, draft, propose edits, insert document primitives, and export. The remote endpoint uses Bearer auth and isolates each workspace.',
     'agent.link': 'Read the MCP surface',
+    'usecases.rule': 'Where the focus pays off',
+    'usecases.h2': 'More focused than a general editor.',
+    'usecases.p':
+      'Word and Google Docs are excellent open-ended editors. Docs Studio is for the moment before delivery: when a document has to follow a brief, a rubric, a template, or a set of requirements.',
+    'usecases.link': 'See concrete use cases',
     'final.label': 'No perfect brief required',
     'final.h2': 'Context in. Document out.',
     'final.p':
@@ -100,13 +107,15 @@ export const messages = {
     'nav.canvas': 'Lienzo',
     'nav.control': 'Control',
     'nav.mcp': 'MCP',
+    'nav.usecases': 'Casos de uso',
+    'nav.origin': 'Por qué Docs Studio',
     'nav.open': 'Abrir workspace',
     'nav.save': 'Guardar progreso',
     'hero.eyebrow': 'Del brief al documento',
-    'hero.title1': 'El trabajo no termina en el chat.',
-    'hero.title2': 'Termina en el archivo.',
+    'hero.title1': 'Una guía no es un documento.',
+    'hero.title2': 'Docs Studio la convierte en uno revisable.',
     'hero.lede':
-      'Un workspace academico: trae la guia del taller, trabaja en un lienzo paginado y deja que el copiloto proponga. Tu aceptas o rechazas. Exporta cuando el archivo este listo para entregar.',
+      'Genera informes, propuestas, especificaciones y documentos tecnicos desde una guia, rubrica o plantilla. Mantén las reglas cerca, revisa el borrador y exporta cuando este listo.',
     'hero.positioning':
       'Docs Studio no busca reemplazar Word. Es la capa de trabajo entre una consigna imperfecta y un documento revisable, con contexto, propuestas y objetos que tambien puede controlar un agente.',
     'hero.fact1k': 'Contexto',
@@ -128,7 +137,7 @@ export const messages = {
     'cap.2.t': 'El lienzo conserva el trabajo',
     'cap.2.b':
       'Un canvas paginado Letter/Legal reune texto, tablas, ecuaciones, imagenes, margenes y zoom.',
-    'cap.3.t': 'La IA propone cambios',
+    'cap.3.t': 'El agente propone cambios',
     'cap.3.b':
       'El agente puede leer bloques y preparar ediciones especificas. Tu decides que entra al documento.',
     'cap.4.t': 'El archivo sale completo',
@@ -154,6 +163,11 @@ export const messages = {
     'agent.p':
       'Un agente externo puede leer, buscar, validar, redactar, proponer cambios, insertar primitivas del documento y exportar. El endpoint remoto usa autenticacion Bearer y separa cada workspace.',
     'agent.link': 'Leer la superficie MCP',
+    'usecases.rule': 'Donde el enfoque importa',
+    'usecases.h2': 'Más enfocado que un editor generalista.',
+    'usecases.p':
+      'Word y Google Docs son excelentes para editar y colaborar. Docs Studio está pensado para el momento anterior a la entrega: cuando un documento debe seguir una guía, una rúbrica, una plantilla o requisitos concretos.',
+    'usecases.link': 'Ver casos concretos',
     'final.label': 'Sin brief perfecto',
     'final.h2': 'Contexto adentro. Documento afuera.',
     'final.p':

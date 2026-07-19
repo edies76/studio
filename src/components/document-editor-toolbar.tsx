@@ -57,14 +57,6 @@ const FONTS = [
   { name: 'Courier New', value: 'Courier New, monospace' },
 ];
 
-const SIZES = [
-  { label: '10', value: '2' },
-  { label: '12', value: '3' },
-  { label: '14', value: '4' },
-  { label: '18', value: '5' },
-  { label: '24', value: '6' },
-];
-
 type Props = {
   onRequestLink: () => void;
   onUndo: () => void;
@@ -73,8 +65,6 @@ type Props = {
   canRedo: boolean;
   fontFamily: string;
   onFontFamily: (f: string) => void;
-  fontSize: string;
-  onFontSize: (s: string) => void;
   pageCount?: number;
   wordCount?: number;
   onInsertMath?: () => void;
@@ -93,8 +83,6 @@ export default function DocumentEditorToolbar({
   canRedo,
   fontFamily,
   onFontFamily,
-  fontSize,
-  onFontSize,
   pageCount,
   wordCount,
   onInsertMath,
@@ -111,12 +99,6 @@ export default function DocumentEditorToolbar({
     onFontFamily(value);
     ensureEditMode();
     document.execCommand('fontName', false, name);
-  };
-
-  const applySize = (cmdVal: string, css: string) => {
-    onFontSize(css);
-    ensureEditMode();
-    document.execCommand('fontSize', false, cmdVal);
   };
 
   const btn =
@@ -159,22 +141,6 @@ export default function DocumentEditorToolbar({
           {FONTS.map((font) => (
             <DropdownMenuItem key={font.name} onClick={() => applyFont(font.value, font.name)} style={{ fontFamily: font.value }}>
               {font.name}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-8 gap-1 text-neutral-600 hover:bg-neutral-100">
-            {fontSize.replace('px', '')}
-            <ChevronDown className="h-3 w-3" strokeWidth={1.5} />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent>
-          {SIZES.map((s) => (
-            <DropdownMenuItem key={s.label} onClick={() => applySize(s.value, `${s.label}px`)}>
-              {s.label}
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>

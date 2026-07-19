@@ -20,6 +20,12 @@ export type AssignmentTask = {
   required: boolean;
 };
 
+export type BriefReference = {
+  name: string;
+  mimeType?: string;
+  size?: number;
+};
+
 export type AssignmentBrief = {
   title: string;
   course?: string;
@@ -30,6 +36,7 @@ export type AssignmentBrief = {
   learningOutcome?: string;
   rubric: RubricCriterion[];
   rawText: string;
+  references?: BriefReference[];
   systems?: string[];
   language?: 'es' | 'en';
 };

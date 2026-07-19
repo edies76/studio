@@ -1,11 +1,13 @@
 import Link from 'next/link';
+import AnimatedBrand from '@/components/animated-brand';
 import BrandMark from '@/components/brand-mark';
+import LocaleSwitch from '@/components/locale-switch';
 
 const productFacts = [
   ['01', 'Context first', 'Reads a professor’s brief, tasks, constraints and rubric before the draft takes shape.'],
   ['02', 'Paper is the source', 'A paginated Letter or Legal canvas keeps the document visible while the copilot works beside it.'],
   ['03', 'Reviewable AI', 'Targeted changes arrive as proposals. Accept or reject them before they become part of the file.'],
-  ['04', 'Ready to leave', 'MathJax equations, editable tables, images and server-side PDF or DOCX export stay in the same document loop.'],
+  ['04', 'Ready to leave', 'MathJax equations, editable tables, images and PDF or DOCX export stay in the same document loop.'],
 ];
 
 const editorParts = [
@@ -24,16 +26,16 @@ export default function PreSummaryPage() {
   return (
     <div className="pre-summary-page">
       <header className="pre-summary-nav">
-        <Link href="/pre-summary" className="pre-summary-brand" aria-label="Docs Studio home">
-          <BrandMark size={30} />
-          <span>Docs Studio</span>
+        <div className="pre-summary-brand-wrap">
+          <AnimatedBrand className="pre-summary-brand" scrollRoot=".pre-summary-page" size={30} />
           <small>document workspace</small>
-        </Link>
+        </div>
         <nav aria-label="Docs Studio sections">
           <a href="#inside">Inside</a>
           <a href="#control">Control</a>
           <a href="#agents">For agents</a>
-          <Link href="/studio" className="pre-summary-nav__cta">Open the workspace <span>↗</span></Link>
+          <LocaleSwitch />
+          <Link href="/home" className="pre-summary-nav__cta">Open the workspace <span>↗</span></Link>
         </nav>
       </header>
 
@@ -46,7 +48,7 @@ export default function PreSummaryPage() {
               Docs Studio takes the brief seriously. It keeps the source material, a paginated document and an AI copilot in one working surface, so the result is something you can inspect and take with you — not just a chat transcript.
             </p>
             <div className="pre-summary-actions">
-              <Link href="/studio" className="pre-summary-button pre-summary-button--dark">Open Docs Studio <span>↗</span></Link>
+              <Link href="/home" className="pre-summary-button pre-summary-button--dark">Open Docs Studio <span>↗</span></Link>
               <Link href="/mcp" className="pre-summary-button">Connect an agent <span>↗</span></Link>
             </div>
             <p className="pre-summary-note">Brief parsing · paginated canvas · reviewable edits · PDF / DOCX</p>
@@ -119,7 +121,7 @@ export default function PreSummaryPage() {
           <p className="pre-summary-label">A DIFFERENT KIND OF AI EDITOR</p>
           <h2>The chat can suggest. The document makes it real.</h2>
           <p>Bring the work into focus, keep the decision visible and leave with a file that still looks like the one you meant to make.</p>
-          <Link href="/studio" className="pre-summary-button pre-summary-button--dark">Open the workspace <span>↗</span></Link>
+          <Link href="/home" className="pre-summary-button pre-summary-button--dark">Open the workspace <span>↗</span></Link>
         </section>
       </main>
 

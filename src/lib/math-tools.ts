@@ -174,6 +174,64 @@ export function replaceEquationAt(
   };
 }
 
+/**
+ * Change how an existing equation flows relative to the surrounding text
+ * (inline/block/behind), optionally moving it to a free left/top position
+ * when detached (behind). Does not touch the TeX itself.
+ */
+export function repositionMathAt(
+  html: string,
+  index: number,
+  wrap: 'inline' | 'block' | 'behind',
+  position?: { left?: number; top?: number },
+): { html: string; entry: MathEntry } | null {
+  const list = listEquations(html);
+  const entry = list[index];
+  if (!entry) return null;
+
+  const isDisplay = wrap !== 'inline';
+  const tag = isDisplay ? 'div' : 'span';
+  const className = isDisplay ? 'studio-math-block' : 'studio-math-inline';
+  const safeTex = (entry.tex || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const rawTex = (entry.tex || '').trim();
+  const body = isDisplay ? `\\[${rawTex}\\]` : `\\(${rawTex}\\)`;
+  const style =
+    wrap === 'behind'
+      ? `position:absolute;left:${Math.max(0, Number(position?.left) || 0)}px;top:${Math.max(0, Number(position?.top) || 0)}px;z-index:0;margin:0`
+      : '';
+  const replacement = `<${tag} class="${className}" data-tex="${safeTex}" data-display="${isDisplay ? '1' : '0'}" data-studio-wrap="${wrap}"${style ? ` style="${style}"` : ''}>${body}</${tag}>`;
+
+  const all = listEquations(html);
+  const target = entry.outerHtml;
+  let seen = 0;
+  for (let i = 0; i < index; i++) {
+    if (all[i].outerHtml === target) seen++;
+  }
+  let occ = 0;
+  let replaced = false;
+  const result = html.replace(
+    new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'),
+    (match) => {
+      if (occ === seen && !replaced) {
+        occ++;
+        replaced = true;
+        return replacement;
+      }
+      occ++;
+      return match;
+    },
+  );
+  if (!replaced) return null;
+  return {
+    html: result,
+    entry: { ...entry, display: isDisplay, outerHtml: replacement },
+  };
+}
+
 /** Protect: ensure all math is in data-tex hosts before free HTML rewrite */
 export function ensureMathHosts(html: string): string {
   let h = html || '';

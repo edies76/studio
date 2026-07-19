@@ -94,7 +94,7 @@ type ResizeSession = {
 };
 
 type DragSession = {
-  image: HTMLImageElement;
+  target: HTMLElement;
   startX: number;
   startY: number;
   startLeft: number;
@@ -153,6 +153,70 @@ function bodyContaining(node: Node | null, bodies: (HTMLElement | null)[]): HTML
   return null;
 }
 
+/** Math only supports the two modes that make sense for an equation: flow
+ *  with the text (inline), or take the entire line exclusively (block),
+ *  optionally freed from the flow entirely so it can be dragged (behind). */
+type MathWrapMode = 'inline' | 'block' | 'behind';
+
+function getMathWrapMode(host: HTMLElement): MathWrapMode {
+  const explicit = host.dataset.studioWrap as MathWrapMode | undefined;
+  if (explicit === 'behind') return 'behind';
+  if (explicit === 'inline') return 'inline';
+  if (explicit === 'block') return 'block';
+  return host.getAttribute('data-display') === '1' || host.classList.contains('studio-math-block')
+    ? 'block'
+    : 'inline';
+}
+
+function getMathScale(host: HTMLElement): number {
+  const value = Number(host.dataset.mathScale);
+  return Number.isFinite(value) && value > 0 ? value : 100;
+}
+
+function applyMathScale(host: HTMLElement, scale: number): void {
+  const next = Math.min(180, Math.max(60, Math.round(scale / 10) * 10));
+  host.dataset.mathScale = String(next);
+  host.style.fontSize = `${next}%`;
+}
+
+function applyMathWrapMode(host: HTMLElement, mode: MathWrapMode, editor?: HTMLElement | null): void {
+  const previousRect = host.getBoundingClientRect();
+  const editorRect = editor?.getBoundingClientRect();
+  host.dataset.studioWrap = mode;
+  host.setAttribute('data-display', mode === 'inline' ? '0' : '1');
+
+  if (mode === 'behind') {
+    host.classList.remove('studio-math-inline');
+    host.classList.add('studio-math-block');
+    host.style.position = 'absolute';
+    host.style.zIndex = '0';
+    host.style.margin = '0';
+    host.style.display = 'inline-block';
+    if (editorRect) {
+      const scale = editorRect.width ? editorRect.width / Math.max(editor?.offsetWidth || editorRect.width, 1) : 1;
+      host.style.left = `${Math.max(0, (previousRect.left - editorRect.left) / Math.max(scale, 0.01))}px`;
+      host.style.top = `${Math.max(0, (previousRect.top - editorRect.top) / Math.max(scale, 0.01))}px`;
+    }
+    return;
+  }
+
+  host.style.position = '';
+  host.style.left = '';
+  host.style.top = '';
+  host.style.zIndex = '';
+  host.style.display = '';
+  host.style.margin = '';
+
+  if (mode === 'block') {
+    // Exclusive full line — same idea as a "break" wrapped image.
+    host.classList.remove('studio-math-inline');
+    host.classList.add('studio-math-block');
+  } else {
+    host.classList.remove('studio-math-block');
+    host.classList.add('studio-math-inline');
+  }
+}
+
 export type PaperCanvasHandle = {
   getHtml: () => string;
   setHtml: (html: string, opts?: { reveal?: boolean }) => void;
@@ -171,6 +235,11 @@ type Props = {
   contentEditable: boolean;
   isLoading?: boolean;
   onInput: () => void;
+  /** Called right after a word boundary key (space/enter/tab/punctuation)
+   *  or backspace, BEFORE the DOM reflects it, so the caller can snapshot
+   *  the previous word as its own undo step instead of batching keystrokes
+   *  into one large debounced entry. */
+  onHistoryBoundary?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
   onMouseUp: (e: React.MouseEvent) => void;
@@ -196,6 +265,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     contentEditable,
     isLoading,
     onInput,
+    onHistoryBoundary,
     onUndo,
     onRedo,
     onMouseUp,
@@ -228,6 +298,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const pageNotify = useRef(1);
   const resizeSession = useRef<ResizeSession | null>(null);
   const dragSession = useRef<DragSession | null>(null);
+  /** Tracks the HTML we last wrote per page body, so the React→DOM sync
+   *  effect doesn't diff against MathJax-mutated (rendered) DOM and stomp
+   *  rendered formulas back to their raw source form. */
+  const lastWrittenHtml = useRef<string[]>([]);
 
   const [pages, setPages] = useState<string[]>(['<p><br></p>']);
   const [activePage, setActivePage] = useState(0);
@@ -266,6 +340,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     packed.forEach((pageHtml, i) => {
       const el = bodyRefs.current[i];
       if (el && el.innerHTML !== pageHtml) el.innerHTML = pageHtml;
+      lastWrittenHtml.current[i] = pageHtml;
     });
   }, []);
 
@@ -414,18 +489,25 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metrics, styleOpts.fontFamily, styleOpts.fontSize, paperSize, marginPreset]);
 
-  // Sync React page state → DOM when not mid-keystroke
+  // Sync React page state → DOM when not mid-keystroke.
+  // IMPORTANT: after MathJax typesets a page, the live DOM (<mjx-container>)
+  // no longer matches the raw source HTML kept in `pages` — comparing
+  // el.innerHTML to that raw HTML would always look "stale" and this effect
+  // would keep stomping the rendered math back to its raw <span data-tex>
+  // form forever. Track what we last WROTE per page instead of diffing
+  // against the (possibly MathJax-mutated) live DOM.
   useEffect(() => {
     pages.forEach((html, i) => {
       const el = bodyRefs.current[i];
       if (!el) return;
       if (!skipInput.current && document.activeElement === el) return;
-      if (el.innerHTML !== html) {
-        const wasSkip = skipInput.current;
-        skipInput.current = true;
-        el.innerHTML = html;
-        skipInput.current = wasSkip;
-      }
+      if (lastWrittenHtml.current[i] === html) return;
+      const wasSkip = skipInput.current;
+      skipInput.current = true;
+      el.innerHTML = html;
+      lastWrittenHtml.current[i] = html;
+      skipInput.current = wasSkip;
+      typesetEditor(el);
     });
   }, [pages]);
 
@@ -504,9 +586,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     }
     const rect = math.getBoundingClientRect();
     const scrollRect = scroll.getBoundingClientRect();
+    const toolbarWidth = Math.max(180, Math.min(360, rect.width + 180));
+    const centeredLeft = rect.left - scrollRect.left + scroll.scrollLeft + rect.width / 2 - toolbarWidth / 2;
     setMathTools({
       top: Math.max(8, rect.top - scrollRect.top + scroll.scrollTop - 44),
-      left: Math.max(8, rect.left - scrollRect.left + scroll.scrollLeft),
+      left: Math.max(8, Math.min(scroll.clientWidth - toolbarWidth - 8, centeredLeft)),
       width: rect.width,
     });
   }, [hasGhost, selectedMath, liveBodies]);
@@ -583,6 +667,34 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     requestAnimationFrame(() => updateImageTools());
     onInput();
   }, [liveBodies, selectedImage, activePage, scheduleRebalance, updateImageTools, onInput]);
+
+  const commitMathMutation = useCallback(() => {
+    const bodies = liveBodies();
+    const body = selectedMath ? bodyContaining(selectedMath, bodies) : null;
+    const idx = body ? bodies.indexOf(body) : activePage;
+    scheduleRebalance(Math.max(0, idx));
+    requestAnimationFrame(() => updateMathTools());
+    onInput();
+  }, [liveBodies, selectedMath, activePage, scheduleRebalance, updateMathTools, onInput]);
+
+  const changeMathWrap = useCallback(
+    (mode: MathWrapMode) => {
+      if (!selectedMath) return;
+      const body = bodyContaining(selectedMath, bodyRefs.current);
+      applyMathWrapMode(selectedMath, mode, body);
+      commitMathMutation();
+    },
+    [commitMathMutation, selectedMath],
+  );
+
+  const changeMathScale = useCallback(
+    (delta: number) => {
+      if (!selectedMath) return;
+      applyMathScale(selectedMath, getMathScale(selectedMath) + delta);
+      commitMathMutation();
+    },
+    [commitMathMutation, selectedMath],
+  );
 
   const updateImageWidth = useCallback(
     (nextWidth: number) => {
@@ -696,8 +808,18 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           cell.className = 'studio-td';
           cell.innerHTML = '<br>';
         }
-      } else if (action === 'remove-row' && rows.length > 2) {
-        rows[rows.length - 1].remove();
+      } else if (action === 'remove-row') {
+        // Always drop the last row and keep at least the header (or one
+        // row if there is no header) — never leave an empty <tbody> or a
+        // stray, unstyled row behind.
+        if (rows.length > 1) {
+          const last = rows[rows.length - 1];
+          last.remove();
+          // A <tbody> can become an empty, invisible wrapper once its last
+          // row is gone; drop it so the exported/serialized table has no
+          // leftover artifact.
+          if (body.rows.length === 0 && body.parentNode) body.remove();
+        }
       } else if (action === 'add-column') {
         rows.forEach((row, rowIndex) => {
           const cell = row.insertCell(-1);
@@ -777,6 +899,21 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       return;
     }
 
+    // Word-boundary keys close out the in-progress word as its own undo
+    // step BEFORE they take effect, so Ctrl+Z undoes one word/line/paste at
+    // a time (like Word/Docs) instead of an entire fast-typed sentence.
+    if (
+      !modifier &&
+      (event.key === ' ' ||
+        event.key === 'Enter' ||
+        event.key === 'Tab' ||
+        event.key === 'Backspace' ||
+        event.key === 'Delete' ||
+        /^[.,;:!?)\]"'’”]$/.test(event.key))
+    ) {
+      onHistoryBoundary?.();
+    }
+
     // Backspace on empty last page → remove page (Word-like)
     if (event.key === 'Backspace' && pageIdx > 0) {
       const body = bodyRefs.current[pageIdx];
@@ -812,23 +949,43 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     (pageIdx: number, event: React.PointerEvent<HTMLDivElement>) => {
       if (!contentEditable || hasGhost) return;
       const el = bodyRefs.current[pageIdx];
+      if (!el) return;
       const target = event.target as HTMLElement;
       const image = target.closest('img') as HTMLImageElement | null;
-      if (!el || !image || !el.contains(image) || getImageWrapMode(image) !== 'behind') return;
-
-      const editorRect = el.getBoundingClientRect();
-      const imageRect = image.getBoundingClientRect();
-      const scale = editorRect.width / Math.max(el.offsetWidth, 1);
-      dragSession.current = {
-        image,
-        startX: event.clientX,
-        startY: event.clientY,
-        startLeft: (imageRect.left - editorRect.left) / Math.max(scale, 0.01),
-        startTop: (imageRect.top - editorRect.top) / Math.max(scale, 0.01),
-      };
-      setSelectedImage(image);
-      event.preventDefault();
-      event.stopPropagation();
+      if (image && el.contains(image) && getImageWrapMode(image) === 'behind') {
+        const editorRect = el.getBoundingClientRect();
+        const imageRect = image.getBoundingClientRect();
+        const scale = editorRect.width / Math.max(el.offsetWidth, 1);
+        dragSession.current = {
+          target: image,
+          startX: event.clientX,
+          startY: event.clientY,
+          startLeft: (imageRect.left - editorRect.left) / Math.max(scale, 0.01),
+          startTop: (imageRect.top - editorRect.top) / Math.max(scale, 0.01),
+        };
+        setSelectedImage(image);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const mathHost =
+        (target.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null) ||
+        (target.closest('mjx-container')?.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null);
+      if (mathHost && el.contains(mathHost) && getMathWrapMode(mathHost) === 'behind') {
+        const editorRect = el.getBoundingClientRect();
+        const hostRect = mathHost.getBoundingClientRect();
+        const scale = editorRect.width / Math.max(el.offsetWidth, 1);
+        dragSession.current = {
+          target: mathHost,
+          startX: event.clientX,
+          startY: event.clientY,
+          startLeft: (hostRect.left - editorRect.left) / Math.max(scale, 0.01),
+          startTop: (hostRect.top - editorRect.top) / Math.max(scale, 0.01),
+        };
+        setSelectedMath(mathHost);
+        event.preventDefault();
+        event.stopPropagation();
+      }
     },
     [contentEditable, hasGhost],
   );
@@ -837,19 +994,22 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     const onPointerMove = (event: PointerEvent) => {
       const session = dragSession.current;
       if (!session) return;
-      const editor = bodyContaining(session.image, bodyRefs.current);
+      const editor = bodyContaining(session.target, bodyRefs.current);
       if (!editor) return;
       event.preventDefault();
       const editorRect = editor.getBoundingClientRect();
       const scale = editorRect.width / Math.max(editor.offsetWidth, 1);
-      session.image.style.left = `${Math.max(0, session.startLeft + (event.clientX - session.startX) / Math.max(scale, 0.01))}px`;
-      session.image.style.top = `${Math.max(0, session.startTop + (event.clientY - session.startY) / Math.max(scale, 0.01))}px`;
-      updateImageTools();
+      session.target.style.left = `${Math.max(0, session.startLeft + (event.clientX - session.startX) / Math.max(scale, 0.01))}px`;
+      session.target.style.top = `${Math.max(0, session.startTop + (event.clientY - session.startY) / Math.max(scale, 0.01))}px`;
+      if (session.target instanceof HTMLImageElement) updateImageTools();
+      else updateMathTools();
     };
     const onPointerUp = () => {
-      if (!dragSession.current) return;
+      const session = dragSession.current;
+      if (!session) return;
       dragSession.current = null;
-      commitImageMutation();
+      if (session.target instanceof HTMLImageElement) commitImageMutation();
+      else commitMathMutation();
     };
     window.addEventListener('pointermove', onPointerMove, { passive: false });
     window.addEventListener('pointerup', onPointerUp);
@@ -857,7 +1017,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
     };
-  }, [commitImageMutation, updateImageTools]);
+  }, [commitImageMutation, updateImageTools, updateMathTools]);
 
   const handleDrop = (pageIdx: number, event: React.DragEvent<HTMLDivElement>) => {
     const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'));
@@ -951,10 +1111,41 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     if (t.closest(BLOCK_SEL) || t.closest('img') || t.closest('table')) return;
     const body = bodyRefs.current[pageIdx];
     if (!body) return;
+    // A drag-select that ends on the sheet's padding/margin (very common when
+    // dragging edge-to-edge across a full-width line) fires a native click
+    // right after mouseup on this same chrome. Without this guard we would
+    // collapse the just-made selection into a caret here, which is exactly
+    // why long/edge-to-edge selections disappear while short ones survive.
+    const activeSel = window.getSelection();
+    if (activeSel && !activeSel.isCollapsed && activeSel.toString().trim()) {
+      setActivePage(pageIdx);
+      return;
+    }
     if (t === body || !body.contains(t) || t === e.currentTarget || t.classList.contains('studio-page-sheet')) {
       e.preventDefault();
       setActivePage(pageIdx);
-      placeCaretAtEnd(body);
+      // Native editing already places the caret correctly when the click lands
+      // on text. For sheet chrome/padding, resolve the nearest caret from the
+      // actual pointer coordinates instead of always jumping to the document
+      // end (which made blank-page clicks feel broken).
+      const doc = body.ownerDocument;
+      const range = doc.caretRangeFromPoint?.(e.clientX, e.clientY) ?? (() => {
+        const position = doc.caretPositionFromPoint?.(e.clientX, e.clientY);
+        if (!position) return null;
+        const next = doc.createRange();
+        next.setStart(position.offsetNode, position.offset);
+        next.collapse(true);
+        return next;
+      })();
+      if (range && body.contains(range.startContainer)) {
+        body.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        lastSelection.current = range.cloneRange();
+      } else {
+        placeCaretAtEnd(body);
+      }
     }
   };
 
@@ -1260,7 +1451,64 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             data-selection-ui
             onPointerDown={(event) => event.stopPropagation()}
           >
-            <span className="px-1 font-semibold text-neutral-500">Ecuación</span>
+            <button
+              type="button"
+              title="Hacer más pequeña"
+              aria-label="Hacer más pequeña"
+              className="rounded px-2 py-1 text-base leading-none hover:bg-neutral-100"
+              onClick={() => changeMathScale(-10)}
+            >
+              −
+            </button>
+            <span className="min-w-9 px-1 text-center font-mono text-[9px] text-neutral-400">
+              {getMathScale(selectedMath)}%
+            </span>
+            <button
+              type="button"
+              title="Hacer más grande"
+              aria-label="Hacer más grande"
+              className="rounded px-2 py-1 text-base leading-none hover:bg-neutral-100"
+              onClick={() => changeMathScale(10)}
+            >
+              +
+            </button>
+            <span className="h-4 w-px bg-neutral-200" />
+            <button
+              type="button"
+              title="En línea con el texto"
+              aria-pressed={getMathWrapMode(selectedMath) === 'inline'}
+              className={cn(
+                'rounded px-2 py-1 hover:bg-neutral-100',
+                getMathWrapMode(selectedMath) === 'inline' && 'bg-neutral-100 font-semibold',
+              )}
+              onClick={() => changeMathWrap('inline')}
+            >
+              En línea
+            </button>
+            <button
+              type="button"
+              title="Bloque: ocupa toda la línea"
+              aria-pressed={getMathWrapMode(selectedMath) === 'block'}
+              className={cn(
+                'rounded px-2 py-1 hover:bg-neutral-100',
+                getMathWrapMode(selectedMath) === 'block' && 'bg-neutral-100 font-semibold',
+              )}
+              onClick={() => changeMathWrap('block')}
+            >
+              Bloque
+            </button>
+            <button
+              type="button"
+              title="Libre: mover arrastrando"
+              aria-pressed={getMathWrapMode(selectedMath) === 'behind'}
+              className={cn(
+                'rounded px-2 py-1 hover:bg-neutral-100',
+                getMathWrapMode(selectedMath) === 'behind' && 'bg-neutral-100 font-semibold',
+              )}
+              onClick={() => changeMathWrap('behind')}
+            >
+              Mover
+            </button>
             <span className="h-4 w-px bg-neutral-200" />
             <button
               type="button"

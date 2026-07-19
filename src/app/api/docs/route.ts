@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     const doc = await createDocument(user.userId, {
       title: body.title || 'Untitled',
       html: body.html || '<p><br></p>',
+      brief: body.brief,
     });
     return NextResponse.json({ doc });
   } catch (e: any) {

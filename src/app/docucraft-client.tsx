@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
+import LocaleSwitch from '@/components/locale-switch';
 import EquationEditorDialog from '@/components/equation-editor-dialog';
 import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
 import StudioChat, {
@@ -136,6 +137,10 @@ export default function DocsStudioClient({
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
+  /** Image pasted into the composer — the agent decides whether it needs
+   *  vision to answer, and uses it (or explains it can't with the current
+   *  model) rather than silently ignoring it. */
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
   const [activity, setActivity] = useState<ActivityStep[]>([]);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
@@ -363,7 +368,10 @@ export default function DocsStudioClient({
     if (current === normalized) return;
     const next = historyRef.current.slice(0, historyIndexRef.current + 1);
     next.push(normalized);
-    if (next.length > 80) next.shift();
+    // History is now word-granular (not just debounce-batched), so allow a
+    // deeper stack — otherwise a long editing session would push early
+    // checkpoints out of reach almost immediately.
+    if (next.length > 300) next.shift();
     historyRef.current = next;
     historyIndexRef.current = next.length - 1;
     setHistory(next);
@@ -871,7 +879,7 @@ export default function DocsStudioClient({
   const runChat = useCallback(
     async (
       userText: string,
-      opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean },
+      opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean; attachedImage?: string | null },
     ) => {
       const text = userText.trim();
       if (!text) return;
@@ -951,6 +959,7 @@ export default function DocsStudioClient({
             model,
             autoStart: false,
             assignmentContext,
+            attachedImage: opts?.attachedImage || null,
             workspaceContext: {
               documentId: docId,
               pageCount,
@@ -1165,14 +1174,31 @@ export default function DocsStudioClient({
   const onEditorInput = () => {
     if (!canvasRef.current || skipHistory.current) return;
     setDocumentContent(readEditorHtml());
-    // Debounce history + typeset so typing stays snappy
+    // Debounced fallback: if the user pauses mid-word (no boundary key hit
+    // yet), still checkpoint after a short pause so nothing is ever lost.
     if (localEditTimer.current) clearTimeout(localEditTimer.current);
     localEditTimer.current = setTimeout(() => {
       localEditTimer.current = null;
       pushHistory(readEditorHtml());
       typesetAll();
-    }, 400);
+    }, 500);
   };
+
+  /**
+   * Called right before a word-boundary key (space/enter/punctuation/
+   * backspace) takes effect. Snapshots the CURRENT html (the word just
+   * finished) as its own history entry, so Ctrl+Z undoes one word/action
+   * at a time instead of everything typed since the last 400ms pause —
+   * this is the fix for "Ctrl+Z doesn't work well".
+   */
+  const onEditorHistoryBoundary = useCallback(() => {
+    if (skipHistory.current) return;
+    if (localEditTimer.current) {
+      clearTimeout(localEditTimer.current);
+      localEditTimer.current = null;
+    }
+    pushHistory(readEditorHtml());
+  }, [pushHistory, readEditorHtml]);
 
   const handleMouseUp = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('[data-selection-ui]')) return;
@@ -1217,14 +1243,36 @@ export default function DocsStudioClient({
     });
   };
 
-  const clearSelectionContext = () => {
+  const clearSelectionContext = useCallback(() => {
     setHasSelection(false);
     setSelBar(null);
     selectedTextRef.current = '';
     selectionRef.current = null;
     const sel = window.getSelection();
     sel?.removeAllRanges();
-  };
+  }, []);
+
+  // Keep the contextual selection bar while interacting with the editor or
+  // either toolbar. Only a pointer down outside those regions dismisses it.
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+
+      const clickedEditor = target.closest('.studio-doc-editor');
+      const clickedSelectionToolbar = target.closest('[data-selection-ui]');
+      const clickedTopToolbar = target.closest(
+        '[data-document-editor-toolbar], [data-studio-toolbar], .document-editor-toolbar',
+      );
+
+      if (!clickedEditor && !clickedSelectionToolbar && !clickedTopToolbar) {
+        clearSelectionContext();
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [clearSelectionContext]);
 
   const openAgentForSelection = () => {
     if (!selectedTextRef.current.trim()) return;
@@ -1267,10 +1315,12 @@ export default function DocsStudioClient({
     const text = chatInput.trim();
     if (!text) return;
     const selected = selectedTextRef.current.trim();
+    const image = attachedImage;
+    setAttachedImage(null);
     if (selected) {
-      void runChat(text, { selectedText: selected, fromComposer: true });
+      void runChat(text, { selectedText: selected, fromComposer: true, attachedImage: image });
     } else {
-      void runChat(text, { fromComposer: true });
+      void runChat(text, { fromComposer: true, attachedImage: image });
     }
   };
 
@@ -1901,6 +1951,7 @@ export default function DocsStudioClient({
               contentEditable={!isBusy}
               isLoading={isBusy}
               onInput={onEditorInput}
+              onHistoryBoundary={onEditorHistoryBoundary}
               onUndo={undo}
               onRedo={redo}
               onMouseUp={handleMouseUp}
@@ -1949,6 +2000,7 @@ export default function DocsStudioClient({
 
             <div
               data-studio-toolbar
+              data-document-editor-toolbar
               className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
             >
               <div className="pointer-events-auto flex max-w-[min(980px,100%)] items-center gap-2">
@@ -1958,6 +2010,9 @@ export default function DocsStudioClient({
               >
                 Biblioteca
               </a>
+              <div className="pointer-events-auto">
+                <LocaleSwitch />
+              </div>
               {docId && (
                 <span className="pointer-events-none hidden rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 font-mono text-[10px] text-neutral-400 sm:inline">
                   {saveState === 'saving'
@@ -1981,8 +2036,6 @@ export default function DocsStudioClient({
                   canRedo={historyIndex < history.length - 1}
                   fontFamily={fontFamily}
                   onFontFamily={setFontFamily}
-                  fontSize={fontSize}
-                  onFontSize={setFontSize}
                   pageCount={pageCount}
                   wordCount={countWords()}
                   onInsertMath={handleInsertMath}
@@ -2055,6 +2108,8 @@ export default function DocsStudioClient({
                 onRejectReview={rejectEdit}
                 onAcceptAll={acceptAllEdits}
                 onRejectAll={rejectAllEdits}
+                attachedImage={attachedImage}
+                onAttachImage={setAttachedImage}
                 softFocus
                 onOpenPanel={() => {
                   // Opening full chat closes ephemeral input

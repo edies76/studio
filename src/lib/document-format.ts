@@ -12,6 +12,14 @@ export type DocumentFormatOptions = {
   scope?: FormatScope;
   blockIndex?: number;
   selectedText?: string;
+  /** Exact substring to style when the agent names specific text/characters
+   *  in the request (e.g. "pon la palabra X en rojo") without the user
+   *  having actually selected anything in the editor. Independent of
+   *  `scope` — if present, it always wins over scope=selection/document. */
+  targetText?: string;
+  /** Which occurrence of targetText to style (0-based). Omit for the first
+   *  match, or 'all' to style every occurrence. */
+  occurrence?: number | 'all';
   fontSize?: string | number;
   color?: string;
   backgroundColor?: string;
@@ -168,28 +176,65 @@ function styleOneBlock(html: string, blockHtml: string, declarations: string[]):
   return html.slice(0, start) + styled + html.slice(end);
 }
 
-function styleSelection(html: string, selectedText: string, declarations: string[]): string {
-  const text = selectedText.trim();
-  if (!text) return html;
-  const index = html.indexOf(text);
-  if (index < 0) return html;
-  const before = html.slice(0, index);
-  const lastOpen = before.lastIndexOf('<');
-  const lastClose = before.lastIndexOf('>');
-  if (lastOpen > lastClose) return html;
+/**
+ * Style an exact text fragment wherever it appears in the document's raw
+ * text flow — down to a single character or a mid-word range. Works whether
+ * the text came from a real DOM selection (scope=selection) or the agent
+ * just naming it from the conversation (targetText, no selection needed).
+ */
+function styleTextFragment(
+  html: string,
+  fragment: string,
+  declarations: string[],
+  occurrence: number | 'all' = 0,
+): { html: string; matched: number } {
+  const text = fragment.trim();
+  if (!text) return { html, matched: 0 };
   const escaped = text.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[char] || char);
-  const replacement = `<span style="${declarations.join(';')}">${escaped}</span>`;
-  return html.slice(0, index) + replacement + html.slice(index + text.length);
+  const style = declarations.join(';');
+
+  let result = '';
+  let cursor = 0;
+  let found = -1;
+  let matched = 0;
+  while ((found = html.indexOf(text, cursor)) !== -1) {
+    // Never split an existing tag — only match plain text runs.
+    const before = html.slice(0, found);
+    const lastOpen = before.lastIndexOf('<');
+    const lastClose = before.lastIndexOf('>');
+    const insideTag = lastOpen > lastClose;
+    if (insideTag) {
+      result += html.slice(cursor, found + text.length);
+      cursor = found + text.length;
+      continue;
+    }
+    const shouldStyle = occurrence === 'all' || matched === occurrence;
+    result += html.slice(cursor, found);
+    result += shouldStyle ? `<span style="${style}">${escaped}</span>` : html.slice(found, found + text.length);
+    cursor = found + text.length;
+    matched += 1;
+    if (occurrence !== 'all' && matched > occurrence) break;
+  }
+  result += html.slice(cursor);
+  return { html: matched > 0 ? result : html, matched };
 }
 
 export function formatDocumentHtml(html: string, options: DocumentFormatOptions): FormatResult {
   const declarations = formatDeclarations(options);
   if (!html || !declarations.length) return { html, changed: false, declarations };
 
+  // An explicit targetText (agent naming exact words/characters) always
+  // wins — it lets the agent style a fragment down to a single character
+  // or a mid-word range, even with nothing selected in the editor.
+  if (options.targetText?.trim()) {
+    const { html: next, matched } = styleTextFragment(html, options.targetText, declarations, options.occurrence ?? 0);
+    return { html: next, changed: matched > 0, declarations };
+  }
+
   const scope = options.scope || 'document';
   let next = html;
   if (scope === 'selection') {
-    next = styleSelection(html, options.selectedText || '', declarations);
+    next = styleTextFragment(html, options.selectedText || '', declarations, 0).html;
   } else if (scope === 'block' && Number.isFinite(options.blockIndex)) {
     // The caller passes the exact block HTML through `selectedText` for this
     // scope. This keeps this helper server-safe and avoids a DOM dependency.

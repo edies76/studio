@@ -46,6 +46,9 @@ type Props = {
   className?: string;
   /** Soft auto-focus after open animation (not instant select) */
   softFocus?: boolean;
+  /** Pasted/attached image (data URL) shown as a chip; agent uses vision if the current model supports it, or explains it needs a vision-capable model otherwise. */
+  attachedImage?: string | null;
+  onAttachImage?: (dataUrl: string | null) => void;
 };
 
 /**
@@ -79,6 +82,8 @@ export default function FloatingComposer({
   onRejectAll,
   className,
   softFocus = true,
+  attachedImage,
+  onAttachImage,
 }: Props) {
   const [phase, setPhase] = useState<'out' | 'in'>('out');
   const [mounted, setMounted] = useState(false);
@@ -310,12 +315,42 @@ export default function FloatingComposer({
                     )}
                   </div>
                 )}
+                {attachedImage && (
+                  <div className="mb-1 flex items-center gap-1.5">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={attachedImage}
+                      alt="Imagen adjunta"
+                      className="h-8 w-8 rounded-md border border-neutral-200 object-cover"
+                    />
+                    <span className="text-[10px] text-neutral-400">Imagen adjunta</span>
+                    <button
+                      type="button"
+                      onClick={() => onAttachImage?.(null)}
+                      className="rounded p-0.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                      title="Quitar imagen"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
                 <textarea
                   ref={inputRef}
                   value={value}
                   onChange={(e) => onChange(e.target.value)}
                   onFocus={() => setFocused(true)}
                   onBlur={() => setFocused(false)}
+                  onPaste={(e) => {
+                    if (!onAttachImage) return;
+                    const item = Array.from(e.clipboardData?.items || []).find((it) => it.type.startsWith('image/'));
+                    if (!item) return;
+                    const file = item.getAsFile();
+                    if (!file) return;
+                    e.preventDefault();
+                    const reader = new FileReader();
+                    reader.onload = () => onAttachImage(String(reader.result || ''));
+                    reader.readAsDataURL(file);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -325,7 +360,7 @@ export default function FloatingComposer({
                   rows={1}
                   disabled={busy}
                   placeholder={
-                    isEdit ? 'What should we do with the selection…' : 'Message the agent…'
+                    isEdit ? 'What should we do with the selection…' : 'Message the agent… (Ctrl+V pega una imagen)'
                   }
                   className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-neutral-900 outline-none placeholder:text-neutral-400"
                 />

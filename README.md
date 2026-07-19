@@ -2,6 +2,8 @@
 
 **Promesa:** workspace académico, no un chat genérico.
 
+**Core message:** a brief is not a document; Docs Studio turns it into one you can review.
+
 El papel (lienzo Letter/Legal) es la fuente de verdad. El agente propone; vos aceptás o rechazás. Normas APA/IEEE/MLA, ecuaciones MATH-SAFE, import DOCX y export PDF/Word.
 
 **Dev:** `http://localhost:9003`
@@ -17,6 +19,8 @@ El papel (lienzo Letter/Legal) es la fuente de verdad. El agente propone; vos ac
 | `/studio` | Workspace — lienzo + agente + Tools + export |
 | `/login` | Google OAuth (opcional) |
 | `/mcp` | Superficie MCP para agentes externos |
+| `/usecases` | Casos de uso y diferencia frente a un editor general |
+| `/origin` | Historia y evolución del producto |
 | `/pre-summary` | Redirect legacy → `/` |
 
 Legacy: `/?doc=` y `/?topic=` redirigen a `/studio` (middleware).
@@ -48,16 +52,18 @@ Base: [edies76/studio](https://github.com/edies76/studio). Submission: [edies76/
 
 ```bash
 npm install
-cp .env.example .env.local   # GOOGLE_API_KEY=
+cp .env.example .env.local   # DEEPSEEK_API_KEY=
 npm run dev                  # http://localhost:9003
 ```
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GOOGLE_API_KEY` | Yes | Google AI Studio key |
-| `GEMINI_MODEL` | No | Defaults via `src/lib/studio-models.ts` |
+| `DEEPSEEK_API_KEY` | Yes for the agent | Private key used by the server-side agent runtime |
+| `GOOGLE_API_KEY` | No | Optional legacy/provider fallback; never exposed in the product UI |
+| `GEMINI_MODEL` | No | Text model used by the Google/Genkit pipeline |
+| `GEMINI_VISION_MODEL` | No | Vision model used when image context is analyzed |
 
-Never commit `.env.local`.
+Never commit `.env.local`. The provider and model are implementation details; public product language should refer only to “the agent”.
 
 ---
 

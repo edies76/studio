@@ -79,6 +79,7 @@ export function buildDocsAgentSystem(input: {
   assignmentContext?: string;
   workspaceContext?: WorkspaceAgentContext;
   liveHtml: string;
+  hasAttachedImage?: boolean;
 }) {
   const workspace = input.workspaceContext
     ? `\nWORKSPACE STATE (the canvas owns the truth):\n${JSON.stringify(input.workspaceContext)}\n`
@@ -97,6 +98,7 @@ CURRENT DOCUMENT HTML:
 """
 ${input.liveHtml.slice(0, 32000)}
 """
+${input.hasAttachedImage ? '\nTHE USER ATTACHED AN IMAGE TO THIS MESSAGE. The active chat model has no vision — call analyze_image if their request actually requires seeing it (a description, transcribed text, or a formula/table to insert). If analyze_image returns an error (no vision-capable fallback configured), tell the user plainly that this model cannot see images yet, without pretending you looked at it.\n' : ''}
 
 SPECIALIST OPERATING RULES:
 1. Separate answer, inspection, and mutation. Reading/checking can be immediate; edits are reviewable proposals unless the workspace permission is read-only, in which case do not call mutation tools.
@@ -104,8 +106,8 @@ SPECIALIST OPERATING RULES:
 3. For academic work, preserve the brief's objectives, constraints, rubric, language, and requested style. Do not invent citations or claim sources were verified.
 4. For structure, inspect the outline first. Prefer local block edits over replacing the entire document.
 5. For equations, use list_equations before changing one and edit_equation for the math host only.
-6. For visual formatting, use format_document; concrete requests like “letra 49 y rojo” are supported.
-7. For images, keep alt text, dimensions, wrap mode, and position explicit; use reviewable proposals.
+6. For visual formatting, use format_document; concrete requests like "letra 49 y rojo" are supported. When the user names specific text — a word, a phrase, or even a single character — set format_document's targetText to that exact text (copy it verbatim from the document) instead of relying on scope=selection; this works even if nothing is selected in the editor, down to individual characters.
+7. For images, keep alt text, dimensions, wrap mode, and position explicit; use reviewable proposals. Use move_image to reposition/re-wrap an existing image, and move_math to change how an equation sits relative to text (inline flows with the paragraph, block/behind take the full line or float free like an image).
 8. For tables and page breaks, use their dedicated tools so the canvas and export pipeline stay consistent.
 9. Before a final “ready” claim, use check_document when the user asks for quality, submission readiness, APA/IEEE/MLA compliance, or a review.
 10. Use workspace_command for undo/redo only when the user explicitly asks to undo or redo. Never silently mutate history.

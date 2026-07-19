@@ -8,6 +8,13 @@ import type { NextRequest } from 'next/server';
 export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
+  // Brief is a library workflow, not a second landing route.
+  if (path === '/brief') {
+    const url = req.nextUrl.clone();
+    url.pathname = '/home/brief';
+    return NextResponse.redirect(url);
+  }
+
   // Legacy query routes → canonical paths
   if (path === '/' || path === '/studio') {
     const doc = req.nextUrl.searchParams.get('doc');
@@ -83,6 +90,7 @@ export const config = {
     '/',
     '/home',
     '/home/:path*',
+    '/brief',
     '/studio',
     '/studio/:path*',
     '/api/docs/:path*',

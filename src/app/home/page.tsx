@@ -12,7 +12,6 @@ import {
   LogOut,
   Sparkles,
   Trash2,
-  Upload,
 } from 'lucide-react';
 import BrandMark from '@/components/brand-mark';
 import LocaleSwitch from '@/components/locale-switch';
@@ -219,37 +218,14 @@ export default function HomePage() {
           </button>
         </div>
 
-        {/* Three real entry actions (replace the old triplicate blanks) */}
-        <div className="mb-12 grid gap-3 sm:grid-cols-3">
+        {/* One creation action only. A brief is a distinct contextual workflow. */}
+        <div className="mb-12 grid gap-3 sm:grid-cols-2">
           <button
             type="button"
-            disabled={creating}
-            onClick={() => void createDoc()}
-            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md disabled:opacity-60"
+            onClick={() => router.push('/home/brief')}
+            className="group flex items-start gap-4 rounded-xl border border-neutral-200 bg-white p-6 text-left transition hover:border-neutral-400 hover:bg-neutral-50"
           >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
-              {creating ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <FilePlus2 className="h-5 w-5" strokeWidth={1.75} />
-              )}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
-                {t('home.blank')}
-                <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" />
-              </span>
-              <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
-                {t('home.blankSub')}
-              </span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push('/')}
-            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md"
-          >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#f0ebe4] text-[#8b4a34]">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-800">
               <Sparkles className="h-5 w-5" strokeWidth={1.75} />
             </span>
             <span className="min-w-0 flex-1">
@@ -259,24 +235,6 @@ export default function HomePage() {
               </span>
               <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
                 {t('home.fromGuideSub')}
-              </span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => router.push('/studio')}
-            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md"
-          >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
-              <Upload className="h-5 w-5" strokeWidth={1.75} />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
-                {t('home.openStudio')}
-                <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" />
-              </span>
-              <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
-                {t('home.openStudioSub')}
               </span>
             </span>
           </button>
@@ -303,19 +261,6 @@ export default function HomePage() {
             <p className="mt-1.5 max-w-xs text-[13px] leading-relaxed text-neutral-500">
               {t('home.emptySub')}
             </p>
-            <button
-              type="button"
-              disabled={creating}
-              onClick={() => void createDoc()}
-              className="mt-6 inline-flex h-10 items-center gap-2 rounded-xl bg-neutral-900 px-4 text-[13px] font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
-            >
-              {creating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FilePlus2 className="h-4 w-4" />
-              )}
-              {t('home.new')}
-            </button>
           </div>
         )}
 

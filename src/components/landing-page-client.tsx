@@ -59,7 +59,7 @@ export default function LandingPageClient() {
               </div>
 
               <div className="home-landing__actions">
-                <Link className="landing-primary-button" href="/studio">
+                <Link className="landing-primary-button" href="/home">
                   {t('hero.cta')} <span aria-hidden="true">↗</span>
                 </Link>
                 <Link className="home-landing__text-link" href="#producto">
@@ -119,7 +119,7 @@ export default function LandingPageClient() {
               <p className="landing-micro-label">{t('canvas.label')}</p>
               <h2 id="canvas-heading">{t('canvas.h2')}</h2>
               <p>{t('canvas.p')}</p>
-              <Link className="landing-inline-link" href="/studio">
+              <Link className="landing-inline-link" href="/home">
                 {t('canvas.enter')} <span>↗</span>
               </Link>
             </div>
@@ -191,12 +191,42 @@ export default function LandingPageClient() {
           </div>
         </section>
 
+        <section className="landing-section home-landing__usecases" aria-labelledby="usecases-heading">
+          <div className="landing-wrap home-landing__usecases-grid">
+            <div>
+              <div className="section-rule">
+                <span>{t('usecases.rule')}</span>
+                <span className="section-rule__line" aria-hidden="true" />
+              </div>
+              <h2 id="usecases-heading">{t('usecases.h2')}</h2>
+              <p>{t('usecases.p')}</p>
+              <Link className="landing-inline-link" href="/usecases">
+                {t('usecases.link')} <span>↗</span>
+              </Link>
+            </div>
+            <div className="home-landing__usecases-list">
+              {[
+                ['01', 'Universities', 'Reports that start from a rubric, guide, or lab procedure.'],
+                ['02', 'Agencies', 'Proposals and client deliverables that stay aligned with the brief.'],
+                ['03', 'Engineering + compliance', 'Specifications, procedures, and reports with required fields.'],
+                ['04', 'Document batches', 'One approved template with different names, sites, dates, or values.'],
+              ].map(([number, title, body]) => (
+                <Link key={number} href="/usecases" className="home-landing__usecase-row">
+                  <span>{number}</span>
+                  <div><strong>{title}</strong><p>{body}</p></div>
+                  <b aria-hidden="true">↗</b>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section className="landing-final home-landing__final" aria-labelledby="home-final-heading">
           <div className="landing-wrap">
             <span className="landing-final__label">{t('final.label')}</span>
             <h2 id="home-final-heading">{t('final.h2')}</h2>
             <p>{t('final.p')}</p>
-            <Link className="landing-primary-button landing-primary-button--large" href="/studio">
+            <Link className="landing-primary-button landing-primary-button--large" href="/home">
               {t('final.cta')} <span aria-hidden="true">↗</span>
             </Link>
           </div>
@@ -205,9 +235,7 @@ export default function LandingPageClient() {
 
       <footer className="landing-footer">
         <div className="landing-wrap landing-footer__inner">
-          <span className="landing-footer__mark" aria-hidden="true">
-            Docs<span className="landing-wordmark__s">S</span>
-          </span>
+          <span className="landing-footer__mark" aria-hidden="true">Docs</span>
           <span>{t('footer.tag')}</span>
           <Link href="/mcp">MCP / agent surface ↗</Link>
         </div>

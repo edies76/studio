@@ -188,7 +188,11 @@ function wrapBlocks(blocks: DiffBlock[]): string {
 function inlineDiffHtml(beforeHtml: string, afterHtml: string): string | null {
   const before = blockInfo(beforeHtml);
   const after = blockInfo(afterHtml);
-  if (!before || !after || before.tag !== after.tag) return null;
+  // A tag change (e.g. a bullet <li> rewritten as a <p>, or heading level
+  // shifting) should not force the whole block into a red/green swap — the
+  // words are still comparable text. Only bail out for structurally
+  // incomparable content (tables, images, math, lists-as-containers).
+  if (!before || !after) return null;
   if (/<(table|ul|ol|pre|figure|img|svg)\b/i.test(beforeHtml + afterHtml)) return null;
   if (/studio-math|data-tex|\\\(|\\\[|\$\$/i.test(beforeHtml + afterHtml)) return null;
   const segments = diffWordSegments(before.text, after.text);
@@ -202,7 +206,7 @@ function inlineDiffHtml(beforeHtml: string, afterHtml: string): string | null {
 }
 
 function blockInfo(html: string): { tag: string; attrs: string; text: string } | null {
-  const match = html.trim().match(/^<(p|h[1-6]|blockquote)([^>]*)>[\s\S]*<\/\1>$/i);
+  const match = html.trim().match(/^<(p|h[1-6]|blockquote|li)([^>]*)>[\s\S]*<\/\1>$/i);
   if (!match) return null;
   return { tag: match[1].toLowerCase(), attrs: match[2] || '', text: htmlToPlain(html) };
 }

@@ -38,6 +38,9 @@ function blockOuterHeight(el: HTMLElement): number {
 }
 
 function isVisuallyEmpty(el: HTMLElement): boolean {
+  // A manual page break is visually empty but semantically meaningful. Keep it
+  // in the serialized document so a reflow/history round-trip cannot erase it.
+  if (el.matches('[data-studio-break="1"], .studio-page-break')) return false;
   const t = (el.textContent || '').replace(/\u00a0/g, ' ').trim();
   if (t) return false;
   return !el.querySelector('img, table, svg, mjx-container, canvas, video, hr');
@@ -47,7 +50,6 @@ function isVisuallyEmpty(el: HTMLElement): boolean {
 export function htmlToBlockHtmls(html: string): string[] {
   const cleaned = (html || '')
     .replace(/<\/?(html|head|body)[^>]*>/gi, '')
-    .replace(/<div[^>]*data-studio-break[^>]*>[\s\S]*?<\/div>/gi, '')
     .trim();
   if (!cleaned) return ['<p><br></p>'];
 
@@ -119,6 +121,14 @@ export function packBlocksIntoPages(
 
   try {
     for (const raw of blockHtmls) {
+      // Manual breaks are layout boundaries, not visible content. Keep the
+      // marker at the start of the next page so the boundary survives joining
+      // pages, autosave, undo/redo, and a second pagination pass.
+      if (/^<(div|p)\b[^>]*(?:data-studio-break="1"|class="[^"]*studio-page-break)[^>]*>/i.test(raw)) {
+        if (pages[pages.length - 1].length > 0) pushPage();
+        pages[pages.length - 1].push(raw);
+        continue;
+      }
       measure.innerHTML = raw;
       const el = measure.firstElementChild as HTMLElement | null;
       if (!el) continue;

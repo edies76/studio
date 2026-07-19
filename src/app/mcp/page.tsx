@@ -1,5 +1,7 @@
 import Link from 'next/link';
 import BrandMark from '@/components/brand-mark';
+import AnimatedBrand from '@/components/animated-brand';
+import LocaleSwitch from '@/components/locale-switch';
 
 const tools = [
   ['01', 'get_capabilities', 'Return the server contract, transports, and honest session boundary.'],
@@ -71,16 +73,16 @@ export default function McpPage() {
   return (
     <div className="mcp-page">
       <header className="mcp-nav">
-        <Link href="/" className="mcp-brand" aria-label="Docs Studio home">
-          <BrandMark size={30} />
-          <span>Docs Studio</span>
+        <div className="mcp-brand-wrap">
+          <AnimatedBrand className="mcp-brand" scrollRoot=".mcp-page" size={30} />
           <small>/ MCP</small>
-        </Link>
+        </div>
         <nav className="mcp-nav__links" aria-label="MCP documentation">
           <a href="#surface">Surface</a>
           <a href="#connect">Connect</a>
           <a href="#boundaries">Boundaries</a>
           <Link href="/">Producto ↗</Link>
+          <LocaleSwitch />
         </nav>
       </header>
 
@@ -94,7 +96,7 @@ export default function McpPage() {
             </p>
             <div className="mcp-hero__actions">
               <a className="mcp-button mcp-button--dark" href="#connect">Connect the server <span>↓</span></a>
-              <Link className="mcp-button mcp-button--quiet" href="/studio">Abrir /studio <span>↗</span></Link>
+              <Link className="mcp-button mcp-button--quiet" href="/home">Abrir biblioteca <span>↗</span></Link>
             </div>
             <p className="mcp-hero__note">Built on the official TypeScript SDK · stdio + Streamable HTTP · Zod-validated inputs</p>
           </div>
@@ -231,7 +233,7 @@ export default function McpPage() {
       <footer className="mcp-footer">
         <Link href="/"><BrandMark size={24} /> Docs Studio</Link>
         <span>MCP · workspace académico / 2026</span>
-        <Link href="/studio">/studio ↗</Link>
+        <Link href="/home">Open library ↗</Link>
       </footer>
     </div>
   );

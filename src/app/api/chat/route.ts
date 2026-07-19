@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { STUDIO_TOOL_DEFINITIONS, extractHtmlBlocks } from '@/lib/doc-tools';
+import { STUDIO_TOOL_DEFINITIONS, extractHtmlBlocks, repositionImageAt } from '@/lib/doc-tools';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
 import {
   deepseekApiKey,
@@ -17,11 +17,13 @@ import {
   mathSafeSnapshot,
   protectMathInRewrite,
   replaceEquationAt,
+  repositionMathAt,
 } from '@/lib/math-tools';
 import { slog } from '@/lib/server-log';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
 import { buildDocumentIntelligence, buildDocsAgentSystem, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 import { replaceTableCell } from '@/lib/table-tools';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,6 +67,36 @@ function openAiTools() {
   }));
 }
 
+/**
+ * The active chat model (DeepSeek) has no vision support. Rather than
+ * silently ignoring an attached image, the agent can call analyze_image,
+ * which uses Gemini vision as a fallback describer when GOOGLE_API_KEY is
+ * configured. When a future chat model has native vision, this same tool
+ * can be swapped to pass the image straight to that model instead.
+ */
+async function analyzeAttachedImage(dataUrl: string): Promise<{ ok: true; description: string } | { ok: false; error: string }> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    return { ok: false, error: 'No vision-capable model is configured (missing GOOGLE_API_KEY), and the active chat model (DeepSeek) cannot see images.' };
+  }
+  const match = dataUrl.match(/^data:(image\/[a-z+.-]+);base64,(.+)$/i);
+  if (!match) return { ok: false, error: 'attachedImage must be a data:image/... base64 URL' };
+  try {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    });
+    const result = await model.generateContent([
+      'Describe this image in detail for use as document context: what it shows, any visible text (transcribe it), diagrams, charts, tables, or formulas.',
+      { inlineData: { data: match[2], mimeType: match[1] } },
+    ]);
+    const text = (await result.response).text();
+    return { ok: true, description: text };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Image analysis failed' };
+  }
+}
+
 function isFastLaneQuestion(text: string, selectedText: string) {
   if (selectedText.trim() || text.length > 240) return false;
   return !/\b(documento|lienzo|hoja|p[áa]gina|texto|p[áa]rrafo|selecci[oó]n|ecuaci[oó]n|f[oó]rmula|tabla|imagen|estructura|esquema|outline|brief|norma|apa|ieee|mla|document|canvas|page|text|paragraph|selection|equation|formula|table|image|structure|cambia|cambiar|pon|aplica|formatea|edita|corrige|reescribe|escribe|redacta|genera|crea|inserta|elimina|borra|mueve|inspecciona|analiza|revisa|comprueba|valida|busca|encuentra|resume|deshaz|rehaz|undo|redo|format|change|apply|edit|rewrite|write|draft|generate|create|insert|delete|remove|move|fix|check|review|search|summarize)\b/i.test(text);
@@ -82,6 +114,7 @@ export async function POST(req: NextRequest) {
     autoStart = false,
     assignmentContext = '',
     workspaceContext,
+    attachedImage = null,
   } = body as {
     messages: Msg[];
     documentHtml?: string;
@@ -92,6 +125,8 @@ export async function POST(req: NextRequest) {
     autoStart?: boolean;
     assignmentContext?: string;
     workspaceContext?: WorkspaceAgentContext;
+    /** data:image/... URL pasted by the user this turn, if any. */
+    attachedImage?: string | null;
   };
 
   const apiKey = deepseekApiKey();
@@ -155,7 +190,7 @@ export async function POST(req: NextRequest) {
         // Fast lane: no document HTML, no tool schema, no long conversation
         // history, no second completion. This is the path for greetings and
         // short informational questions where the canvas is irrelevant.
-        if (isFastLaneQuestion(lastUser, selectedText)) {
+        if (!attachedImage && isFastLaneQuestion(lastUser, selectedText)) {
           let quickText = '';
           let firstTokenMs: number | null = null;
           const quickModel = process.env.DEEPSEEK_FAST_MODEL || 'deepseek-chat';
@@ -238,6 +273,7 @@ export async function POST(req: NextRequest) {
           assignmentContext,
           workspaceContext,
           liveHtml,
+          hasAttachedImage: Boolean(attachedImage),
         }) + `
 
 === SERVER MATH SAFETY ===
@@ -253,6 +289,94 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
             role: m.role === 'assistant' ? 'assistant' : 'user',
             content: m.content,
           });
+        }
+
+        // ToolsDock quick actions (Improve/Shorter/Expand/Grammar/Academic)
+        // acting on a selection are a single deterministic rewrite — not a
+        // document-editing task. Sending them through the full tool-calling
+        // pipeline (32KB of document HTML, 15 tool schemas, up to 3 rounds
+        // of non-streamed completions) is what made a one-paragraph "make
+        // shorter" take ~14s. This fast lane skips all of that: one short,
+        // untooled completion, then a local replace_selection proposal.
+        const quickRewriteMatch = !mathSafeMode
+          ? /^(Improve|Make shorter|Expand|Fix grammar|More academic) the selected text at intensity (\d+)%\./i.exec(
+              lastUser,
+            )
+          : null;
+        if (quickRewriteMatch && selectedText.trim() && workspaceContext?.agentPermission !== 'read') {
+          const [, actionLabel, intensityRaw] = quickRewriteMatch;
+          const intensity = Math.max(0, Math.min(100, Number(intensityRaw) || 50));
+          const instructions: Record<string, string> = {
+            improve: `Improve the writing quality, clarity, and flow of this text at intensity ${intensity}% (higher = more thorough rewrite) without changing its meaning.`,
+            'make shorter': `Reduce the length of this text by roughly ${intensity}%, removing redundancy and secondary examples, while keeping the key ideas.`,
+            expand: `Expand this text with relevant detail and examples, increasing its length by roughly ${intensity}%, without changing its core meaning.`,
+            'fix grammar': `Fix grammar, spelling, and punctuation errors in this text without changing its meaning, tone, or length.`,
+            'more academic': `Rewrite this text in a more formal, academic register at intensity ${intensity}% (higher = more formal), without changing its core meaning.`,
+          };
+          const instruction = instructions[actionLabel.toLowerCase()] || `${actionLabel} this text.`;
+          const tid = `quick_rewrite_${Date.now()}`;
+          send({ type: 'status', label: `${actionLabel}…` });
+          send({ type: 'tool_start', name: 'quick_rewrite', label: `${actionLabel}…`, id: tid });
+          let rewritten = '';
+          try {
+            const rewriteRes = await deepseekChat({
+              apiKey,
+              model: resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL),
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    'You rewrite a single piece of selected text per the instruction. Match the original language. Return ONLY the rewritten text — no explanations, no markdown fences, no surrounding quotes, no preamble.',
+                },
+                { role: 'user', content: `${instruction}\n\nText:\n"""\n${selectedText}\n"""` },
+              ],
+              stream: false,
+              temperature: 0.4,
+              maxTokens: Math.max(300, Math.min(2048, Math.ceil(selectedText.length * 2))),
+            });
+            const data = await rewriteRes.json().catch(() => null);
+            rewritten = String(data?.choices?.[0]?.message?.content || '').trim();
+          } catch (e: any) {
+            slog.warn('chat', 'quick_rewrite.error', { err: e?.message || String(e) });
+          }
+          if (rewritten) {
+            rewritten = rewritten.replace(/^["'`]+|["'`]+$/g, '').trim();
+          }
+          if (!rewritten) {
+            send({ type: 'tool_end', name: 'quick_rewrite', ok: false, label: 'Sin respuesta', id: tid });
+            send({ type: 'error', message: 'No pude reescribir la selección. Probá de nuevo.' });
+            send({ type: 'done', durationMs: Date.now() - t0, outcome: 'error' });
+            return;
+          }
+          const escapeText = (value: string) => escapeAgentHtml(value).replace(/\n/g, '<br>');
+          const beforeHtml = `<p>${escapeText(selectedText)}</p>`;
+          const afterHtml = `<p>${escapeText(rewritten)}</p>`;
+          const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          send({
+            type: 'propose_edit',
+            id,
+            edit: {
+              title: actionLabel,
+              summary: `${actionLabel} — selección de ${selectedText.trim().split(/\s+/).length} palabra(s).`,
+              mode: 'replace_selection',
+              afterHtml,
+              beforeHtml,
+              changeList: [`${actionLabel} · intensidad ${intensity}%`],
+            },
+          });
+          send({ type: 'tool_end', name: 'quick_rewrite', ok: true, label: `${actionLabel} · aceptá para aplicarlo`, id: tid });
+          const finalText = `${actionLabel} listo sobre la selección.`;
+          send({ type: 'text', delta: finalText });
+          const durationMs = Date.now() - t0;
+          slog.info('chat', 'request.done', {
+            ms: durationMs,
+            model: 'quick-rewrite',
+            path: 'quick_rewrite_selection',
+            proposedSomething: true,
+            finalLen: finalText.length,
+          });
+          send({ type: 'done', finalText, model: 'quick-rewrite', durationMs, outcome: 'proposal' });
+          return;
         }
 
         // Clear atomic formatting commands are deterministic editor actions.
@@ -887,10 +1011,19 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               }
 
               const beforeHtml = liveHtml;
+              const rawOccurrence = String(args.occurrence ?? '').trim();
+              const occurrence: number | 'all' | undefined =
+                rawOccurrence === 'all'
+                  ? 'all'
+                  : rawOccurrence !== '' && Number.isFinite(Number(rawOccurrence))
+                    ? Number(rawOccurrence)
+                    : undefined;
               const formatted = formatDocumentHtml(beforeHtml, {
                 scope: scope as 'document' | 'selection' | 'block',
                 blockIndex,
                 selectedText: targetBlock?.html || selectedText,
+                targetText: typeof args.targetText === 'string' ? args.targetText : undefined,
+                occurrence,
                 fontSize: args.fontSize,
                 color: args.color,
                 backgroundColor: args.backgroundColor,
@@ -947,6 +1080,26 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 id: tid,
               });
               await reply({ ok: true, id, declarations: formatted.declarations, note: 'Pending Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'analyze_image') {
+              const tid = `vision_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Mirando la imagen…', id: tid });
+              if (!attachedImage) {
+                send({ type: 'tool_end', name, ok: false, label: 'No hay imagen adjunta', id: tid });
+                await reply({ ok: false, error: 'No image was attached to this message.' });
+                continue;
+              }
+              const result = await analyzeAttachedImage(attachedImage);
+              if (!result.ok) {
+                slog.warn('chat', 'tool.analyze_image.unavailable', { error: result.error });
+                send({ type: 'tool_end', name, ok: false, label: 'Este modelo no puede ver imágenes', id: tid });
+                await reply({ ok: false, error: result.error });
+                continue;
+              }
+              send({ type: 'tool_end', name, ok: true, label: 'Imagen analizada', id: tid });
+              await reply({ ok: true, description: result.description });
               continue;
             }
 
@@ -1044,6 +1197,33 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               });
               send({ type: 'tool_end', name, ok: true, label: 'Imagen propuesta · aceptá para insertarla', id: tid });
               await reply({ ok: true, id: proposal.id, width, wrap, note: 'Pending user Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'move_image') {
+              const tid = `move_img_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const imageIndex = Math.floor(Number(args.imageIndex));
+              const wrap = ['inline', 'left', 'right', 'center', 'break', 'behind'].includes(args.wrap) ? args.wrap : 'break';
+              send({ type: 'tool_start', name, label: `Moviendo imagen ${Number.isFinite(imageIndex) ? imageIndex : '?'}…`, id: tid });
+              if (!Number.isFinite(imageIndex)) {
+                send({ type: 'tool_end', name, ok: false, label: 'imageIndex inválido', id: tid });
+                await reply({ ok: false, error: 'imageIndex is required and must be a number' });
+                continue;
+              }
+              const nextHtml = repositionImageAt(liveHtml, imageIndex, wrap, { left: Number(args.left), top: Number(args.top) });
+              if (!nextHtml) {
+                send({ type: 'tool_end', name, ok: false, label: `Imagen ${imageIndex} no encontrada`, id: tid });
+                await reply({ ok: false, error: `imageIndex ${imageIndex} out of range` });
+                continue;
+              }
+              const proposal = proposeGeneratedDocument({
+                title: args.title || 'Mover imagen',
+                summary: args.summary || `Cambié cómo fluye el texto alrededor de la imagen #${imageIndex}.`,
+                nextHtml,
+                changeList: [`Imagen #${imageIndex}`, `Modo: ${wrap}`, ...(wrap === 'behind' ? [`Posición: ${Math.max(0, Number(args.left) || 0)}px, ${Math.max(0, Number(args.top) || 0)}px`] : [])],
+              });
+              send({ type: 'tool_end', name, ok: true, label: 'Movimiento propuesto · aceptá para aplicarlo', id: tid });
+              await reply({ ok: true, id: proposal.id, wrap, note: 'Pending user Accept/Reject.' });
               continue;
             }
 
@@ -1174,6 +1354,42 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 equationIndex,
                 note: 'Pending Accept/Reject. Math host only changed.',
               });
+              continue;
+            }
+
+            if (name === 'move_math') {
+              const tid = `move_math_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const equationIndex = Math.floor(Number(args.equationIndex));
+              const wrap = ['inline', 'block', 'behind'].includes(args.wrap) ? args.wrap : 'block';
+              send({ type: 'tool_start', name, label: `Moviendo ecuación ${Number.isFinite(equationIndex) ? equationIndex : '?'}…`, id: tid });
+              if (!Number.isFinite(equationIndex)) {
+                send({ type: 'tool_end', name, ok: false, label: 'equationIndex inválido', id: tid });
+                await reply({ ok: false, error: 'equationIndex is required and must be a number' });
+                continue;
+              }
+              const result = repositionMathAt(liveHtml, equationIndex, wrap, { left: Number(args.left), top: Number(args.top) });
+              if (!result) {
+                send({ type: 'tool_end', name, ok: false, label: `Ecuación ${equationIndex} no encontrada`, id: tid });
+                await reply({ ok: false, error: `equationIndex ${equationIndex} out of range` });
+                continue;
+              }
+              const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              proposedSomething = true;
+              send({
+                type: 'propose_edit',
+                id,
+                edit: {
+                  title: args.title || 'Mover ecuación',
+                  summary: args.summary || `Cambié cómo la ecuación #${equationIndex} se ubica respecto al texto.`,
+                  mode: 'replace_document',
+                  afterHtml: result.html,
+                  beforeHtml: liveHtml,
+                  changeList: [`Ecuación #${equationIndex}`, `Modo: ${wrap}`, ...(wrap === 'behind' ? [`Posición: ${Math.max(0, Number(args.left) || 0)}px, ${Math.max(0, Number(args.top) || 0)}px`] : [])],
+                },
+              });
+              liveHtml = result.html;
+              send({ type: 'tool_end', name, ok: true, label: `Ecuación ${equationIndex} movida · aceptá para aplicarlo`, id: tid });
+              await reply({ ok: true, id, equationIndex, note: 'Pending Accept/Reject.' });
               continue;
             }
 

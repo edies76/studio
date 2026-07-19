@@ -1,9 +1,9 @@
 import LandingPageClient from '@/components/landing-page-client';
 
 export const metadata = {
-  title: 'Docs Studio | From brief to document',
+  title: 'Docs Studio | Documents that follow the brief',
   description:
-    'Academic workspace: paginated canvas, reviewable AI edits, norms, math, and DOCX/PDF export.',
+    'Generate reports, proposals, specifications, and technical documents that follow a brief, rubric, template, or set of rules.',
 };
 
 export default function HomePage() {

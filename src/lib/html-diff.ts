@@ -107,7 +107,7 @@ export function mergeSingleInlineHunk(
 ): string | null {
   const before = simpleBlockInfo(beforeHtml);
   const after = simpleBlockInfo(afterHtml);
-  if (!before || !after || before.tag !== after.tag) return null;
+  if (!before || !after) return null;
   const segments = diffWordSegments(before.text, after.text);
   let currentHunk = 0;
   const body = segments
@@ -122,7 +122,7 @@ export function mergeSingleInlineHunk(
 }
 
 function simpleBlockInfo(html: string): { tag: string; attrs: string; text: string } | null {
-  const match = html.trim().match(/^<(p|h[1-6]|blockquote)([^>]*)>[\s\S]*<\/\1>$/i);
+  const match = html.trim().match(/^<(p|h[1-6]|blockquote|li)([^>]*)>[\s\S]*<\/\1>$/i);
   if (!match) return null;
   return { tag: match[1].toLowerCase(), attrs: match[2] || '', text: htmlToPlain(html) };
 }

@@ -160,6 +160,40 @@ export const STUDIO_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'move_image',
+    description:
+      'Reposition or re-wrap an existing image (by 0-based index among images from inspect_document/read_document). Use wrap to change how text flows around it (inline, left, right, center, break=own line, behind=free-floating), and left/top (px) to set its position when wrap=behind. Proposes a reviewable edit.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        imageIndex: { type: 'NUMBER', description: '0-based index among <img> elements in document order.' },
+        wrap: { type: 'STRING', enum: ['inline', 'left', 'right', 'center', 'break', 'behind'] },
+        left: { type: 'NUMBER', description: 'Left position in pixels when wrap=behind.' },
+        top: { type: 'NUMBER', description: 'Top position in pixels when wrap=behind.' },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: ['imageIndex'],
+    },
+  },
+  {
+    name: 'move_math',
+    description:
+      'Change how an existing equation sits relative to the surrounding text (by 0-based index from list_equations): inline flows with the paragraph, block takes the whole line exclusively, behind makes it free-floating/draggable at an optional left/top pixel position. Proposes a reviewable edit. Does not change the TeX — use edit_equation for that.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        equationIndex: { type: 'NUMBER', description: '0-based index from list_equations.' },
+        wrap: { type: 'STRING', enum: ['inline', 'block', 'behind'] },
+        left: { type: 'NUMBER', description: 'Left position in pixels when wrap=behind.' },
+        top: { type: 'NUMBER', description: 'Top position in pixels when wrap=behind.' },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: ['equationIndex', 'wrap'],
+    },
+  },
+  {
     name: 'edit_paragraph',
     description:
       'Propose a targeted edit of ONE block by index from read_document. User must Accept. Prefer this over full-document rewrites when the user asked for point changes. Include the original block HTML as beforeHtml if possible.',
@@ -219,18 +253,26 @@ export const STUDIO_TOOL_DEFINITIONS = [
   {
     name: 'format_document',
     description:
-      'Apply an explicit document-editor format request as a real proposal. Use this for font size, text color, highlight, font family, bold/italic, alignment, line height, or letter spacing. Never say CSS is unsupported: this tool translates the request into safe document styles. Scope defaults to the entire document; use selection or block when the user specifies one.',
+      'Apply an explicit document-editor format request as a real proposal. Use this for font size, text color, highlight, font family, bold/italic, alignment, line height, or letter spacing. Never say CSS is unsupported: this tool translates the request into safe document styles. Scope defaults to the entire document; use selection or block when the user specifies one. To style ONE specific word, phrase, or even a single character the user names in the conversation — without them having selected anything in the editor — set targetText to that exact text instead of scope; it works down to a single character or a mid-word range.',
     parameters: {
       type: 'OBJECT',
       properties: {
         scope: {
           type: 'STRING',
           enum: ['document', 'selection', 'block'],
-          description: 'Where to apply formatting. Default document.',
+          description: 'Where to apply formatting. Default document. Ignored if targetText is set.',
         },
         blockIndex: {
           type: 'NUMBER',
           description: '0-based block index from read_document when scope=block.',
+        },
+        targetText: {
+          type: 'STRING',
+          description: 'Exact text/word/character(s) to style, taken verbatim from the document (use read_document/find_in_document first). Overrides scope. Can be as short as one character.',
+        },
+        occurrence: {
+          type: 'STRING',
+          description: 'Which match of targetText to style: a 0-based number as a string (e.g. "0" for the first), or "all" for every occurrence. Default first match.',
         },
         fontSize: {
           type: 'STRING',
@@ -289,6 +331,12 @@ export const STUDIO_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'analyze_image',
+    description:
+      "Look at the image the user attached to this message and return a detailed description (what it shows, any visible text, diagrams, charts). Only call this if the user attached an image AND their request needs you to actually see it (e.g. \"qué dice esta imagen\", \"describe esto\", \"pon esta fórmula/tabla en el documento\"). If no image was attached this turn, do not call this tool. If the current chat model has no vision support and no image-analysis fallback is configured, this tool returns an error — tell the user plainly that this model can't see images yet.",
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
     name: 'insert_equation',
     description:
       'MATH-SAFE: Insert a new equation after a block index from read_document (or at end if blockIndex omitted). Creates a proper studio-math host. User must Accept.',
@@ -308,6 +356,63 @@ export const STUDIO_TOOL_DEFINITIONS = [
     },
   },
 ] as const;
+
+/**
+ * Change how the Nth <img> (0-based, document order) flows relative to text
+ * (inline/left/right/center/break/behind), optionally moving it to a free
+ * left/top position when detached (behind).
+ */
+export function repositionImageAt(
+  html: string,
+  index: number,
+  wrap: 'inline' | 'left' | 'right' | 'center' | 'break' | 'behind',
+  position?: { left?: number; top?: number },
+): string | null {
+  const imgRe = /<img\b[^>]*>/gi;
+  const matches = [...(html.matchAll(imgRe) || [])];
+  const target = matches[index];
+  if (!target) return null;
+
+  const original = target[0];
+  const attrValue = (name: string) => {
+    const m = original.match(new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
+    return m ? m[1] : null;
+  };
+  const src = attrValue('src') || '';
+  const alt = attrValue('alt') || '';
+  const widthAttr = original.match(/width\s*:\s*(\d+)px/i)?.[1] || attrValue('width') || '';
+  const alignment =
+    wrap === 'center'
+      ? 'margin:0.85em auto'
+      : wrap === 'left'
+        ? 'margin:0.25em 1.1em 0.6em 0'
+        : wrap === 'right'
+          ? 'margin:0.25em 0 0.6em 1.1em'
+          : wrap === 'inline'
+            ? 'margin:0 0.3em'
+            : 'margin:0.85em 0';
+  const floatStyle = wrap === 'left' || wrap === 'right' ? `float:${wrap};` : '';
+  const positionStyle =
+    wrap === 'behind'
+      ? `position:absolute;left:${Math.max(0, Number(position?.left) || 0)}px;top:${Math.max(0, Number(position?.top) || 0)}px;z-index:0;margin:0;`
+      : `${floatStyle}${alignment};`;
+  const display = wrap === 'inline' ? 'inline-block' : 'block';
+  const width = widthAttr ? `width:${parseInt(widthAttr, 10)}px;` : '';
+  const replacement = `<img src="${src}" alt="${alt}" data-studio-image="1" data-studio-wrap="${wrap}" style="${width}max-width:100%;height:auto;display:${display};${positionStyle}">`;
+
+  let occ = 0;
+  let replaced = false;
+  const result = html.replace(imgRe, (match) => {
+    if (occ === index && !replaced) {
+      occ++;
+      replaced = true;
+      return replacement;
+    }
+    occ++;
+    return match;
+  });
+  return replaced ? result : null;
+}
 
 /** Extract top-level-ish content blocks from HTML for read/edit_paragraph */
 export function extractHtmlBlocks(html: string): { index: number; tag: string; preview: string; html: string }[] {

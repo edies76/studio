@@ -5,6 +5,7 @@ import {
   Document,
   HeadingLevel,
   ImageRun,
+  LevelFormat,
   Math as DocxMath,
   MathComponent,
   MathFraction,
@@ -43,6 +44,12 @@ export async function POST(req: NextRequest) {
     const doc = new Document({
       creator: 'Docs Studio',
       title,
+      numbering: {
+        config: [{
+          reference: 'studio-ordered-list',
+          levels: [{ level: 0, format: LevelFormat.DECIMAL, text: '%1.', alignment: AlignmentType.START, style: { paragraph: { indent: { left: 360, hanging: 260 } } } }],
+        }],
+      },
       sections: [{
         properties: { page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } },
         children: children.length ? children : [new Paragraph({ children: [new TextRun({ text: '' })] })],
@@ -110,7 +117,15 @@ function extractBlocks(input: string): Block[] {
   let match: RegExpExecArray | null;
 
   const pushPlain = (fragment: string) => {
-    const text = stripTags(fragment);
+    // stripTags on the whole fragment would silently delete any bare <img>
+    // that isn't wrapped in p/div/etc (exactly what a "behind"/floating
+    // image looks like once it's detached from the text flow) — that was
+    // making floating images vanish on export. Extract them first, keep
+    // everything else as a plain-text paragraph as before.
+    const images = [...fragment.matchAll(/<img\b[^>]*>/gi)];
+    for (const img of images) blocks.push({ kind: 'p', html: img[0] });
+    const withoutImages = fragment.replace(/<img\b[^>]*>/gi, '');
+    const text = stripTags(withoutImages);
     if (text) blocks.push({ kind: 'p', html: text });
   };
 
@@ -155,6 +170,54 @@ function extractBlocks(input: string): Block[] {
 function attrValue(tag: string, name: string): string | null {
   const match = tag.match(new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, 'i'));
   return match ? decodeEntities(match[1]) : null;
+}
+
+function styleValue(tag: string, property: string): string | null {
+  const style = attrValue(tag, 'style');
+  if (!style) return null;
+  const match = style.match(new RegExp(`${property}\\s*:\\s*([^;]+)`, 'i'));
+  return match ? match[1].trim() : null;
+}
+
+function colorToHex(value: string | null): string | null {
+  if (!value) return null;
+  const hex = value.match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i);
+  if (hex) {
+    const h = hex[1];
+    return (h.length === 3 ? h.split('').map((c) => c + c).join('') : h).toUpperCase();
+  }
+  const rgb = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgb) {
+    return rgb.slice(1, 4).map((n) => Number(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+  }
+  return null;
+}
+
+/** CSS px → docx half-points (1px = 0.75pt, docx size is in half-points). */
+function pxToHalfPoints(value: string | null): number | null {
+  if (!value) return null;
+  const px = parseFloat(value);
+  if (!Number.isFinite(px) || px <= 0) return null;
+  return Math.round(px * 0.75 * 2);
+}
+
+type RunStyle = { bold?: boolean; italics?: boolean; underline?: boolean; strike?: boolean; color?: string; size?: number };
+
+/** Merge a tag's own formatting into the inherited style stack (child wins). */
+function styleFromTag(tag: string, inherited: RunStyle): RunStyle {
+  const lower = tag.toLowerCase();
+  const next: RunStyle = { ...inherited };
+  if (/^<(b|strong)\b/.test(lower)) next.bold = true;
+  if (/^<(i|em)\b/.test(lower)) next.italics = true;
+  if (/^<u\b/.test(lower)) next.underline = true;
+  if (/^<(s|strike|del)\b/.test(lower)) next.strike = true;
+  const colorAttr = colorToHex(styleValue(tag, 'color') || attrValue(tag, 'color'));
+  if (colorAttr) next.color = colorAttr;
+  const sizeAttr = pxToHalfPoints(styleValue(tag, 'font-size'));
+  if (sizeAttr) next.size = sizeAttr;
+  if (/font-weight\s*:\s*(bold|[6-9]00)/i.test(attrValue(tag, 'style') || '')) next.bold = true;
+  if (/font-style\s*:\s*italic/i.test(attrValue(tag, 'style') || '')) next.italics = true;
+  return next;
 }
 
 function mathSource(html: string): string {
@@ -225,27 +288,132 @@ function latexComponents(source: string): MathComponent[] {
   return out.length ? out : [new MathRun(source || ' ')] as MathComponent[];
 }
 
+/** Read pixel dimensions for a size probe: try inline style first (that's
+ *  how the editor actually sets width/height), then the HTML attribute. */
+function pixelSize(tag: string, prop: 'width' | 'height'): number | null {
+  const fromStyle = styleValue(tag, prop);
+  const fromStylePx = fromStyle ? parseFloat(fromStyle) : NaN;
+  if (Number.isFinite(fromStylePx) && fromStylePx > 0) return fromStylePx;
+  const attr = attrValue(tag, prop);
+  const fromAttr = attr ? parseFloat(attr) : NaN;
+  return Number.isFinite(fromAttr) && fromAttr > 0 ? fromAttr : null;
+}
+
+/** Decode a base64 PNG/JPEG/GIF/BMP data URL and read its real pixel
+ *  dimensions from the file header, so export never distorts the aspect
+ *  ratio when only one dimension (or none) was set on the element. */
+function naturalImageSize(buffer: Buffer, mime: string): { width: number; height: number } | null {
+  try {
+    if (mime === 'png' && buffer.length > 24 && buffer.readUInt32BE(0) === 0x89504e47) {
+      return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+    }
+    if ((mime === 'jpeg' || mime === 'jpg') && buffer.length > 4) {
+      let offset = 2;
+      while (offset < buffer.length - 8) {
+        if (buffer[offset] !== 0xff) { offset += 1; continue; }
+        const marker = buffer[offset + 1];
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+        }
+        const segLen = buffer.readUInt16BE(offset + 2);
+        offset += 2 + segLen;
+      }
+    }
+    if (mime === 'gif' && buffer.length > 10 && buffer.toString('ascii', 0, 3) === 'GIF') {
+      return { width: buffer.readUInt16LE(6), height: buffer.readUInt16LE(8) };
+    }
+    if (mime === 'bmp' && buffer.length > 26 && buffer.toString('ascii', 0, 2) === 'BM') {
+      return { width: buffer.readInt32LE(18), height: Math.abs(buffer.readInt32LE(22)) };
+    }
+  } catch {
+    /* fall through to default sizing */
+  }
+  return null;
+}
+
 function imageRun(tag: string): ParagraphChild | null {
   const src = attrValue(tag, 'src');
   if (!src || !/^data:image\/(png|jpe?g|gif|bmp);base64,/i.test(src)) return null;
   const mime = src.match(/^data:image\/(png|jpe?g|gif|bmp)/i)?.[1].toLowerCase() || 'png';
   const type = mime === 'jpeg' ? 'jpg' : mime as 'png' | 'jpg' | 'gif' | 'bmp';
-  const width = Math.min(560, Math.max(80, Number(attrValue(tag, 'width')) || 420));
-  const height = Math.max(60, Math.round(width * 0.62));
+  const data = Buffer.from(src.split(',')[1], 'base64');
   const alt = attrValue(tag, 'alt') || 'Imagen';
-  return new ImageRun({ type, data: Buffer.from(src.split(',')[1], 'base64'), transformation: { width, height }, altText: { title: alt, name: alt, description: alt } });
+
+  const natural = naturalImageSize(data, mime);
+  const aspect = natural && natural.height > 0 ? natural.width / natural.height : null;
+  const explicitWidth = pixelSize(tag, 'width');
+  const explicitHeight = pixelSize(tag, 'height');
+
+  let width: number;
+  let height: number;
+  if (explicitWidth && explicitHeight) {
+    width = explicitWidth;
+    height = explicitHeight;
+  } else if (explicitWidth && aspect) {
+    width = explicitWidth;
+    height = Math.round(explicitWidth / aspect);
+  } else if (explicitHeight && aspect) {
+    height = explicitHeight;
+    width = Math.round(explicitHeight * aspect);
+  } else if (natural) {
+    width = natural.width;
+    height = natural.height;
+  } else {
+    width = explicitWidth || 420;
+    height = explicitHeight || Math.round(width * 0.62);
+  }
+
+  // Cap to a sane page-fitting size while preserving aspect ratio.
+  const maxWidth = 560;
+  if (width > maxWidth) {
+    const scale = maxWidth / width;
+    width = maxWidth;
+    height = Math.round(height * scale);
+  }
+  width = Math.max(20, Math.round(width));
+  height = Math.max(20, Math.round(height));
+
+  return new ImageRun({ type, data, transformation: { width, height }, altText: { title: alt, name: alt, description: alt } });
 }
 
-function inlineChildren(html: string, size = 24): ParagraphChild[] {
+/**
+ * Walk inline markup (bold/italic/underline/span color/font-size, math,
+ * images, line breaks) and emit TextRuns that mirror exactly what the editor
+ * shows — instead of stripping every tag and falling back to one flat size.
+ */
+function inlineChildren(html: string, baseStyle: RunStyle | number = 24): ParagraphChild[] {
+  const base: RunStyle = typeof baseStyle === 'number' ? { size: baseStyle } : baseStyle;
+  const baseSize = base.size ?? 24;
   const children: ParagraphChild[] = [];
-  const tokenRe = /(<(?:span|div)\b[^>]*(?:data-tex|studio-math)[^>]*>[\s\S]*?<\/(?:span|div)>|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$[^$\n]+\$|<img\b[^>]*>|<br\s*\/?\s*>)/gi;
+  const tokenRe = /(<\/?(?:b|strong|i|em|u|s|strike|del|span)\b[^>]*>|<(?:span|div)\b[^>]*(?:data-tex|studio-math)[^>]*>[\s\S]*?<\/(?:span|div)>|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$\$[\s\S]*?\$\$|\$[^$\n]+\$|<img\b[^>]*>|<br\s*\/?\s*>)/gi;
+  const stack: RunStyle[] = [{ ...base }];
   let cursor = 0;
-  const addText = (fragment: string) => { const text = stripTags(fragment); if (text) children.push(new TextRun({ text, font: 'Calibri', size })); };
+
+  const addText = (fragment: string) => {
+    const text = stripTags(fragment);
+    if (!text) return;
+    const style = stack[stack.length - 1];
+    children.push(new TextRun({
+      text,
+      font: 'Calibri',
+      size: style.size ?? baseSize,
+      bold: style.bold,
+      italics: style.italics,
+      underline: style.underline ? {} : undefined,
+      strike: style.strike,
+      color: style.color,
+    }));
+  };
+
   let match: RegExpExecArray | null;
   while ((match = tokenRe.exec(html))) {
     addText(html.slice(cursor, match.index));
     const token = match[0];
-    if (/^<img/i.test(token)) {
+    if (/^<\/(b|strong|i|em|u|s|strike|del|span)\b/i.test(token)) {
+      if (stack.length > 1) stack.pop();
+    } else if (/^<(b|strong|i|em|u|s|strike|del|span)\b/i.test(token) && !/data-tex|studio-math/i.test(token)) {
+      stack.push(styleFromTag(token, stack[stack.length - 1]));
+    } else if (/^<img/i.test(token)) {
       const image = imageRun(token);
       if (image) children.push(image); else addText(`[${attrValue(token, 'alt') || 'Imagen'}]`);
     } else if (/^<br/i.test(token)) {
@@ -257,7 +425,7 @@ function inlineChildren(html: string, size = 24): ParagraphChild[] {
     cursor = match.index + token.length;
   }
   addText(html.slice(cursor));
-  return children.length ? children : [new TextRun({ text: '', font: 'Calibri', size })];
+  return children.length ? children : [new TextRun({ text: '', font: 'Calibri', size: baseSize })];
 }
 
 function htmlToDocxChildren(html: string): (Paragraph | Table)[] {
@@ -275,12 +443,23 @@ function htmlToDocxChildren(html: string): (Paragraph | Table)[] {
       continue;
     }
     const heading = block.kind === 'h1' ? HeadingLevel.HEADING_1 : block.kind === 'h2' ? HeadingLevel.HEADING_2 : block.kind === 'h3' ? HeadingLevel.HEADING_3 : undefined;
+    const defaultSize = heading ? (block.kind === 'h1' ? 32 : block.kind === 'h2' ? 28 : 24) : 24;
+    // A block's own tag can carry an inline size/color (e.g. from the
+    // selection format bar or an AI "make it smaller/red" edit). Read that
+    // straight off <h1 style="...">, don't discard it for a fixed default —
+    // this is what made heading size/color change on export.
+    const tagStyle = block.attrs ? styleFromTag(block.attrs, { size: defaultSize }) : { size: defaultSize };
+    const isOrdered = block.kind === 'li' && block.attrs === 'ol';
     output.push(new Paragraph({
       heading,
       alignment: block.attrs === 'blockquote' ? AlignmentType.LEFT : undefined,
       spacing: { before: heading ? 220 : 0, after: block.kind === 'pre' ? 140 : 160 },
+      bullet: block.kind === 'li' && !isOrdered ? { level: 0 } : undefined,
+      numbering: isOrdered ? { reference: 'studio-ordered-list', level: 0 } : undefined,
       indent: block.kind === 'li' ? { left: 360 } : undefined,
-      children: block.kind === 'pre' ? [new TextRun({ text: stripTags(block.html), font: 'Consolas', size: 18 })] : inlineChildren(block.kind === 'li' ? `• ${block.html}` : block.html, heading ? (block.kind === 'h1' ? 32 : block.kind === 'h2' ? 28 : 24) : 24),
+      children: block.kind === 'pre'
+        ? [new TextRun({ text: stripTags(block.html), font: 'Consolas', size: 18 })]
+        : inlineChildren(block.html, tagStyle),
     }));
   }
   return output;

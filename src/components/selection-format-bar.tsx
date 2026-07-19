@@ -55,6 +55,36 @@ function cmd(command: string, value?: string) {
   document.execCommand(command, false, value);
 }
 
+const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+
+/**
+ * execCommand('fontSize', ...) only accepts the legacy 1-7 scale, not real
+ * point values. The standard workaround: mark the selection with a unique
+ * legacy size (7), then swap the resulting <font size="7"> wrappers for
+ * <span style="font-size:Npx"> so the user gets an actual numeric size.
+ */
+function applyFontSizePx(px: number) {
+  try {
+    document.execCommand('styleWithCSS', false, 'true');
+  } catch {
+    /* ignore */
+  }
+  document.execCommand('fontSize', false, '7');
+  const sel = window.getSelection();
+  const root = sel?.anchorNode
+    ? (sel.anchorNode.nodeType === Node.ELEMENT_NODE
+        ? (sel.anchorNode as Element)
+        : sel.anchorNode.parentElement)
+    : null;
+  const scope = root?.closest('[data-studio-editor], [data-page-body]') || document.body;
+  scope.querySelectorAll('font[size="7"]').forEach((node) => {
+    const span = document.createElement('span');
+    span.style.fontSize = `${px}px`;
+    span.innerHTML = (node as HTMLElement).innerHTML;
+    node.replaceWith(span);
+  });
+}
+
 /**
  * Word-like selection bar — white capsule, same hover language as top toolbar.
  * Format tools + special AI pencil that opens the agent in edit mode.
@@ -153,16 +183,10 @@ export default function SelectionFormatBar({
             <Type className="h-3.5 w-3.5" strokeWidth={1.75} />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="center">
-          {[
-            { label: 'Pequeño', v: '2' },
-            { label: 'Normal', v: '3' },
-            { label: 'Mediano', v: '4' },
-            { label: 'Grande', v: '5' },
-            { label: 'Título', v: '6' },
-          ].map((s) => (
-            <DropdownMenuItem key={s.v} onClick={() => cmd('fontSize', s.v)} className="text-[12px]">
-              {s.label}
+        <DropdownMenuContent align="center" className="max-h-64 overflow-y-auto">
+          {FONT_SIZES.map((px) => (
+            <DropdownMenuItem key={px} onClick={() => applyFontSizePx(px)} className="text-[12px]">
+              {px} pt
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
