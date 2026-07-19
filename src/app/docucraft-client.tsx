@@ -642,7 +642,7 @@ export default function DocsStudioClient({
 
   const pushToolLog = (
     assistantId: string,
-    item: { id: string; label: string; state: 'running' | 'done' | 'error'; doneLabel?: string },
+    item: { id: string; label: string; state: 'running' | 'done' | 'error'; doneLabel?: string; durationMs?: number },
   ) => {
     setMessages((ms) =>
       ms.map((m) => {

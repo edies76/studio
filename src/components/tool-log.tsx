@@ -40,8 +40,10 @@ export default function ToolLog({ items }: { items: ToolLogItem[] }) {
           {it.state === 'running' ? (
             <span className="studio-shine-text font-medium">{it.label}</span>
           ) : (
-            <span className="font-medium">{it.doneLabel || it.label}</span>
-            {it.durationMs ? <span className="ml-auto font-mono text-[10px] text-neutral-400">{it.durationMs} ms</span> : null}
+            <>
+              <span className="font-medium">{it.doneLabel || it.label}</span>
+              {it.durationMs ? <span className="ml-auto font-mono text-[10px] text-neutral-400">{it.durationMs} ms</span> : null}
+            </>
           )}
         </div>
       ))}
