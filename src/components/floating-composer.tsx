@@ -27,6 +27,7 @@ type Props = {
   onSend: () => void;
   busy?: boolean;
   busyLabel?: string | null;
+  elapsedSeconds?: number;
   onStop?: () => void;
   toolLogs?: ToolLogItem[];
   statusLine?: string | null;
@@ -60,6 +61,7 @@ export default function FloatingComposer({
   onSend,
   busy,
   busyLabel,
+  elapsedSeconds = 0,
   onStop,
   toolLogs = [],
   statusLine,
@@ -275,9 +277,14 @@ export default function FloatingComposer({
             </span>
 
             {busy ? (
-              <p className="min-w-0 flex-1 truncate py-2 text-[13px] font-medium text-neutral-700">
-                {busyLabel || 'Trabajando…'}
-              </p>
+              <div className="flex min-w-0 flex-1 items-center gap-2 py-2">
+                <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-neutral-700">
+                  {busyLabel || 'Trabajando…'}
+                </p>
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-neutral-400">
+                  {elapsedSeconds.toFixed(1)} s
+                </span>
+              </div>
             ) : (
               <div className="flex min-w-0 flex-1 flex-col justify-center">
                 {isEdit && (

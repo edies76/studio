@@ -5,6 +5,9 @@ import {
   getDocument as getStoredDocument,
   listDocuments as listStoredDocuments,
   saveDocument as saveStoredDocument,
+  createVersion as createStoredVersion,
+  listVersions as listStoredVersions,
+  restoreVersion as restoreStoredVersion,
   type StudioDocument,
   type StoredHistoryEntry,
   type StoredPendingEdit,
@@ -62,6 +65,7 @@ function normalize(document: StudioDocument): StudioDocument {
   document.paperSize = document.paperSize === 'legal' ? 'legal' : 'letter';
   document.history = Array.isArray(document.history) ? document.history : [];
   document.pendingEdits = Array.isArray(document.pendingEdits) ? document.pendingEdits : [];
+  document.versions = Array.isArray(document.versions) ? document.versions : [];
   return document;
 }
 
@@ -79,6 +83,7 @@ export function publicCloudDocument(document: StudioDocument) {
     pendingEdits: doc.pendingEdits.filter((edit) => edit.status === 'pending'),
     createdAt: new Date(doc.createdAt).toISOString(),
     updatedAt: new Date(doc.updatedAt).toISOString(),
+    versionCount: doc.versions.length,
     brief: doc.brief
       ? {
           title: doc.brief.title,
@@ -176,7 +181,9 @@ export class CloudDocsStudioWorkspace {
     document.html = sanitizeDocumentHtml(html);
     document.updatedAt = Date.now();
     this.addHistory(document, type, label);
-    return publicCloudDocument(await this.save(document));
+    const saved = await this.save(document);
+    await createStoredVersion(this.userId, id, { label, source: type === 'accepted' ? 'agent' : 'manual', html: saved.html });
+    return publicCloudDocument(await this.getDocument(id));
   }
 
   async updateTitle(id: string, title: string) {
@@ -244,7 +251,9 @@ export class CloudDocsStudioWorkspace {
     edit.status = 'accepted';
     document.updatedAt = Date.now();
     this.addHistory(document, 'accepted', edit.title);
-    return publicCloudDocument(await this.save(document));
+    const saved = await this.save(document);
+    await createStoredVersion(this.userId, documentId, { label: edit.title, source: 'agent', html: saved.html });
+    return publicCloudDocument(await this.getDocument(documentId));
   }
 
   async rejectEdit(documentId: string, editId: string) {
@@ -317,6 +326,16 @@ export class CloudDocsStudioWorkspace {
 
   async history(id: string) {
     return (await this.getDocument(id)).history;
+  }
+
+  async versions(id: string) {
+    return listStoredVersions(this.userId, id);
+  }
+
+  async restoreVersion(id: string, versionId: string) {
+    const restored = await restoreStoredVersion(this.userId, id, versionId);
+    if (!restored) throw new Error(`Version not found: ${versionId}`);
+    return publicCloudDocument(restored);
   }
 
   async parseBrief(text: string, fileName?: string) {

@@ -36,6 +36,16 @@ export type ChatTurn = {
   at: number;
 };
 
+export type DocumentVersion = {
+  id: string;
+  label: string;
+  html: string;
+  title: string;
+  createdAt: number;
+  source: 'agent' | 'manual' | 'restore' | 'system';
+  parentId?: string;
+};
+
 export type StudioDocument = {
   id: string;
   userId: string;
@@ -49,6 +59,7 @@ export type StudioDocument = {
   createdAt: number;
   updatedAt: number;
   chat: ChatTurn[];
+  versions: DocumentVersion[];
 };
 
 export type DocListItem = {
@@ -218,6 +229,7 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     createdAt: Number(it.createdAt || 0),
     updatedAt: Number(it.updatedAt || 0),
     chat: Array.isArray(it.chat) ? (it.chat as ChatTurn[]) : [],
+    versions: Array.isArray(it.versions) ? (it.versions as DocumentVersion[]) : [],
   };
 }
 
@@ -242,6 +254,7 @@ async function dynamoSave(doc: StudioDocument): Promise<StudioDocument> {
         createdAt: doc.createdAt,
         updatedAt: doc.updatedAt,
         chat: doc.chat || [],
+        versions: doc.versions || [],
         gsi1pk: 'DOC',
         gsi1sk: doc.updatedAt,
       },
@@ -290,6 +303,7 @@ export async function createDocument(
     createdAt: now,
     updatedAt: now,
     chat: [],
+    versions: [],
   };
   if (useDynamo()) return dynamoSave(doc);
   return localSave(doc);
@@ -306,6 +320,7 @@ export async function saveDocument(
     history?: StoredHistoryEntry[];
     pendingEdits?: StoredPendingEdit[];
     chat?: ChatTurn[];
+    versions?: DocumentVersion[];
   },
 ): Promise<StudioDocument | null> {
   const existing = await getDocument(userId, id);
@@ -319,11 +334,47 @@ export async function saveDocument(
     history: patch.history ?? existing.history ?? [],
     pendingEdits: patch.pendingEdits ?? existing.pendingEdits ?? [],
     chat: patch.chat ?? existing.chat,
+    versions: patch.versions ?? existing.versions ?? [],
     updatedAt: Date.now(),
   };
   next.preview = previewFromHtml(next.html);
   if (useDynamo()) return dynamoSave(next);
   return localSave(next);
+}
+
+export async function createVersion(
+  userId: string,
+  id: string,
+  input: { label?: string; source?: DocumentVersion['source']; html?: string },
+): Promise<DocumentVersion | null> {
+  const existing = await getDocument(userId, id);
+  if (!existing) return null;
+  const version: DocumentVersion = {
+    id: randomUUID(),
+    label: input.label || 'Cambio aceptado',
+    html: input.html ?? existing.html,
+    title: existing.title,
+    createdAt: Date.now(),
+    source: input.source || 'agent',
+    parentId: existing.versions?.[0]?.id,
+  };
+  await saveDocument(userId, id, { versions: [version, ...(existing.versions || [])].slice(0, 100) });
+  return version;
+}
+
+export async function listVersions(userId: string, id: string): Promise<DocumentVersion[]> {
+  const doc = await getDocument(userId, id);
+  return doc?.versions || [];
+}
+
+export async function restoreVersion(userId: string, id: string, versionId: string): Promise<StudioDocument | null> {
+  const doc = await getDocument(userId, id);
+  const version = doc?.versions?.find((item) => item.id === versionId);
+  if (!doc || !version) return null;
+  const restored = await saveDocument(userId, id, { html: version.html });
+  if (!restored) return null;
+  await createVersion(userId, id, { label: `Restaurado: ${version.label}`, source: 'restore', html: version.html });
+  return getDocument(userId, id);
 }
 
 export async function deleteDocument(userId: string, id: string): Promise<void> {

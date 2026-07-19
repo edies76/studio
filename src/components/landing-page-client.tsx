@@ -41,6 +41,7 @@ export default function LandingPageClient() {
                 <span className="landing-heading-accent">{t('hero.title2')}</span>
               </h1>
               <p className="landing-hero__lede">{t('hero.lede')}</p>
+              <p className="home-landing__positioning">{t('hero.positioning')}</p>
 
               <div className="landing-hero__facts">
                 <div>

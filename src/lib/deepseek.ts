@@ -39,18 +39,29 @@ export function geminiParamsToJsonSchema(params: any): Record<string, unknown> {
     if (u === 'BOOLEAN') return 'boolean';
     return 'string';
   };
+  const convert = (schema: any): Record<string, unknown> => {
+    const type = mapType(schema?.type);
+    const entry: Record<string, unknown> = { type };
+    if (schema?.description) entry.description = schema.description;
+    if (Array.isArray(schema?.enum)) entry.enum = schema.enum;
+    if (schema?.default !== undefined) entry.default = schema.default;
+    if (type === 'array') {
+      entry.items = convert(schema?.items || { type: 'STRING' });
+    }
+    if (type === 'object') {
+      const nested: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(schema?.properties || {})) {
+        nested[key] = convert(value);
+      }
+      entry.properties = nested;
+      entry.required = Array.isArray(schema?.required) ? schema.required : [];
+    }
+    return entry;
+  };
   const props: Record<string, unknown> = {};
   const rawProps = params.properties || {};
   for (const [k, v] of Object.entries(rawProps as Record<string, any>)) {
-    const entry: Record<string, unknown> = {
-      type: mapType(v?.type),
-    };
-    if (v?.description) entry.description = v.description;
-    if (v?.properties) {
-      entry.type = 'object';
-      entry.properties = geminiParamsToJsonSchema(v).properties;
-    }
-    props[k] = entry;
+    props[k] = convert(v);
   }
   return {
     type: 'object',

@@ -19,6 +19,7 @@ export type ChatMessage = {
   draftStatus?: string;
   isDraftStream?: boolean;
   toolLogs?: ToolLogItem[];
+  elapsedMs?: number;
 };
 
 export type PendingEdit = {
@@ -47,6 +48,7 @@ type Props = {
   isBusy: boolean;
   onQuickAction?: (prompt: string) => void;
   topBar?: React.ReactNode;
+  elapsedSeconds?: number;
 };
 
 const QUICK = [
@@ -67,6 +69,7 @@ export default function StudioChat({
   isBusy,
   onQuickAction,
   topBar,
+  elapsedSeconds = 0,
   onAcceptEditPart,
   onRejectEditPart,
 }: Props) {
@@ -158,6 +161,11 @@ export default function StudioChat({
               <ToolLog items={tools} />
 
               {hasBody && <ChatRichText content={m.content} />}
+              {!m.streaming && m.elapsedMs != null && (
+                <div className="pt-0.5 font-mono text-[10px] font-medium text-neutral-400">
+                  respuesta en {(m.elapsedMs / 1000).toFixed(1)} s
+                </div>
+              )}
 
               {m.streaming && onlyTools && showThinking && (
                 <ThinkingShine label={activeStep?.label || 'Trabajando…'} />
@@ -187,6 +195,11 @@ export default function StudioChat({
       </div>
 
       <div className="shrink-0 bg-white px-3 pb-3 pt-1">
+        {isBusy && (
+          <div className="mb-1 px-1 font-mono text-[10px] font-medium tabular-nums text-neutral-400">
+            respuesta en {elapsedSeconds.toFixed(1)} s
+          </div>
+        )}
         <div className="flex items-end gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-2.5 py-2">
           <textarea
             value={input}
@@ -239,13 +252,104 @@ function ChatRichText({ content }: { content: string }) {
 }
 
 function chatContentToHtml(value: string): string {
-  let html = escapeHtml(value || '');
-  html = html.replace(/```(?:html|latex|tex)?\s*([\s\S]*?)```/gi, '<pre><code>$1</code></pre>');
+  const lines = String(value || '').replace(/\r/g, '').split('\n');
+  const out: string[] = [];
+  let inCode = false;
+  let codeLanguage = '';
+  let codeLines: string[] = [];
+  let list: 'ul' | 'ol' | null = null;
+  let paragraph: string[] = [];
+
+  const closeList = () => {
+    if (list) {
+      out.push(`</${list}>`);
+      list = null;
+    }
+  };
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    out.push(`<p>${paragraph.map(renderInlineMarkdown).join('<br />')}</p>`);
+    paragraph = [];
+  };
+
+  for (const rawLine of lines) {
+    const fence = rawLine.match(/^\s*```\s*([\w-]*)\s*$/);
+    if (fence) {
+      if (inCode) {
+        out.push(`<pre><code${codeLanguage ? ` data-language="${escapeHtml(codeLanguage)}"` : ''}>${codeLines.join('\n')}</code></pre>`);
+        inCode = false;
+        codeLanguage = '';
+        codeLines = [];
+      } else {
+        flushParagraph();
+        closeList();
+        inCode = true;
+        codeLanguage = fence[1] || '';
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(escapeHtml(rawLine));
+      continue;
+    }
+
+    const heading = rawLine.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      flushParagraph();
+      closeList();
+      const level = heading[1].length;
+      out.push(`<h${level}>${renderInlineMarkdown(escapeHtml(heading[2]))}</h${level}>`);
+      continue;
+    }
+
+    const unordered = rawLine.match(/^\s*[-*+]\s+(.+)$/);
+    const ordered = rawLine.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (unordered || ordered) {
+      flushParagraph();
+      const nextList = ordered ? 'ol' : 'ul';
+      if (list !== nextList) {
+        closeList();
+        list = nextList;
+        out.push(`<${list}>`);
+      }
+      out.push(`<li>${renderInlineMarkdown(escapeHtml((ordered || unordered)![1]))}</li>`);
+      continue;
+    }
+
+    const quote = rawLine.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      flushParagraph();
+      closeList();
+      out.push(`<blockquote>${renderInlineMarkdown(escapeHtml(quote[1]))}</blockquote>`);
+      continue;
+    }
+
+    if (!rawLine.trim()) {
+      flushParagraph();
+      closeList();
+      continue;
+    }
+    closeList();
+    paragraph.push(escapeHtml(rawLine));
+  }
+
+  if (inCode) out.push(`<pre><code>${codeLines.join('\n')}</code></pre>`);
+  flushParagraph();
+  closeList();
+  return out.join('');
+}
+
+function renderInlineMarkdown(value: string): string {
+  let html = value;
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  html = html.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/__([^\n]+?)__/g, '<strong>$1</strong>');
+  html = html.replace(/(?<!\*)\*([^\n*]+?)\*(?!\*)/g, '<em>$1</em>');
+  html = html.replace(/(?<!_)_([^\n_]+?)_(?!_)/g, '<em>$1</em>');
   html = html.replace(/\\\[([\s\S]*?)\\\]/g, '<div class="studio-chat-math studio-math-block">\\[$1\\]</div>');
   html = html.replace(/\\\(([^\n]+?)\\\)/g, '<span class="studio-chat-math studio-math-inline">\\($1\\)</span>');
-  html = html.replace(/\*\*([^\n]+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/(?<!\*)\*([^\n*]+?)\*(?!\*)/g, '<em>$1</em>');
-  return html.replace(/\n/g, '<br />');
+  return html;
 }
 
 function escapeHtml(value: string): string {
