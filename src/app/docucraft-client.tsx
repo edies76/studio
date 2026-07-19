@@ -1771,9 +1771,11 @@ export default function DocsStudioClient({
     try {
       const buf = await file.arrayBuffer();
       const { html, fidelityHtml, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
-      const useFidelity = Boolean(fidelityHtml) && window.confirm(
-        '¿Importar con fidelidad visual de Word?\n\nAceptar: conserva tamaño, color, sangrías y tablas.\nCancelar: usa el modo editable semántico.',
-      );
+      // A Word import should open as the document the user recognises. The
+      // semantic converter remains available to briefs/reference extraction,
+      // but the editor must never interrupt the flow with a browser confirm
+      // that asks the user to choose between appearance and editability.
+      const useFidelity = Boolean(fidelityHtml);
       setDocumentTitle(titleHint.slice(0, 80));
       applyHtml(useFidelity ? fidelityHtml! : html, true, 'cascade');
       toast({ title: 'Word importado al lienzo', description: `${useFidelity ? 'Modo fidelidad visual. ' : 'Modo editable. '}${userSummary}`.slice(0, 240) });
