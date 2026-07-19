@@ -318,7 +318,7 @@ export default function FloatingComposer({
                   rows={1}
                   disabled={busy}
                   placeholder={
-                    isEdit ? 'Qué querés hacer con la selección…' : 'Escribí al agente…'
+                    isEdit ? 'What should we do with the selection…' : 'Message the agent…'
                   }
                   className="max-h-16 min-h-[32px] w-full resize-none bg-transparent py-1.5 text-[13px] font-medium text-neutral-900 outline-none placeholder:text-neutral-400"
                 />

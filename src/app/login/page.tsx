@@ -4,36 +4,39 @@ import { signIn } from 'next-auth/react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense } from 'react';
 import BrandMark from '@/components/brand-mark';
+import LocaleSwitch from '@/components/locale-switch';
+import { useLocale } from '@/lib/i18n/locale-context';
 import { cn } from '@/lib/utils';
 
 function LoginInner() {
   const params = useSearchParams();
   const router = useRouter();
+  const { t } = useLocale();
   const callbackUrl = params.get('callbackUrl') || '/home';
   const error = params.get('error');
 
   return (
     <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-[#f7f6f3] px-4">
+      <div className="absolute right-4 top-4">
+        <LocaleSwitch />
+      </div>
       <div className="w-full max-w-sm rounded-3xl border border-neutral-200/90 bg-white p-8 shadow-[0_20px_60px_rgba(0,0,0,0.06)]">
         <div className="mb-6 flex flex-col items-center text-center">
           <BrandMark size={44} />
           <h1 className="mt-4 text-[22px] font-semibold tracking-tight text-neutral-900">
-            Docs Studio
+            {t('login.title')}
           </h1>
-          <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500">
-            Podés trabajar sin cuenta. Google es opcional para sincronizar entre dispositivos.
-          </p>
+          <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500">{t('login.lede')}</p>
         </div>
 
         {error && (
           <p className="mb-4 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-center text-[12px] text-red-700">
             {error === 'Configuration' || error === 'OAuthCallback'
-              ? 'Google OAuth mal configurado (redirect_uri). Podés seguir sin cuenta.'
-              : 'No se pudo iniciar sesión con Google. Podés seguir sin cuenta.'}
+              ? t('login.errorConfig')
+              : t('login.error')}
           </p>
         )}
 
-        {/* Primary path: guest — login never required */}
         <button
           type="button"
           onClick={() => router.push(callbackUrl || '/home')}
@@ -43,17 +46,15 @@ function LoginInner() {
             'hover:bg-neutral-800 active:scale-[0.99]',
           )}
         >
-          Continuar sin cuenta
+          {t('login.guest')}
         </button>
 
-        <p className="mt-3 text-center text-[11px] text-neutral-400">
-          Invitado · documentos en este servidor (DynamoDB)
-        </p>
+        <p className="mt-3 text-center text-[11px] text-neutral-400">{t('login.guestHint')}</p>
 
         <div className="my-5 flex items-center gap-3">
           <span className="h-px flex-1 bg-neutral-200" />
           <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
-            opcional
+            {t('login.optional')}
           </span>
           <span className="h-px flex-1 bg-neutral-200" />
         </div>
@@ -68,18 +69,18 @@ function LoginInner() {
           )}
         >
           <GoogleIcon />
-          Entrar con Google
+          {t('login.google')}
         </button>
 
         <p className="mt-4 text-center text-[11px] leading-relaxed text-neutral-400">
-          Si Google falla (redirect_uri), no pasa nada: usá sin cuenta.
+          {t('login.googleFail')}
         </p>
 
         <a
           href="/studio"
           className="mt-4 block text-center text-[12px] font-medium text-neutral-500 underline-offset-2 hover:text-neutral-800 hover:underline"
         >
-          Ir directo al workspace
+          {t('login.workspace')}
         </a>
       </div>
     </div>
@@ -114,7 +115,7 @@ export default function LoginPage() {
     <Suspense
       fallback={
         <div className="flex min-h-[100dvh] items-center justify-center bg-[#f7f6f3] text-sm text-neutral-500">
-          Cargando…
+          Loading…
         </div>
       }
     >

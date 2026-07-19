@@ -55,7 +55,7 @@ function humanizeWarning(msg: string): string | null {
   if (!msg) return null;
   // Office Math — expected limit of mammoth
   if (/oMath|officeDocument\/2006\/math/i.test(msg)) {
-    return 'Fórmulas de Word (OMML) no se importan como LaTeX; revisá ecuaciones a mano.';
+    return 'Word equations (OMML) are not imported as LaTeX; review formulas manually.';
   }
   // Unrecognised style — extract name
   const style = msg.match(/Unrecognised paragraph style:\s*'([^']+)'/i);

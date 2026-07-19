@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { useLocale } from '@/lib/i18n/locale-context';
+import LocaleSwitch from '@/components/locale-switch';
 
 /**
- * Minimal landing chrome:
- * - Left: wordmark Docs + S (studio expands on scroll-down once, collapses on scroll-up)
- * - Right: section links + CTA only
- * No logo mark, no domain slogans in the bar.
+ * Slim header: wordmark left (studio expands on scroll-down), links + EN/ES + CTA right.
  */
 export default function LandingNav() {
+  const { t } = useLocale();
   const [studioOpen, setStudioOpen] = useState(false);
 
   useEffect(() => {
@@ -22,22 +22,18 @@ export default function LandingNav() {
       const goingDown = y > lastY;
       const goingUp = y < lastY;
 
-      // Trigger open once past a small threshold while scrolling down
       if (goingDown && y > 48 && !open) {
         open = true;
         setStudioOpen(true);
       }
-      // Close when user scrolls back toward the top
       if (goingUp && y < 80 && open) {
         open = false;
         setStudioOpen(false);
       }
-      // Also close fully at top
       if (y < 12 && open) {
         open = false;
         setStudioOpen(false);
       }
-
       lastY = y;
     };
 
@@ -56,23 +52,21 @@ export default function LandingNav() {
         <span className="landing-wordmark__s" aria-hidden="true">
           S
         </span>
-        <span
-          className="landing-wordmark__studio"
-          aria-hidden={!studioOpen}
-        >
+        <span className="landing-wordmark__studio" aria-hidden={!studioOpen}>
           tudio
         </span>
       </Link>
 
       <div className="landing-nav__right">
-        <nav className="landing-nav__links" aria-label="Secciones">
-          <a href="#producto">Qué es</a>
-          <a href="#canvas">El lienzo</a>
-          <a href="#control">Control</a>
-          <Link href="/mcp">MCP</Link>
+        <nav className="landing-nav__links" aria-label="Sections">
+          <a href="#producto">{t('nav.what')}</a>
+          <a href="#canvas">{t('nav.canvas')}</a>
+          <a href="#control">{t('nav.control')}</a>
+          <Link href="/mcp">{t('nav.mcp')}</Link>
         </nav>
+        <LocaleSwitch />
         <Link className="landing-nav__cta" href="/studio">
-          Abrir el workspace <span aria-hidden="true">↗</span>
+          {t('nav.open')} <span aria-hidden="true">↗</span>
         </Link>
       </div>
     </header>

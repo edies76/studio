@@ -372,7 +372,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
                   type: 'tool_end',
                   name,
                   ok: false,
-                  label: 'Bloque math → usá edit_equation',
+                  label: 'Math block → use edit_equation',
                   id: tid,
                 });
                 await reply({
@@ -430,7 +430,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 type: 'tool_end',
                 name,
                 ok: true,
-                label: `Bloque ${blockIndex} propuesto · aceptá o rechazá`,
+                label: `Block ${blockIndex} proposed · accept or reject`,
                 id: tid,
               });
               await reply({
@@ -506,7 +506,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 type: 'tool_end',
                 name,
                 ok: true,
-                label: `Propuesto: ${title} · aceptá o rechazá`,
+                label: `Proposed: ${title} · accept or reject`,
                 id: tid,
               });
               await reply({
@@ -640,7 +640,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 type: 'tool_end',
                 name,
                 ok: true,
-                label: `Ecuación ${equationIndex} propuesta · aceptá o rechazá`,
+                label: `Equation ${equationIndex} proposed · accept or reject`,
                 id: tid,
               });
               await reply({
@@ -784,7 +784,7 @@ G. read_document may show tag "math" for display equation blocks — use those i
 
         if (!finalText) {
           finalText = proposedSomething
-            ? 'Propuse cambios en el lienzo (ghost). Nada se aplicó todavía: aceptá o rechazá cada uno.'
+            ? 'I proposed canvas changes (ghost). Nothing applied yet: accept or reject each one.'
             : 'No pude completar la respuesta. ¿Lo intentamos de nuevo con más detalle?';
         }
 

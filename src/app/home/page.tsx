@@ -13,6 +13,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import BrandMark from '@/components/brand-mark';
+import LocaleSwitch from '@/components/locale-switch';
+import { useLocale } from '@/lib/i18n/locale-context';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 
@@ -40,6 +42,7 @@ export default function HomePage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const { toast } = useToast();
+  const { t } = useLocale();
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -122,6 +125,7 @@ export default function HomePage() {
             </span>
           </a>
           <div className="flex items-center gap-2">
+            <LocaleSwitch />
             {status === 'authenticated' && session?.user ? (
               <>
                 {session.user.image && (
@@ -141,7 +145,7 @@ export default function HomePage() {
                   className="flex h-9 items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 text-[12px] font-medium text-neutral-700 shadow-sm hover:bg-neutral-50"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  Salir
+                  {t('home.signOut')}
                 </button>
               </>
             ) : (
@@ -151,7 +155,7 @@ export default function HomePage() {
                 className="flex h-9 items-center gap-1.5 rounded-full bg-neutral-900 px-3.5 text-[12px] font-semibold text-white shadow-sm hover:bg-neutral-800"
               >
                 <LogIn className="h-3.5 w-3.5" />
-                Google
+                {t('home.google')}
               </button>
             )}
           </div>
@@ -162,15 +166,13 @@ export default function HomePage() {
         <div className="mb-8 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">
-              /home · Biblioteca
+              {t('home.library')}
             </p>
             <h1 className="mt-1 text-[28px] font-semibold tracking-tight text-neutral-900">
-              Tus documentos
+              {t('home.title')}
             </h1>
             <p className="mt-1 text-[13px] text-neutral-500">
-              {guest
-                ? 'Modo local — se guardan en este servidor. Abrí cada doc en /studio.'
-                : `Hola, ${userLabel.split(' ')[0]} · workspace en /studio`}
+              {guest ? t('home.guest') : userLabel}
             </p>
           </div>
           <button
@@ -188,7 +190,7 @@ export default function HomePage() {
             ) : (
               <FilePlus2 className="h-4 w-4" />
             )}
-            Documento en blanco
+            {t('home.blank')}
           </button>
         </div>
 
@@ -202,8 +204,8 @@ export default function HomePage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700 group-hover:bg-neutral-900 group-hover:text-white">
               <FilePlus2 className="h-5 w-5" />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">En blanco</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">Empezá desde cero</span>
+            <span className="mt-3 text-[14px] font-semibold">{t('home.blank')}</span>
+            <span className="mt-0.5 text-[12px] text-neutral-500">/studio</span>
           </button>
           <button
             type="button"
@@ -213,37 +215,35 @@ export default function HomePage() {
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
               <FileText className="h-5 w-5" />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">Desde una guía</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">Landing → parse brief → /studio</span>
+            <span className="mt-3 text-[14px] font-semibold">{t('home.fromGuide')}</span>
+            <span className="mt-0.5 text-[12px] text-neutral-500">{t('home.fromGuideSub')}</span>
           </button>
           <a
             href="/studio"
             onClick={(e) => {
               e.preventDefault();
-              void createDoc('Import / editar');
+              void createDoc('Import / edit');
             }}
             className="group flex flex-col items-start rounded-2xl border border-neutral-200 bg-white p-5 text-left shadow-sm transition hover:shadow-md"
           >
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-neutral-100 text-neutral-700">
               <MoreHorizontal className="h-5 w-5" />
             </span>
-            <span className="mt-3 text-[14px] font-semibold">Abrir en /studio</span>
-            <span className="mt-0.5 text-[12px] text-neutral-500">Importá .docx en el lienzo</span>
+            <span className="mt-3 text-[14px] font-semibold">{t('home.openStudio')}</span>
+            <span className="mt-0.5 text-[12px] text-neutral-500">{t('home.openStudioSub')}</span>
           </a>
         </div>
 
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[13px] font-semibold text-neutral-700">Recientes</h2>
+          <h2 className="text-[13px] font-semibold text-neutral-700">{t('home.recent')}</h2>
           {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-neutral-400" />}
         </div>
 
         {!loading && docs.length === 0 && (
           <div className="rounded-2xl border border-neutral-200 bg-white px-6 py-14 text-center shadow-sm">
             <FileText className="mx-auto h-8 w-8 text-neutral-300" />
-            <p className="mt-3 text-[14px] font-medium text-neutral-700">Todavía no hay documentos</p>
-            <p className="mt-1 text-[12px] text-neutral-450 text-neutral-500">
-              Creá uno en blanco o partí de un tema.
-            </p>
+            <p className="mt-3 text-[14px] font-medium text-neutral-700">{t('home.empty')}</p>
+            <p className="mt-1 text-[12px] text-neutral-500">{t('home.emptySub')}</p>
           </div>
         )}
 
