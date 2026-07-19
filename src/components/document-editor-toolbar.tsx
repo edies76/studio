@@ -135,7 +135,7 @@ export default function DocumentEditorToolbar({
     'h-8 w-8 text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 rounded-md';
 
   return (
-    <div className="flex flex-nowrap items-center gap-0.5 bg-transparent px-2 py-1.5 text-neutral-800">
+    <div data-document-editor-toolbar className="flex flex-nowrap items-center gap-0.5 bg-transparent px-2 py-1.5 text-neutral-800">
       <Button variant="ghost" size="icon" className={btn} disabled={!canUndo} onClick={onUndo} title="Undo">
         <Undo2 className="h-4 w-4" strokeWidth={1.5} />
       </Button>
@@ -178,16 +178,16 @@ export default function DocumentEditorToolbar({
 
       <div className="mx-1 h-5 w-px bg-neutral-200" />
 
-      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('bold')} title="Bold">
+      <Button variant="ghost" size="icon" className={btn} onMouseDown={(event) => event.preventDefault()} onClick={() => applyCommand('bold')} title="Bold">
         <Bold className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('italic')} title="Italic">
+      <Button variant="ghost" size="icon" className={btn} onMouseDown={(event) => event.preventDefault()} onClick={() => applyCommand('italic')} title="Italic">
         <Italic className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('underline')} title="Underline">
+      <Button variant="ghost" size="icon" className={btn} onMouseDown={(event) => event.preventDefault()} onClick={() => applyCommand('underline')} title="Underline">
         <Underline className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('strikeThrough')} title="Strikethrough">
+      <Button variant="ghost" size="icon" className={btn} onMouseDown={(event) => event.preventDefault()} onClick={() => applyCommand('strikeThrough')} title="Strikethrough">
         <Strikethrough className="h-4 w-4" strokeWidth={1.5} />
       </Button>
       <DropdownMenu>

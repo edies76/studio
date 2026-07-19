@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { NextRequest } from 'next/server';
 import { authenticateMcpBearer } from '@/mcp/auth';
+import { localMcpEnabled } from '@/mcp/credentials';
 import { createCloudDocsStudioMcpServer } from '@/mcp/cloud-server';
 import { storageBackend } from '@/lib/doc-store';
 
@@ -36,7 +37,7 @@ async function handle(request: NextRequest) {
   try {
     // Hosted credentials are stored per Google user in DynamoDB. Static
     // environment keys remain supported for service agents and migrations.
-    if (storageBackend() !== 'dynamodb' && process.env.MCP_ALLOW_LOCAL !== '1') {
+    if (storageBackend() !== 'dynamodb' && !localMcpEnabled()) {
       return jsonError('MCP cloud storage is not configured. Set AWS_REGION, DOCS_TABLE, and an AWS runtime role.', 503);
     }
     const principal = await authenticateMcpBearer(request);

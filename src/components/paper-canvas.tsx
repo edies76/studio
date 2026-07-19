@@ -90,10 +90,7 @@ type TableToolsRect = {
 
 type SelectionBookmark = { start: number; end: number };
 
-function selectionBookmark(bodies: HTMLElement[]): SelectionBookmark | null {
-  const selection = window.getSelection();
-  if (!selection?.rangeCount) return null;
-  const range = selection.getRangeAt(0);
+function bookmarkForRange(range: Range, bodies: HTMLElement[]): SelectionBookmark | null {
   const startBody = bodyContaining(range.startContainer, bodies);
   const endBody = bodyContaining(range.endContainer, bodies);
   if (!startBody || !endBody) return null;
@@ -110,6 +107,12 @@ function selectionBookmark(bodies: HTMLElement[]): SelectionBookmark | null {
     start: startPrefix + offsetInBody(startBody, range.startContainer, range.startOffset),
     end: endPrefix + offsetInBody(endBody, range.endContainer, range.endOffset),
   };
+}
+
+function selectionBookmark(bodies: HTMLElement[]): SelectionBookmark | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return null;
+  return bookmarkForRange(selection.getRangeAt(0), bodies);
 }
 
 function restoreSelectionBookmark(bookmark: SelectionBookmark, bodies: HTMLElement[], lastSelection: MutableRefObject<Range | null>) {
@@ -502,7 +505,18 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         const selected = window.getSelection()?.anchorNode ?? lastSelection.current?.startContainer ?? null;
         const body = bodyContaining(selected, bodies) || bodies[activePage] || bodies[0];
         const index = Math.max(0, bodies.indexOf(body));
-        scheduleRebalance(index, selectionBookmark(bodies));
+        const liveBookmark = selectionBookmark(bodies);
+        const rememberedBookmark = lastSelection.current
+          ? bookmarkForRange(lastSelection.current, bodies)
+          : null;
+        // Toolbar clicks can collapse the browser selection after the command
+        // has run. Keep the last non-collapsed range in that case so a second
+        // formatting action still targets the same text.
+        const bookmark =
+          liveBookmark && (liveBookmark.start !== liveBookmark.end || !rememberedBookmark || rememberedBookmark.start === rememberedBookmark.end)
+            ? liveBookmark
+            : rememberedBookmark || liveBookmark;
+        scheduleRebalance(index, bookmark);
         requestAnimationFrame(() => onInput());
       },
       insertImage: async (file: File) => {
