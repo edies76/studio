@@ -90,6 +90,17 @@ type TableToolsRect = {
 
 type SelectionBookmark = { start: number; end: number };
 
+// TextContent ignores non-text editing positions. Treat embedded document
+// objects as one logical character, just like native editors do, so a caret
+// immediately before/after an image or formula survives page reflow.
+const ATOMIC_SELECTION = 'img, br, hr, [data-tex], .studio-math-inline, .studio-math-block';
+
+function atomicUnits(root: ParentNode): number {
+  return Array.from(root.querySelectorAll(ATOMIC_SELECTION)).filter(
+    (node) => !node.parentElement?.closest(ATOMIC_SELECTION),
+  ).length;
+}
+
 function bookmarkForRange(range: Range, bodies: HTMLElement[]): SelectionBookmark | null {
   const startBody = bodyContaining(range.startContainer, bodies);
   const endBody = bodyContaining(range.endContainer, bodies);
@@ -99,10 +110,12 @@ function bookmarkForRange(range: Range, bodies: HTMLElement[]): SelectionBookmar
     const prefix = document.createRange();
     prefix.selectNodeContents(body);
     prefix.setEnd(node, offset);
-    return prefix.toString().length;
+    const fragment = prefix.cloneContents();
+    return prefix.toString().length + atomicUnits(fragment);
   };
-  const startPrefix = bodies.slice(0, bodies.indexOf(startBody)).reduce((sum, body) => sum + body.textContent!.length, 0);
-  const endPrefix = bodies.slice(0, bodies.indexOf(endBody)).reduce((sum, body) => sum + body.textContent!.length, 0);
+  const logicalLength = (body: HTMLElement) => (body.textContent?.length ?? 0) + atomicUnits(body);
+  const startPrefix = bodies.slice(0, bodies.indexOf(startBody)).reduce((sum, body) => sum + logicalLength(body), 0);
+  const endPrefix = bodies.slice(0, bodies.indexOf(endBody)).reduce((sum, body) => sum + logicalLength(body), 0);
   return {
     start: startPrefix + offsetInBody(startBody, range.startContainer, range.startOffset),
     end: endPrefix + offsetInBody(endBody, range.endContainer, range.endOffset),
@@ -119,9 +132,30 @@ function restoreSelectionBookmark(bookmark: SelectionBookmark, bodies: HTMLEleme
   const pointAt = (absoluteOffset: number) => {
     let remaining = Math.max(0, absoluteOffset);
     for (const body of bodies) {
-      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+        acceptNode(node) {
+          if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+          if (!(node instanceof HTMLElement) || !node.matches(ATOMIC_SELECTION)) return NodeFilter.FILTER_SKIP;
+          return node.parentElement?.closest(ATOMIC_SELECTION)
+            ? NodeFilter.FILTER_REJECT
+            : NodeFilter.FILTER_ACCEPT;
+        },
+      });
       let node = walker.nextNode();
       while (node) {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+          if (remaining === 0) {
+            const parent = node.parentNode || body;
+            return { node: parent, offset: Array.prototype.indexOf.call(parent.childNodes, node), body };
+          }
+          remaining -= 1;
+          if (remaining === 0) {
+            const parent = node.parentNode || body;
+            return { node: parent, offset: Array.prototype.indexOf.call(parent.childNodes, node) + 1, body };
+          }
+          node = walker.nextNode();
+          continue;
+        }
         const length = node.textContent?.length ?? 0;
         if (remaining <= length) return { node, offset: remaining, body };
         remaining -= length;
@@ -385,6 +419,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const bodyRefs = useRef<(HTMLDivElement | null)[]>([]);
   const skipInput = useRef(false);
   const rebalanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Replacing a contentEditable subtree during IME composition destroys the
+  // browser-owned composing range. Defer layout until it has committed.
+  const isComposing = useRef(false);
+  const deferredRebalance = useRef<{ pageIdx: number; bookmark: SelectionBookmark | null } | null>(null);
   const lastExternalHtml = useRef<string | null>(null);
   const lastSelection = useRef<Range | null>(null);
   const pageNotify = useRef(1);
@@ -467,7 +505,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   );
 
   const scheduleRebalance = useCallback(
-    (pageIdx: number, bookmark?: SelectionBookmark | null) => {
+    (pageIdx: number, bookmark?: SelectionBookmark | null, delay = REBALANCE_MS) => {
+      if (isComposing.current) {
+        deferredRebalance.current = { pageIdx, bookmark: bookmark ?? null };
+        return;
+      }
       if (rebalanceTimer.current) clearTimeout(rebalanceTimer.current);
       rebalanceTimer.current = setTimeout(() => {
         const liveCount = Math.max(bodyRefs.current.filter(Boolean).length, 1);
@@ -500,7 +542,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           skipInput.current = false;
           onInput();
         });
-      }, REBALANCE_MS);
+      }, delay);
     },
     [metrics, styleOpts, onInput],
   );
@@ -960,10 +1002,40 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     if (selectedImage && !liveBodies().some((b) => b.contains(selectedImage))) {
       setSelectedImage(null);
     }
-    // Capture after the browser mutation (including Enter) so page reflow can
-    // rebuild DOM without stealing the caret to a page end.
-    scheduleRebalance(pageIdx, selectionBookmark(liveBodies()));
+    // Repacking every input rewrote the active DOM after a short debounce,
+    // even while the page had plenty of space. That was the source of the
+    // disappearing/jumping caret. Only layout immediately on real overflow.
+    const body = bodyRefs.current[pageIdx];
+    if (body && body.scrollHeight > body.clientHeight + 2) {
+      scheduleRebalance(pageIdx, selectionBookmark(liveBodies()), 0);
+    }
     onInput();
+  };
+
+  const handlePageBlur = (pageIdx: number) => {
+    if (skipInput.current || isComposing.current) return;
+    rememberSelection();
+    // Blur is an idle boundary: compact pages after deletion without
+    // replacing DOM in the middle of normal typing.
+    scheduleRebalance(pageIdx, selectionBookmark(liveBodies()), 0);
+  };
+
+  const handleCompositionStart = () => {
+    isComposing.current = true;
+    if (rebalanceTimer.current) {
+      clearTimeout(rebalanceTimer.current);
+      rebalanceTimer.current = null;
+    }
+  };
+
+  const handleCompositionEnd = (pageIdx: number) => {
+    isComposing.current = false;
+    requestAnimationFrame(() => {
+      const pending = deferredRebalance.current;
+      deferredRebalance.current = null;
+      if (pending) scheduleRebalance(pending.pageIdx, pending.bookmark, 0);
+      else handlePageInput(pageIdx);
+    });
   };
 
   const handlePaste = (pageIdx: number, event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -1384,8 +1456,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       suppressContentEditableWarning
                       onScroll={(e) => { (e.currentTarget as HTMLElement).scrollTop = 0; }}
                       onInput={() => handlePageInput(i)}
+                      onBlur={() => handlePageBlur(i)}
                       onPaste={(e) => handlePaste(i, e)}
                       onKeyDown={(e) => handleKeyDown(i, e)}
+                      onCompositionStart={handleCompositionStart}
+                      onCompositionEnd={() => handleCompositionEnd(i)}
                       onPointerDown={(e) => handleEditorPointerDown(i, e)}
                       onMouseDown={(e) => handleEditorMouseDown(i, e)}
                       onMouseUp={handleEditorMouseUp}
