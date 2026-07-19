@@ -285,6 +285,20 @@
     height: auto !important;
   }
 
+  /* A fixed sheet must never crop one oversized imported object. Keep the
+     object editable and in flow, then the paginator can move its block to a
+     fresh sheet instead of leaving its lower half behind overflow:hidden. */
+  .studio-doc-editor img:not([data-studio-wrap='behind']),
+  .studio-doc-editor svg {
+    max-height: calc(100% - 4rem);
+    object-fit: contain;
+  }
+
+  .studio-doc-editor .studio-math-block:not([data-studio-wrap='behind']) {
+    max-height: calc(100% - 4rem);
+    overflow-y: auto;
+  }
+
   .studio-doc-editor img[data-studio-image-selected='1'] {
     outline: 2px solid rgba(93, 63, 48, 0.72);
     outline-offset: 2px;
