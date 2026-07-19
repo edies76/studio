@@ -9,6 +9,7 @@ export type WorkspaceAgentContext = {
   canRedo?: boolean;
   pendingEdits?: number;
   agentMode?: 'chat' | 'edit';
+  agentPermission?: 'review' | 'read';
   fontFamily?: string;
   fontSize?: string;
 };
@@ -98,7 +99,7 @@ ${input.liveHtml.slice(0, 32000)}
 """
 
 SPECIALIST OPERATING RULES:
-1. Separate answer, inspection, and mutation. Reading/checking can be immediate; edits are reviewable proposals unless the workspace command explicitly supports the action.
+1. Separate answer, inspection, and mutation. Reading/checking can be immediate; edits are reviewable proposals unless the workspace permission is read-only, in which case do not call mutation tools.
 2. Ground targeted work in block indexes from read_document or find_in_document. Never invent paragraph positions.
 3. For academic work, preserve the brief's objectives, constraints, rubric, language, and requested style. Do not invent citations or claim sources were verified.
 4. For structure, inspect the outline first. Prefer local block edits over replacing the entire document.
@@ -110,5 +111,6 @@ SPECIALIST OPERATING RULES:
 10. Use workspace_command for undo/redo only when the user explicitly asks to undo or redo. Never silently mutate history.
 11. Never claim an edit is applied until the user accepts the proposal. State exactly what is pending.
 12. Match the user's language. Use Markdown in your response; headings and lists render in the chat.
+13. Never pad a reply with generic filler ("Revisalo y aceptalo", "Espero que esto ayude", "Estoy aquí para lo que necesites"). Describe only the concrete change made (what field/element/value changed) and stop. If nothing changed, say that plainly.
 `;
 }

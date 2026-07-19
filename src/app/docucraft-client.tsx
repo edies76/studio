@@ -42,6 +42,7 @@ import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
 import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
@@ -126,6 +127,8 @@ export default function DocsStudioClient({
   /** Ephemeral agent input — not always on canvas */
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<'chat' | 'edit'>('chat');
+  /** Hides the floating composer during export, regardless of agentVisibility. */
+  const [isExporting, setIsExporting] = useState(false);
   const selectionRef = useRef<Range | null>(null);
   const selectedTextRef = useRef('');
   const abortRef = useRef<AbortController | null>(null);
@@ -957,6 +960,7 @@ export default function DocsStudioClient({
               canRedo: historyIndexRef.current < historyRef.current.length - 1,
               pendingEdits: pendingEdits.filter((edit) => edit.status === 'pending').length,
               agentMode,
+              agentPermission: prefs.agentPermission,
               fontFamily,
               fontSize,
             },
@@ -1143,7 +1147,7 @@ export default function DocsStudioClient({
         }
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, fontFamily, fontSize, documentBriefContext, undo, redo],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, prefs.agentPermission, fontFamily, fontSize, documentBriefContext, undo, redo],
   );
 
   useEffect(() => {
@@ -1542,17 +1546,30 @@ export default function DocsStudioClient({
   const handleExportPdf = async () => {
     if (!canvasRef.current) return;
     setIsBusy(true);
+    // Hide the floating composer so it never gets captured or left open
+    // while the user is exporting (works even in "always visible" mode).
+    setIsExporting(true);
     let clone: HTMLDivElement | null = null;
     try {
       const source = document.createElement('div');
       source.innerHTML = sanitizeDocumentHtml(readEditorHtml());
       clone = source;
       clone.className = 'studio-export-pdf';
+      // A clone parked far off-screen (left:-10000px) is exactly what made
+      // the PDF come out blank: html2canvas (which jsPDF.html() relies on)
+      // renders based on the element's real viewport position, and content
+      // thousands of pixels away is captured as an empty canvas. Keep the
+      // clone inside the viewport and simply hide it visually instead.
       clone.style.position = 'fixed';
-      clone.style.left = '-10000px';
+      clone.style.left = '0';
       clone.style.top = '0';
-      clone.style.width = `${paperSize === 'legal' ? 540 : 540}px`;
+      clone.style.zIndex = '-1';
+      clone.style.opacity = '0';
+      clone.style.pointerEvents = 'none';
+      const pageWidthPx = paperSize === 'legal' ? 612 : 612;
+      clone.style.width = `${pageWidthPx}px`;
       clone.style.padding = '48px';
+      clone.style.boxSizing = 'border-box';
       clone.style.background = '#ffffff';
       clone.style.color = '#111111';
       clone.style.fontFamily = fontFamily;
@@ -1579,30 +1596,54 @@ export default function DocsStudioClient({
       if (mathJax?.startup?.promise) await mathJax.startup.promise;
       if (mathJax?.typesetPromise) await mathJax.typesetPromise([clone]);
       await Promise.all(Array.from(clone.querySelectorAll('img')).map((image) => image.complete ? Promise.resolve() : new Promise<void>((resolve) => { image.addEventListener('load', () => resolve(), { once: true }); image.addEventListener('error', () => resolve(), { once: true }); })));
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'pt',
-        format: paperSize === 'legal' ? [612, 1008] : 'letter',
+      // Give the browser one more frame so layout/fonts settle before capture.
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const canvas = await html2canvas(clone, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        logging: false,
+        windowWidth: pageWidthPx,
       });
-      await pdf.html(clone, {
-        callback: (doc) => {
-          doc.save(`${documentTitle || 'docs-studio'}.pdf`);
-          toast({ title: 'PDF exported' });
-        },
-        width: paperSize === 'legal' ? 516 : 516,
-        windowWidth: clone.scrollWidth || 900,
-        autoPaging: 'text',
-      });
-    } catch {
-      toast({ variant: 'destructive', title: 'PDF export failed' });
+      if (!canvas.width || !canvas.height) throw new Error('Empty render');
+
+      const pageWidthPt = paperSize === 'legal' ? 612 : 612;
+      const pageHeightPt = paperSize === 'legal' ? 1008 : 792;
+      const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: [pageWidthPt, pageHeightPt] });
+      const pxPerPt = canvas.width / pageWidthPt;
+      const pageHeightPx = Math.floor(pageHeightPt * pxPerPt);
+      const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
+
+      for (let page = 0; page < totalPages; page++) {
+        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - page * pageHeightPx);
+        const sliceCanvas = document.createElement('canvas');
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = sliceHeightPx;
+        const ctx = sliceCanvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        ctx.drawImage(canvas, 0, -page * pageHeightPx);
+        const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
+        if (page > 0) pdf.addPage([pageWidthPt, pageHeightPt]);
+        pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthPt, sliceHeightPx / pxPerPt);
+      }
+
+      pdf.save(`${documentTitle || 'docs-studio'}.pdf`);
+      toast({ title: 'PDF exportado' });
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'No se pudo exportar el PDF', description: e?.message });
     } finally {
       clone?.remove();
       setIsBusy(false);
+      setIsExporting(false);
     }
   };
 
   const handleExportWord = async () => {
     if (!canvasRef.current) return;
+    setIsExporting(true);
     try {
       typesetAll();
       await new Promise((r) => setTimeout(r, 120));
@@ -1644,6 +1685,8 @@ export default function DocsStudioClient({
       pushEvent({ type: 'local_edit', title: 'Export .doc', summary: 'fallback' });
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'Export falló', description: e?.message });
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -1983,10 +2026,11 @@ export default function DocsStudioClient({
               <ZoomControl zoom={zoom} onZoom={setZoom} />
             </div>
 
-            {/* Ephemeral agent input — only when opened (or always mode) */}
-            {prefs.agentVisibility !== 'hidden' && (
+            {/* Ephemeral agent input — only when opened (or always mode), and
+                never while an export is capturing the canvas. */}
+            {prefs.agentVisibility !== 'hidden' && !isExporting && (
               <FloatingComposer
-                open={agentOpen || prefs.agentVisibility === 'always'}
+                open={(agentOpen || prefs.agentVisibility === 'always') && !isExporting}
                 onClose={closeAgent}
                 value={chatInput}
                 onChange={setChatInput}

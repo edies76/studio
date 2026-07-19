@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 export type AgentVisibility = 'auto' | 'always' | 'hidden';
+export type AgentPermission = 'review' | 'read';
 
 export type StudioPrefs = {
   showEditButton: boolean;
@@ -23,6 +24,8 @@ export type StudioPrefs = {
   imageMaxMb: number;
   /** How the agent input appears */
   agentVisibility: AgentVisibility;
+  /** Whether the agent may propose mutations or only inspect/answer. */
+  agentPermission: AgentPermission;
   /** Show "open agent" inside Tools dock */
   showAgentInTools: boolean;
   /** Show format bar on text selection */
@@ -41,6 +44,7 @@ export const DEFAULT_PREFS: StudioPrefs = {
   allowImages: true,
   imageMaxMb: 5,
   agentVisibility: 'auto',
+  agentPermission: 'review',
   showAgentInTools: true,
   showSelectionToolbar: true,
   showSelectionAi: true,
@@ -264,6 +268,34 @@ export default function StudioSettings({
           {section === 'agent' && (
             <div className="space-y-5">
               <Header title="Agente" sub="Input flotante, Tools y atajos" />
+
+              <div>
+                <p className="mb-2 text-[12px] font-medium text-neutral-700">Permiso de edición</p>
+                <div className="flex flex-col gap-1.5">
+                  {([
+                    { id: 'review' as const, name: 'Proponer para revisar', d: 'Puede analizar y preparar cambios; tú decides qué entra.' },
+                    { id: 'read' as const, name: 'Solo lectura', d: 'Puede leer, buscar y validar, pero no cambiar el documento.' },
+                  ] as const).map((o) => (
+                    <button
+                      key={o.id}
+                      type="button"
+                      onClick={() => set({ agentPermission: o.id })}
+                      className={cn(
+                        'flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors',
+                        prefs.agentPermission === o.id
+                          ? 'border-neutral-900 bg-neutral-50'
+                          : 'border-neutral-200 hover:bg-neutral-50/80',
+                      )}
+                    >
+                      <span className={cn('mt-0.5 h-4 w-4 shrink-0 rounded-full border-2', prefs.agentPermission === o.id ? 'border-neutral-900 bg-neutral-900' : 'border-neutral-300')} />
+                      <div>
+                        <div className="text-[13px] font-semibold text-neutral-900">{o.name}</div>
+                        <div className="text-[11px] text-neutral-400">{o.d}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
               <div>
                 <p className="mb-2 text-[12px] font-medium text-neutral-700">Visibilidad del input</p>

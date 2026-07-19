@@ -289,9 +289,10 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               },
             });
             send({ type: 'tool_end', name: 'format_document', ok: true, label: 'Formato propuesto · aceptá para aplicarlo', id });
-            const finalText = scope === 'document'
-              ? 'Preparé el cambio de formato para todo el documento. Revisalo y aceptalo para aplicarlo; todavía no se ha modificado el lienzo.'
-              : 'Preparé el cambio de formato para la selección. Revisalo y aceptalo para aplicarlo.';
+            // Describe exactly what changed instead of a canned "revisalo y
+            // aceptalo" line repeated on every request.
+            const scopeLabel = scope === 'document' ? 'todo el documento' : 'la selección';
+            const finalText = `${formatted.declarations.join(', ')} en ${scopeLabel}.`;
             send({ type: 'text', delta: finalText });
             const durationMs = Date.now() - t0;
             slog.info('chat', 'request.done', {
@@ -514,6 +515,20 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 content: JSON.stringify(responseObj),
               });
             };
+
+            const readOnly = workspaceContext?.agentPermission === 'read';
+            const mutatingTools = new Set([
+              'workspace_command', 'propose_edit', 'edit_paragraph', 'format_document',
+              'insert_table', 'edit_table_cell', 'insert_image', 'insert_page_break',
+              'insert_equation', 'edit_equation',
+            ]);
+            if (readOnly && mutatingTools.has(name)) {
+              const tid = `permission_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Comprobando permisos…', id: tid });
+              send({ type: 'tool_end', name, ok: false, label: 'Modo solo lectura', id: tid });
+              await reply({ ok: false, error: 'The workspace is in read-only mode. Inspect and report; do not mutate the document.' });
+              continue;
+            }
 
             slog.info('chat', 'tool.invoke', { round, name, callId, argsKeys: Object.keys(args || {}) });
 
