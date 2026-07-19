@@ -41,8 +41,7 @@ import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import OnlyOfficeEditor from '@/components/onlyoffice-editor';
 
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
 
@@ -88,6 +87,8 @@ export default function DocsStudioClient({
   const { toast } = useToast();
 
   const [documentTitle, setDocumentTitle] = useState('Untitled');
+  const [sourceDocx, setSourceDocx] = useState<{ fileName: string; size: number; updatedAt: number } | null>(null);
+  const [officeOpen, setOfficeOpen] = useState(false);
   const [documentBriefContext, setDocumentBriefContext] = useState('');
   const [documentContent, setDocumentContent] = useState('');
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
@@ -563,6 +564,7 @@ export default function DocsStudioClient({
         if (cancelled || !data.doc) return;
         setDocId(data.doc.id);
         setDocumentTitle(data.doc.title || 'Untitled');
+        setSourceDocx(data.doc.sourceDocx || null);
         if (data.doc.brief) {
           setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
         }
@@ -1687,97 +1689,98 @@ export default function DocsStudioClient({
 
   const handleExportPdf = async () => {
     if (!canvasRef.current) return;
-    setIsBusy(true);
-    // Hide the floating composer so it never gets captured or left open
-    // while the user is exporting (works even in "always visible" mode).
     setIsExporting(true);
-    let clone: HTMLDivElement | null = null;
+    setIsBusy(true);
     try {
-      const source = document.createElement('div');
-      source.innerHTML = sanitizeDocumentHtml(readEditorHtml());
-      clone = source;
-      clone.className = 'studio-export-pdf';
-      // A clone parked far off-screen (left:-10000px) is exactly what made
-      // the PDF come out blank: html2canvas (which jsPDF.html() relies on)
-      // renders based on the element's real viewport position, and content
-      // thousands of pixels away is captured as an empty canvas. Keep the
-      // clone inside the viewport and simply hide it visually instead.
-      clone.style.position = 'fixed';
-      clone.style.left = '0';
-      clone.style.top = '0';
-      clone.style.zIndex = '-1';
-      clone.style.opacity = '0';
-      clone.style.pointerEvents = 'none';
-      const pageWidthPx = paperSize === 'legal' ? 612 : 612;
-      clone.style.width = `${pageWidthPx}px`;
-      clone.style.padding = '48px';
-      clone.style.boxSizing = 'border-box';
-      clone.style.background = '#ffffff';
-      clone.style.color = '#111111';
-      clone.style.fontFamily = fontFamily;
-      clone.style.fontSize = fontSize;
-      clone.style.lineHeight = '1.65';
-      clone.querySelectorAll('table').forEach((table) => {
-        const element = table as HTMLElement;
-        element.style.width = '100%';
-        element.style.borderCollapse = 'collapse';
-        element.style.margin = '14px 0';
-        table.querySelectorAll('th,td').forEach((cell) => {
-          const item = cell as HTMLElement;
-          item.style.border = '1px solid #b9b1a8';
-          item.style.padding = '7px 9px';
-          item.style.verticalAlign = 'top';
-        });
-      });
-      clone.querySelectorAll('img').forEach((image) => {
-        image.style.maxWidth = '100%';
-        image.style.height = 'auto';
-      });
-      document.body.appendChild(clone);
+      const html = sanitizeDocumentHtml(readEditorHtml());
+
+      // Page size dimensions (in mm for @page CSS)
+      const pageSizeMm = paperSize === 'legal' ? '215.9mm 355.6mm' : paperSize === 'a4' ? '210mm 297mm' : '215.9mm 279.4mm';
+      const marginMm = prefs.marginPreset === 'narrow' ? '12mm' : prefs.marginPreset === 'wide' ? '25mm' : '18mm';
+
+      // Wait for MathJax on current page so equations are already rendered
       const mathJax = (window as any).MathJax;
       if (mathJax?.startup?.promise) await mathJax.startup.promise;
-      if (mathJax?.typesetPromise) await mathJax.typesetPromise([clone]);
-      await Promise.all(Array.from(clone.querySelectorAll('img')).map((image) => image.complete ? Promise.resolve() : new Promise<void>((resolve) => { image.addEventListener('load', () => resolve(), { once: true }); image.addEventListener('error', () => resolve(), { once: true }); })));
-      // Give the browser one more frame so layout/fonts settle before capture.
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      const canvas = await html2canvas(clone, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true,
-        logging: false,
-        windowWidth: pageWidthPx,
+      const printHtml = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${(documentTitle || 'documento').replace(/</g, '&lt;')}</title>
+<style>
+  @page { size: ${pageSizeMm}; margin: ${marginMm}; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    font-family: ${fontFamily};
+    font-size: ${fontSize};
+    line-height: 1.65;
+    color: #111;
+    background: #fff;
+  }
+  p { margin: 0.5em 0; }
+  h1 { font-size: 1.8em; font-weight: 700; margin: 1em 0 0.4em; }
+  h2 { font-size: 1.4em; font-weight: 600; margin: 0.9em 0 0.35em; }
+  h3 { font-size: 1.15em; font-weight: 600; margin: 0.8em 0 0.3em; }
+  h4, h5, h6 { font-size: 1em; font-weight: 600; margin: 0.7em 0 0.25em; }
+  ul, ol { margin: 0.4em 0; padding-left: 1.6em; }
+  li { margin: 0.2em 0; }
+  blockquote { border-left: 3px solid #ccc; margin: 0.6em 0; padding: 0.2em 0.8em; color: #555; }
+  pre { background: #f4f4f4; padding: 0.8em 1em; border-radius: 4px; overflow-wrap: break-word; white-space: pre-wrap; font-size: 0.88em; }
+  code { font-family: monospace; font-size: 0.9em; }
+  table { width: 100%; border-collapse: collapse; margin: 0.8em 0; page-break-inside: avoid; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; vertical-align: top; text-align: left; }
+  th { background: #f7f7f7; font-weight: 600; }
+  img { max-width: 100%; height: auto; display: block; page-break-inside: avoid; }
+  mjx-container { display: inline; }
+  a { color: inherit; text-decoration: underline; }
+  @media print {
+    body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>${html}</body>
+</html>`;
+
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;border:none;';
+      document.body.appendChild(iframe);
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Print iframe timed out')), 15000);
+        iframe.onload = async () => {
+          try {
+            const iDoc = iframe.contentDocument!;
+            // Re-run MathJax inside iframe if available
+            const iWin = iframe.contentWindow as any;
+            if (iWin?.MathJax?.typesetPromise) {
+              await iWin.MathJax.typesetPromise();
+            }
+            // Wait for images inside iframe
+            const imgs = Array.from(iDoc.querySelectorAll('img'));
+            await Promise.all(imgs.map((img) => img.complete ? Promise.resolve() : new Promise<void>((res) => {
+              img.addEventListener('load', () => res(), { once: true });
+              img.addEventListener('error', () => res(), { once: true });
+            })));
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+            clearTimeout(timeout);
+            iWin.focus();
+            iWin.print();
+            resolve();
+          } catch (err) {
+            clearTimeout(timeout);
+            reject(err);
+          }
+        };
+        iframe.srcdoc = printHtml;
       });
-      if (!canvas.width || !canvas.height) throw new Error('Empty render');
 
-      const pageWidthPt = paperSize === 'legal' ? 612 : 612;
-      const pageHeightPt = paperSize === 'legal' ? 1008 : 792;
-      const pdf = new jsPDF({ orientation: 'p', unit: 'pt', format: [pageWidthPt, pageHeightPt] });
-      const pxPerPt = canvas.width / pageWidthPt;
-      const pageHeightPx = Math.floor(pageHeightPt * pxPerPt);
-      const totalPages = Math.max(1, Math.ceil(canvas.height / pageHeightPx));
-
-      for (let page = 0; page < totalPages; page++) {
-        const sliceHeightPx = Math.min(pageHeightPx, canvas.height - page * pageHeightPx);
-        const sliceCanvas = document.createElement('canvas');
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = sliceHeightPx;
-        const ctx = sliceCanvas.getContext('2d');
-        if (!ctx) continue;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-        ctx.drawImage(canvas, 0, -page * pageHeightPx);
-        const imgData = sliceCanvas.toDataURL('image/jpeg', 0.95);
-        if (page > 0) pdf.addPage([pageWidthPt, pageHeightPt]);
-        pdf.addImage(imgData, 'JPEG', 0, 0, pageWidthPt, sliceHeightPx / pxPerPt);
-      }
-
-      pdf.save(`${documentTitle || 'docs-studio'}.pdf`);
-      toast({ title: 'PDF exportado' });
+      // Remove iframe after short delay to ensure print dialog opened
+      setTimeout(() => iframe.remove(), 2000);
+      toast({ title: 'Diálogo de impresión abierto — guarda como PDF' });
     } catch (e: any) {
       toast({ variant: 'destructive', title: 'No se pudo exportar el PDF', description: e?.message });
     } finally {
-      clone?.remove();
       setIsBusy(false);
       setIsExporting(false);
     }
@@ -1854,6 +1857,16 @@ export default function DocsStudioClient({
       const useFidelity = Boolean(fidelityHtml);
       setDocumentTitle(titleHint.slice(0, 80));
       applyHtml(useFidelity ? fidelityHtml! : html, true, 'cascade');
+      // Keep the original OOXML beside the editable canvas. When OnlyOffice
+      // is configured this unlocks true Word-layout editing instead of a
+      // lossy HTML reconstruction.
+      if (docId && /\.docx$/i.test(name)) {
+        const sourceForm = new FormData();
+        sourceForm.set('file', file);
+        const sourceResponse = await fetch(`/api/docs/${docId}/source`, { method: 'POST', body: sourceForm });
+        const sourceData = await sourceResponse.json().catch(() => null);
+        if (sourceResponse.ok && sourceData?.sourceDocx) setSourceDocx(sourceData.sourceDocx);
+      }
       toast({ title: 'Word importado al lienzo', description: `${useFidelity ? 'Modo fidelidad visual. ' : 'Modo editable. '}${userSummary}`.slice(0, 240) });
       pushEvent({ type: 'local_edit', title: 'Import Word', summary: userSummary.slice(0, 160) }, true);
       setMessages((ms) => [
@@ -2046,8 +2059,10 @@ export default function DocsStudioClient({
             className="h-8 w-52 rounded-md border border-transparent bg-transparent px-2 text-right text-xs font-medium text-neutral-700 outline-none transition hover:border-neutral-200 hover:bg-white focus:border-neutral-300 focus:bg-white focus:ring-2 focus:ring-neutral-200"
           />
         </label>
+        {sourceDocx && <button type="button" onClick={() => setOfficeOpen(true)} className="pointer-events-auto hidden rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-neutral-700 shadow-sm hover:bg-neutral-50 sm:block">Modo Word</button>}
         <div className="pointer-events-auto">{exportControl}</div>
       </div>
+      {officeOpen && sourceDocx && <OnlyOfficeEditor documentId={docId || initialDocumentId || ''} onClose={() => setOfficeOpen(false)} />}
       <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
         <div
           className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"

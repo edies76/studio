@@ -4,8 +4,8 @@
 # Then set:
 #   NEXT_PUBLIC_ONLYOFFICE_URL=http://localhost:8080
 #
-# OnlyOffice is an alternative full Word engine.
-# Docs Studio default uses Syncfusion Document Editor (client + conversion service).
+# OnlyOffice is the high-fidelity OOXML mode for imported Word documents.
+# Docs Studio keeps its native canvas for AI-first documents.
 
 services:
   onlyoffice-documentserver:

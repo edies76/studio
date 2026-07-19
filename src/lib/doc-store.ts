@@ -379,6 +379,53 @@ export async function saveDocument(
   return localSave(next);
 }
 
+/**
+ * Chat transcripts and immutable version snapshots are document metadata, not
+ * canvas edits. They must not advance the revision used to reject stale HTML
+ * autosaves, otherwise sending a chat message makes the next autosave look as
+ * if another tab changed the document.
+ */
+async function saveDocumentMetadata(
+  userId: string,
+  id: string,
+  patch: Pick<Partial<StudioDocument>, 'chat' | 'versions'>,
+): Promise<StudioDocument | null> {
+  const existing = await getDocument(userId, id);
+  if (!existing) return null;
+  const next: StudioDocument = {
+    ...existing,
+    chat: patch.chat ?? existing.chat,
+    versions: patch.versions ?? existing.versions,
+    updatedAt: Date.now(),
+    // Intentionally preserve the content revision.
+    revision: existing.revision,
+  };
+  if (useDynamo()) {
+    try {
+      return await dynamoSave(next, existing.revision);
+    } catch (error: any) {
+      if (error?.name === 'ConditionalCheckFailedException') {
+        // Metadata is non-destructive; retry once against the latest document
+        // so concurrent chat persistence does not drop a turn.
+        const latest = await getDocument(userId, id);
+        if (!latest) return null;
+        return dynamoSave(
+          {
+            ...latest,
+            chat: patch.chat ?? latest.chat,
+            versions: patch.versions ?? latest.versions,
+            updatedAt: Date.now(),
+            revision: latest.revision,
+          },
+          latest.revision,
+        );
+      }
+      throw error;
+    }
+  }
+  return localSave(next);
+}
+
 export async function createVersion(
   userId: string,
   id: string,
@@ -395,7 +442,9 @@ export async function createVersion(
     source: input.source || 'agent',
     parentId: existing.versions?.[0]?.id,
   };
-  await saveDocument(userId, id, { versions: [version, ...(existing.versions || [])].slice(0, 100) });
+  await saveDocumentMetadata(userId, id, {
+    versions: [version, ...(existing.versions || [])].slice(0, 100),
+  });
   return version;
 }
 
@@ -426,7 +475,7 @@ export async function appendChat(
 ): Promise<StudioDocument | null> {
   const existing = await getDocument(userId, id);
   if (!existing) return null;
-  return saveDocument(userId, id, {
+  return saveDocumentMetadata(userId, id, {
     chat: [...(existing.chat || []), ...turns].slice(-200),
   });
 }

@@ -38,6 +38,7 @@ Legacy: `/?doc=` y `/?topic=` redirigen a `/studio` (middleware).
 | Math | MATH-SAFE: `list/edit/insert_equation` + protector server-side |
 | Tools | Improve / shorter / expand / grammar / academic / normas |
 | Export | PDF + `.docx` generado en servidor |
+| Modo Word | OOXML original en OnlyOffice para documentos importados |
 | Biblioteca | `/home` + autosave |
 
 ---
