@@ -668,13 +668,28 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   }, [commitImageMutation, selectedImage]);
 
   const mutateTable = useCallback(
-    (action: 'add-row' | 'remove-row' | 'add-column' | 'remove-column') => {
+    (action: 'add-row' | 'remove-row' | 'add-column' | 'remove-column' | 'toggle-header' | 'delete') => {
       const table = selectedTable;
       if (!table) return;
       const body = table.tBodies[0] || table.createTBody();
       const rows = Array.from(table.rows);
       const columnCount = rows[0]?.cells.length || 1;
-      if (action === 'add-row') {
+      if (action === 'delete') {
+        table.remove();
+        setSelectedTable(null);
+        setTableTools(null);
+        onInput();
+        return;
+      } else if (action === 'toggle-header') {
+        const first = rows[0];
+        if (!first) return;
+        Array.from(first.cells).forEach((cell) => {
+          const replacement = document.createElement(cell.tagName.toLowerCase() === 'th' ? 'td' : 'th');
+          replacement.className = replacement.tagName === 'TH' ? 'studio-th' : 'studio-td';
+          replacement.innerHTML = cell.innerHTML || '<br>';
+          cell.replaceWith(replacement);
+        });
+      } else if (action === 'add-row') {
         const row = body.insertRow(-1);
         for (let i = 0; i < columnCount; i++) {
           const cell = row.insertCell(-1);
@@ -1218,6 +1233,22 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
               title="Quitar columna"
             >
               − col.
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 hover:bg-neutral-100"
+              onClick={() => mutateTable('toggle-header')}
+              title="Alternar fila de encabezado"
+            >
+              Encabezado
+            </button>
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 text-red-700 hover:bg-red-50"
+              onClick={() => mutateTable('delete')}
+              title="Eliminar tabla"
+            >
+              Eliminar
             </button>
           </div>
         )}

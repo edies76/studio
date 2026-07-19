@@ -1,5 +1,9 @@
 # Docs Studio — producción en AWS (barato / free-tier friendly)
 
+Antes de desplegar, revisa [`PRODUCT_POSITIONING.md`](PRODUCT_POSITIONING.md): Docs Studio es una capa documental contextual y revisable, no un reemplazo general de Word. Esa distinción también define qué debe compartir la superficie web y el endpoint MCP.
+
+Las versiones seguras se guardan en el mismo registro de DynamoDB (`versions`); no requieren otra base de datos. El MCP expone `list_versions` y `restore_version`, y cada propuesta aceptada crea su propio snapshot.
+
 ## Arquitectura (una sola pieza)
 
 **No hay backend separado.** Todo es **un solo servidor Next.js**:

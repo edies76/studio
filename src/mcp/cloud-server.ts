@@ -52,7 +52,7 @@ export function createCloudDocsStudioMcpServer(options: {
     tools: [
       'get_capabilities', 'create_document', 'list_documents', 'delete_document', 'read_document', 'find_in_document', 'check_document',
       'parse_brief', 'draft_document', 'chat_document', 'propose_edit', 'accept_edit', 'reject_edit', 'update_title', 'set_paper_size',
-      'insert_html', 'insert_math', 'insert_table', 'insert_image', 'insert_page_break', 'get_history', 'export_document',
+      'insert_html', 'insert_math', 'insert_table', 'insert_image', 'insert_page_break', 'get_history', 'list_versions', 'restore_version', 'export_document',
     ],
     resources: ['docs://workspace', 'docs://document/{documentId}', 'docs://history/{documentId}'],
     transports: ['streamable-http'],
@@ -270,6 +270,18 @@ export function createCloudDocsStudioMcpServer(options: {
     description: 'Read recent document events, including proposals and review decisions.',
     inputSchema: { documentId: z.string() },
   }, async ({ documentId }) => safe(() => workspace.history(documentId)));
+
+  server.registerTool('list_versions', {
+    title: 'List safe versions',
+    description: 'List persistent HTML snapshots created by accepted or inserted changes. Each snapshot is independently restorable.',
+    inputSchema: { documentId: z.string() },
+  }, async ({ documentId }) => safe(() => workspace.versions(documentId)));
+
+  server.registerTool('restore_version', {
+    title: 'Restore safe version',
+    description: 'Restore one persistent snapshot and record the restoration as a new version.',
+    inputSchema: { documentId: z.string(), versionId: z.string() },
+  }, async ({ documentId, versionId }) => safe(() => workspace.restoreVersion(documentId, versionId)));
 
   server.registerTool('export_document', {
     title: 'Export document',

@@ -20,8 +20,15 @@ export type ChatStreamEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_start'; name: string; label: string; id?: string }
   | { type: 'tool_end'; name: string; ok: boolean; label?: string; id?: string }
+  | { type: 'workspace_command'; command: 'undo' | 'redo' }
   | { type: 'propose_edit'; id: string; edit: ProposeEditPayload }
-  | { type: 'done'; finalText?: string; model?: string }
+  | {
+      type: 'done';
+      finalText?: string;
+      model?: string;
+      durationMs?: number;
+      outcome?: 'answer' | 'proposal' | 'error';
+    }
   | { type: 'error'; message: string };
 
 export const STUDIO_TOOL_DEFINITIONS = [
@@ -54,6 +61,86 @@ export const STUDIO_TOOL_DEFINITIONS = [
         },
       },
       required: [],
+    },
+  },
+  {
+    name: 'inspect_document',
+    description:
+      'Read structured document intelligence: outline, numbered blocks, word count, images, tables, links, equations, page breaks, and selection context. Use before structural or quality work. Does not modify the document.',
+    parameters: {
+      type: 'OBJECT',
+      properties: { focus: { type: 'STRING', description: 'Optional focus: outline, media, structure, academic, or all.' } },
+      required: [],
+    },
+  },
+  {
+    name: 'find_in_document',
+    description:
+      'Search the current document by phrase and return matching block indexes and previews before a targeted edit.',
+    parameters: {
+      type: 'OBJECT',
+      properties: { query: { type: 'STRING', description: 'Text or phrase to find.' }, maxResults: { type: 'NUMBER', description: 'Maximum matches, 1–30.' } },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'check_document',
+    description:
+      'Run deterministic readiness checks for readable content, heading hierarchy, image alt text, table headers, equations, page breaks, and pending review state.',
+    parameters: {
+      type: 'OBJECT',
+      properties: { focus: { type: 'STRING', description: 'Optional focus: academic, accessibility, structure, or all.' } },
+      required: [],
+    },
+  },
+  {
+    name: 'workspace_command',
+    description:
+      'Control a reversible workspace action explicitly requested by the user. Use undo for “deshaz/undo” and redo for “rehaz/redo”.',
+    parameters: {
+      type: 'OBJECT',
+      properties: { command: { type: 'STRING', enum: ['undo', 'redo'] } },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'insert_table',
+    description:
+      'Create a real editable HTML table as a reviewable proposal. Use when the user asks for a table, matrix, comparison, schedule, or structured rows and columns.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        rows: { type: 'NUMBER', description: 'Number of rows, 1–20.' },
+        columns: { type: 'NUMBER', description: 'Number of columns, 1–12.' },
+        hasHeader: { type: 'BOOLEAN', description: 'Whether the first row is a semantic header row. Defaults to true.' },
+        caption: { type: 'STRING', description: 'Optional short caption displayed above the table.' },
+        afterBlockIndex: { type: 'NUMBER', description: 'Optional block index after which to insert.' },
+        title: { type: 'STRING' },
+        summary: { type: 'STRING' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'insert_page_break',
+    description: 'Insert a real page break as a reviewable proposal that survives canvas and export.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
+    name: 'insert_image',
+    description:
+      'Insert an HTTPS or data image as a reviewable proposal with alt text, dimensions, Word-like wrap mode, and optional free position.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        src: { type: 'STRING', description: 'HTTPS URL or data:image URL.' },
+        alt: { type: 'STRING', description: 'Accessible alternative text.' },
+        width: { type: 'NUMBER', description: 'Width in pixels, 40–2400.' },
+        wrap: { type: 'STRING', enum: ['inline', 'left', 'right', 'center', 'break', 'behind'] },
+        left: { type: 'NUMBER', description: 'Left position in pixels when wrap=behind.' },
+        top: { type: 'NUMBER', description: 'Top position in pixels when wrap=behind.' },
+      },
+      required: ['src'],
     },
   },
   {
@@ -111,6 +198,38 @@ export const STUDIO_TOOL_DEFINITIONS = [
         },
       },
       required: ['title', 'summary', 'mode', 'afterHtml'],
+    },
+  },
+  {
+    name: 'format_document',
+    description:
+      'Apply an explicit document-editor format request as a real proposal. Use this for font size, text color, highlight, font family, bold/italic, alignment, line height, or letter spacing. Never say CSS is unsupported: this tool translates the request into safe document styles. Scope defaults to the entire document; use selection or block when the user specifies one.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        scope: {
+          type: 'STRING',
+          enum: ['document', 'selection', 'block'],
+          description: 'Where to apply formatting. Default document.',
+        },
+        blockIndex: {
+          type: 'NUMBER',
+          description: '0-based block index from read_document when scope=block.',
+        },
+        fontSize: {
+          type: 'STRING',
+          description: 'Font size such as 49px, 18pt, 1.2em, or a bare number interpreted as px.',
+        },
+        color: { type: 'STRING', description: 'Text color: named color, hex, rgb, or Spanish color name.' },
+        backgroundColor: { type: 'STRING', description: 'Text highlight/background color.' },
+        fontFamily: { type: 'STRING', description: 'Font family such as Arial, Georgia, Inter, or Times New Roman.' },
+        fontWeight: { type: 'STRING', enum: ['normal', 'bold', '600', '700'] },
+        fontStyle: { type: 'STRING', enum: ['normal', 'italic'] },
+        textAlign: { type: 'STRING', enum: ['left', 'center', 'right', 'justify'] },
+        lineHeight: { type: 'STRING', description: 'Line height such as 1.5 or 24px.' },
+        letterSpacing: { type: 'STRING', description: 'Letter spacing such as 0.02em or 1px.' },
+      },
+      required: [],
     },
   },
   {

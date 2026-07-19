@@ -19,6 +19,8 @@ import {
   replaceEquationAt,
 } from '@/lib/math-tools';
 import { slog } from '@/lib/server-log';
+import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
+import { buildDocumentIntelligence, buildDocsAgentSystem, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,6 +42,15 @@ function parseArgs(raw: any): any {
     }
   }
   return {};
+}
+
+function escapeAgentHtml(value: string) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function openAiTools() {
@@ -64,6 +75,7 @@ export async function POST(req: NextRequest) {
     model: preferredModel,
     autoStart = false,
     assignmentContext = '',
+    workspaceContext,
   } = body as {
     messages: Msg[];
     documentHtml?: string;
@@ -73,6 +85,7 @@ export async function POST(req: NextRequest) {
     model?: string;
     autoStart?: boolean;
     assignmentContext?: string;
+    workspaceContext?: WorkspaceAgentContext;
   };
 
   const apiKey = deepseekApiKey();
@@ -132,43 +145,19 @@ export async function POST(req: NextRequest) {
           sample: snap0.equations.slice(0, 6),
         });
 
-        const system = `You are Studio, a document copilot. Match the user language (Spanish/English).
+        const documentIntelligence = buildDocumentIntelligence(liveHtml, selectedText);
+        const system = buildDocsAgentSystem({
+          documentTitle,
+          paperSize,
+          documentIntelligence,
+          assignmentContext,
+          workspaceContext,
+          liveHtml,
+        }) + `
 
-Document title: ${documentTitle}
-Paper size: ${paperSize}
-Selected text: ${selectedText ? selectedText.slice(0, 2500) : '(none)'}
-Equations detected in document: ${eqCount}
-MATH-SAFE MODE: ${mathSafeMode ? 'ON (mandatory for this turn)' : 'standby — activate if you touch formulas'}
-${assignmentContext ? `\nCONTEXT:\n${assignmentContext.slice(0, 8000)}\n` : ''}
-
-CURRENT DOCUMENT HTML (math already in studio-math / data-tex hosts when possible):
-"""
-${liveHtml.slice(0, 32000)}
-"""
-
-BEHAVIOR (REAL, not simulated):
-1. Speak in first person about what you will do BEFORE calling tools, when useful.
-2. ALWAYS call read_document before edit_paragraph so you know block indices.
-3. For point edits: use edit_paragraph once per block. Prefer several edit_paragraph over one replace_document.
-4. For selection rewrites: propose_edit mode=replace_selection.
-5. For full-doc rewrite only when clearly asked: propose_edit mode=replace_document + beforeHtml = current HTML.
-6. NEVER claim the document is already updated. Changes are PROPOSALS — user Accept/Reject.
-7. After tools, write a REAL closing message about what you proposed.
-8. Greetings only → short reply, no tools.
-9. HTML fragments only: h1-h3,p,ul,ol,li,table,pre,code,strong,em,span/div.studio-math-*. No markdown fences.
-
-=== MATH-SAFE MODE (hard rules — equations must NOT break) ===
-The server runs a math-safe protector on every free HTML rewrite. Still:
-A. If equationCount > 0 OR task mentions formulas: call list_equations FIRST before any formula change.
-B. To CHANGE a formula: ONLY edit_equation(equationIndex, tex). Never rewrite TeX by free-text inside edit_paragraph.
-C. To ADD a formula: insert_equation. Never paste raw broken LaTeX as plain text.
-D. edit_paragraph / propose_edit may change prose around math but MUST keep existing <span/div class="studio-math-… data-tex="…"> hosts. If you drop them, the server restores them.
-E. TeX in edit_equation is WITHOUT surrounding \\( \\) or \\[ \\].
-F. Prefer Unicode only for trivial variables; real formulas stay LaTeX.
-G. read_document may show tag "math" for display equation blocks — use those indices with insert_equation(afterBlockIndex).
-
-10. set_status labels must be concrete in user language.
-11. Style norms (APA/IEEE/MLA/simple/minimal): follow the user message; still obey MATH-SAFE.
+=== SERVER MATH SAFETY ===
+The server protects math hosts on every free HTML rewrite. If equations exist or the task mentions formulas, call list_equations before changing one. Use edit_equation for an existing formula and insert_equation for a new one. Keep studio-math/data-tex hosts intact in prose edits. TeX arguments have no surrounding delimiters.
+=== END SPECIALIST CONTEXT ===
 `;
 
         const chatMessages: ChatMessage[] = [{ role: 'system', content: system }];
@@ -179,6 +168,150 @@ G. read_document may show tag "math" for display equation blocks — use those i
             role: m.role === 'assistant' ? 'assistant' : 'user',
             content: m.content,
           });
+        }
+
+        // Clear atomic formatting commands are deterministic editor actions.
+        // Resolve them locally so the agent cannot answer with a false
+        // "CSS is unsupported" instead of creating the requested proposal.
+        const explicitFormat = parseExplicitFormatRequest(lastUser);
+        if (explicitFormat) {
+          const scope = selectedText.trim() ? 'selection' : 'document';
+          const beforeHtml = liveHtml;
+          const formatted = formatDocumentHtml(beforeHtml, {
+            ...explicitFormat,
+            scope,
+            selectedText,
+          });
+          if (formatted.changed) {
+            const guarded = protectMathInRewrite(beforeHtml, formatted.html);
+            const afterHtml = guarded.html;
+            const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+            send({ type: 'status', label: scope === 'document' ? 'Formateando el documento…' : 'Formateando la selección…' });
+            send({ type: 'tool_start', name: 'format_document', label: 'Aplicando formato…', id });
+            send({
+              type: 'propose_edit',
+              id,
+              edit: {
+                title: 'Formato del documento',
+                summary: 'Preparé el formato solicitado para que lo revises antes de aplicarlo.',
+                mode: 'replace_document',
+                afterHtml,
+                beforeHtml,
+                changeList: [
+                  ...formatted.declarations.map((item) => item.replace(/:/, ': ')),
+                  scope === 'document' ? 'Alcance: documento completo' : 'Alcance: selección',
+                ],
+              },
+            });
+            send({ type: 'tool_end', name: 'format_document', ok: true, label: 'Formato propuesto · aceptá para aplicarlo', id });
+            const finalText = scope === 'document'
+              ? 'Preparé el cambio de formato para todo el documento. Revisalo y aceptalo para aplicarlo; todavía no se ha modificado el lienzo.'
+              : 'Preparé el cambio de formato para la selección. Revisalo y aceptalo para aplicarlo.';
+            send({ type: 'text', delta: finalText });
+            const durationMs = Date.now() - t0;
+            slog.info('chat', 'request.done', {
+              ms: durationMs,
+              model: 'local-format-parser',
+              path: 'explicit_format',
+              proposedSomething: true,
+              finalLen: finalText.length,
+              declarations: formatted.declarations,
+            });
+            send({
+              type: 'done',
+              finalText,
+              model: 'local-format-parser',
+              durationMs,
+              outcome: 'proposal',
+            });
+            return;
+          }
+        }
+
+        const directWorkspaceCommand = parseWorkspaceCommand(lastUser);
+        if (directWorkspaceCommand) {
+          const durationMs = Date.now() - t0;
+          const label = directWorkspaceCommand === 'undo' ? 'Deshaciendo el último cambio…' : 'Rehaciendo el cambio…';
+          const finalText = directWorkspaceCommand === 'undo'
+            ? 'Deshice el último cambio del workspace.'
+            : 'Rehice el cambio del workspace.';
+          send({ type: 'status', label });
+          send({ type: 'tool_start', name: 'workspace_command', label, id: `workspace_${Date.now()}` });
+          send({ type: 'workspace_command', command: directWorkspaceCommand });
+          send({ type: 'tool_end', name: 'workspace_command', ok: true, label: directWorkspaceCommand === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho' });
+          send({ type: 'text', delta: finalText });
+          send({ type: 'done', finalText, model: 'workspace-command', durationMs, outcome: 'answer' });
+          return;
+        }
+
+        // Informational questions do not need the document editor's full tool
+        // loop. Keeping them on a small, streamed path removes the tool-schema
+        // payload and the extra completion that used to make a no-op feel slow.
+        const actionRequest = /\b(cambia|cambiar|cambiale|cámbiale|pon|pone|ponle|ponla|ponlos|ponlas|aplica|aplicar|formatea|formatear|ajusta|ajustar|edita|editar|corrige|corregir|reescribe|reescribir|escribe|escribir|redacta|redactar|genera|generar|crea|crear|inserta|insertar|elimina|eliminar|borra|borrar|mueve|mover|inspecciona|inspeccionar|analiza|analizar|revisa|revisar|comprueba|comprobar|valida|validar|busca|buscar|encuentra|encontrar|resume|resumir|deshaz|deshacer|rehaz|rehacer|undo|redo|inspect|check|review|validate|search|summarize|resize|align|format|change|apply|edit|rewrite|write|draft|generate|create|insert|delete|remove|move|fix|set|color|colores|letra|tamaño|tamano|fuente|font|size|bold|italic|red|blue|green|black)\b/i.test(
+          lastUser,
+        );
+        const documentQuestion = /\b(documento|lienzo|hoja|p[áa]gina|texto|p[áa]rrafo|selecci[oó]n|ecuaci[oó]n|f[oó]rmula|tabla|imagen|estructura|esquema|outline|brief|norma|apa|ieee|mla|document|canvas|page|text|paragraph|selection|equation|formula|table|image|structure)\b/i.test(
+          lastUser,
+        );
+
+        if (!actionRequest && !documentQuestion) {
+          const quickMessages: ChatMessage[] = [
+            {
+              role: 'system',
+              content:
+                'You are Docs Studio, a concise document assistant. Answer the user directly in their language. This is an informational question, so do not propose or claim document changes, do not call tools, and do not mention internal implementation unless asked. Use Markdown headings, lists, bold, and code when helpful.',
+            },
+            ...chatMessages.slice(1).slice(-6),
+          ];
+          let quickText = '';
+          const quickModel = resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL);
+          send({ type: 'status', label: 'Respondiendo…' });
+          try {
+            const quickRes = await deepseekChat({
+              apiKey,
+              model: quickModel,
+              messages: quickMessages,
+              stream: true,
+              temperature: 0.35,
+              maxTokens: 640,
+            });
+            if (quickRes.ok && quickRes.body) {
+              for await (const chunk of iterateOpenAiSse(quickRes.body)) {
+                if (chunk.content) {
+                  quickText += chunk.content;
+                  send({ type: 'text', delta: chunk.content });
+                }
+              }
+            } else {
+              const errorBody = await quickRes.json().catch(() => ({}));
+              slog.warn('chat', 'quick_path.failed', {
+                status: quickRes.status,
+                error: errorBody?.error?.message || quickRes.statusText,
+              });
+            }
+          } catch (e: any) {
+            slog.warn('chat', 'quick_path.error', { err: e?.message || String(e) });
+          }
+          if (!quickText.trim()) {
+            quickText = 'No pude responder en este momento. Intentémoslo de nuevo.';
+            send({ type: 'text', delta: quickText });
+          }
+          const durationMs = Date.now() - t0;
+          slog.info('chat', 'request.done', {
+            ms: durationMs,
+            model: quickModel,
+            path: 'quick_answer',
+            proposedSomething: false,
+            finalLen: quickText.length,
+          });
+          send({
+            type: 'done',
+            finalText: quickText,
+            model: quickModel,
+            durationMs,
+            outcome: 'answer',
+          });
+          return;
         }
 
         const tools = openAiTools();
@@ -193,6 +326,37 @@ G. read_document may show tag "math" for display equation blocks — use those i
         let finalTextParts: string[] = [];
         let proposedSomething = false;
         let streamedLive = false;
+
+        const proposeGeneratedDocument = (input: {
+          title: string;
+          summary: string;
+          nextHtml: string;
+          changeList: string[];
+        }) => {
+          const beforeHtml = liveHtml;
+          const guarded = protectMathInRewrite(beforeHtml, input.nextHtml);
+          if (guarded.restored > 0) mathSafeMode = true;
+          const afterHtml = guarded.html;
+          const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          proposedSomething = true;
+          liveHtml = afterHtml;
+          send({
+            type: 'propose_edit',
+            id,
+            edit: {
+              title: input.title,
+              summary: input.summary,
+              mode: 'replace_document',
+              afterHtml,
+              beforeHtml,
+              changeList: [
+                ...input.changeList,
+                ...(guarded.restored ? [`MATH-SAFE: restauradas ${guarded.restored} ecuación(es)`] : []),
+              ],
+            },
+          });
+          return { id, afterHtml };
+        };
 
         for (let round = 0; round < MAX_ROUNDS; round++) {
           if (round === 0) send({ type: 'thinking', label: 'Pensando…' });
@@ -331,6 +495,70 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 listing,
                 note: 'Use blockIndex with edit_paragraph. Tag "math" = display equation host. Prefer list_equations + edit_equation for formulas.',
               });
+              continue;
+            }
+
+            if (name === 'inspect_document') {
+              const tid = `idoc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Analizando estructura…', id: tid });
+              const intelligence = buildDocumentIntelligence(liveHtml, selectedText);
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: `${intelligence.stats.blockCount} bloques · ${intelligence.stats.wordCount} palabras`,
+                id: tid,
+              });
+              await reply({ ok: true, focus: args.focus || 'all', ...intelligence });
+              continue;
+            }
+
+            if (name === 'find_in_document') {
+              const tid = `find_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const query = String(args.query || '').trim();
+              const needle = query.toLocaleLowerCase();
+              const maxResults = Math.min(Math.max(Number(args.maxResults) || 10, 1), 30);
+              send({ type: 'tool_start', name, label: `Buscando “${query.slice(0, 36)}”…`, id: tid });
+              const matches = query
+                ? extractHtmlBlocks(liveHtml)
+                    .filter((block) => `${block.tag} ${block.preview} ${block.html}`.toLocaleLowerCase().includes(needle))
+                    .slice(0, maxResults)
+                    .map(({ index, tag, preview }) => ({ index, tag, preview }))
+                : [];
+              send({ type: 'tool_end', name, ok: Boolean(query), label: `${matches.length} coincidencia(s)`, id: tid });
+              await reply({ ok: Boolean(query), query, matches, error: query ? undefined : 'query is required' });
+              continue;
+            }
+
+            if (name === 'check_document') {
+              const tid = `check_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Revisando el documento…', id: tid });
+              const intelligence = buildDocumentIntelligence(liveHtml, selectedText);
+              const issues: Array<{ code: string; severity: 'error' | 'warning'; message: string }> = [];
+              if (intelligence.stats.wordCount === 0) issues.push({ code: 'empty', severity: 'error', message: 'El documento no tiene texto legible.' });
+              if (!/<h1\b/i.test(liveHtml)) issues.push({ code: 'missing_h1', severity: 'warning', message: 'No encontré un encabezado H1.' });
+              if (intelligence.media.missingAltCount > 0) issues.push({ code: 'image_alt', severity: 'warning', message: `${intelligence.media.missingAltCount} imagen(es) no tienen texto alternativo.` });
+              if (intelligence.stats.tableCount > 0 && !/<th\b/i.test(liveHtml)) issues.push({ code: 'table_header', severity: 'warning', message: 'Hay tablas sin celdas de encabezado.' });
+              const levels = intelligence.outline.map((heading) => heading.level);
+              if (levels.some((level, index) => index > 0 && level - levels[index - 1] > 1)) issues.push({ code: 'heading_jump', severity: 'warning', message: 'La jerarquía de encabezados salta niveles.' });
+              if ((workspaceContext?.pendingEdits || 0) > 0) issues.push({ code: 'pending_edits', severity: 'warning', message: 'Hay propuestas pendientes de revisión.' });
+              send({ type: 'tool_end', name, ok: !issues.some((issue) => issue.severity === 'error'), label: `${issues.length} observación(es)`, id: tid });
+              await reply({ ok: !issues.some((issue) => issue.severity === 'error'), focus: args.focus || 'all', issues, stats: intelligence.stats, outline: intelligence.outline });
+              continue;
+            }
+
+            if (name === 'workspace_command') {
+              const tid = `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const command = args.command === 'redo' ? 'redo' : args.command === 'undo' ? 'undo' : null;
+              send({ type: 'tool_start', name, label: command === 'undo' ? 'Deshaciendo…' : command === 'redo' ? 'Rehaciendo…' : 'Comando inválido', id: tid });
+              if (!command) {
+                send({ type: 'tool_end', name, ok: false, label: 'Solo undo/redo', id: tid });
+                await reply({ ok: false, error: 'command must be undo or redo' });
+                continue;
+              }
+              send({ type: 'workspace_command', command });
+              send({ type: 'tool_end', name, ok: true, label: command === 'undo' ? 'Cambio deshecho' : 'Cambio rehecho', id: tid });
+              await reply({ ok: true, command });
               continue;
             }
 
@@ -519,6 +747,179 @@ G. read_document may show tag "math" for display equation blocks — use those i
                 },
                 note: 'Pending user Accept/Reject. Do NOT claim applied.',
               });
+              continue;
+            }
+
+            if (name === 'format_document') {
+              const tid = `fmt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const scope = ['document', 'selection', 'block'].includes(String(args.scope))
+                ? String(args.scope)
+                : 'document';
+              const blockIndex = Number(args.blockIndex);
+              const blocks = extractHtmlBlocks(liveHtml);
+              const targetBlock = scope === 'block' && Number.isFinite(blockIndex)
+                ? blocks[blockIndex]
+                : undefined;
+              send({
+                type: 'status',
+                label: scope === 'document' ? 'Formateando el documento…' : 'Formateando la selección…',
+              });
+              send({
+                type: 'tool_start',
+                name,
+                label: 'Aplicando formato…',
+                id: tid,
+              });
+
+              if (scope === 'block' && !targetBlock) {
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: `Bloque ${blockIndex} no encontrado`,
+                  id: tid,
+                });
+                await reply({
+                  ok: false,
+                  error: `blockIndex ${blockIndex} out of range (0..${Math.max(0, blocks.length - 1)})`,
+                });
+                continue;
+              }
+
+              const beforeHtml = liveHtml;
+              const formatted = formatDocumentHtml(beforeHtml, {
+                scope: scope as 'document' | 'selection' | 'block',
+                blockIndex,
+                selectedText: targetBlock?.html || selectedText,
+                fontSize: args.fontSize,
+                color: args.color,
+                backgroundColor: args.backgroundColor,
+                fontFamily: args.fontFamily,
+                fontWeight: args.fontWeight,
+                fontStyle: args.fontStyle,
+                textAlign: args.textAlign,
+                lineHeight: args.lineHeight,
+                letterSpacing: args.letterSpacing,
+              });
+              if (!formatted.changed) {
+                send({
+                  type: 'tool_end',
+                  name,
+                  ok: false,
+                  label: 'No encontré un formato válido para aplicar',
+                  id: tid,
+                });
+                await reply({ ok: false, error: 'No valid formatting values were provided.' });
+                continue;
+              }
+
+              const guarded = protectMathInRewrite(beforeHtml, formatted.html);
+              if (guarded.restored > 0) mathSafeMode = true;
+              proposedSomething = true;
+              const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+              const afterHtml = guarded.html;
+              liveHtml = afterHtml;
+              const changeList = [
+                ...formatted.declarations.map((item) => item.replace(/:/, ': ')),
+                scope === 'document'
+                  ? 'Alcance: documento completo'
+                  : scope === 'block'
+                    ? `Alcance: bloque ${blockIndex}`
+                    : 'Alcance: selección',
+              ];
+              send({
+                type: 'propose_edit',
+                id,
+                edit: {
+                  title: args.title || 'Formato del documento',
+                  summary: args.summary || 'Se preparó el formato solicitado para revisión.',
+                  mode: 'replace_document',
+                  afterHtml,
+                  beforeHtml,
+                  changeList,
+                },
+              });
+              send({
+                type: 'tool_end',
+                name,
+                ok: true,
+                label: 'Formato propuesto · aceptá para aplicarlo',
+                id: tid,
+              });
+              await reply({ ok: true, id, declarations: formatted.declarations, note: 'Pending Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'insert_table') {
+              const tid = `table_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const rows = Math.min(Math.max(Math.floor(Number(args.rows) || 3), 1), 20);
+              const columns = Math.min(Math.max(Math.floor(Number(args.columns) || 3), 1), 12);
+              const hasHeader = args.hasHeader !== false;
+              send({ type: 'tool_start', name, label: `Preparando tabla ${rows} × ${columns}…`, id: tid });
+              const markup = Array.from({ length: rows }, (_, row) => {
+                const cells = Array.from({ length: columns }, (_, column) => {
+                  const tag = row === 0 && hasHeader ? 'th' : 'td';
+                  const value = row === 0 && hasHeader ? `Columna ${column + 1}` : '&nbsp;';
+                  return `<${tag}>${value}</${tag}>`;
+                }).join('');
+                return `<tr>${cells}</tr>`;
+              }).join('');
+              const caption = typeof args.caption === 'string' && args.caption.trim() ? `<caption>${escapeAgentHtml(args.caption.trim())}</caption>` : '';
+              const fragment = `<table class="studio-table">${caption}<tbody>${markup}</tbody></table><p><br></p>`;
+              const blocks = extractHtmlBlocks(liveHtml);
+              const afterBlockIndex = Number(args.afterBlockIndex);
+              const target = Number.isFinite(afterBlockIndex) ? blocks[afterBlockIndex] : undefined;
+              const nextHtml = target ? liveHtml.replace(target.html, `${target.html}${fragment}`) : `${liveHtml}${fragment}`;
+              const proposal = proposeGeneratedDocument({
+                title: args.title || 'Insertar tabla',
+                summary: args.summary || `Preparé una tabla editable de ${rows} filas por ${columns} columnas.`,
+                nextHtml,
+                changeList: [`Tabla ${rows} × ${columns}`, target ? `Después del bloque ${afterBlockIndex}` : 'Al final del documento'],
+              });
+              send({ type: 'tool_end', name, ok: true, label: 'Tabla propuesta · aceptá para insertarla', id: tid });
+              await reply({ ok: true, id: proposal.id, rows, columns, note: 'Pending user Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'insert_page_break') {
+              const tid = `break_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Preparando salto de página…', id: tid });
+              const nextHtml = `${liveHtml}<div data-studio-break="1" style="break-before:page;page-break-before:always"></div><p><br></p>`;
+              const proposal = proposeGeneratedDocument({
+                title: 'Insertar salto de página',
+                summary: 'Preparé un salto de página que conserva el lienzo y la exportación.',
+                nextHtml,
+                changeList: ['Salto de página al final del documento'],
+              });
+              send({ type: 'tool_end', name, ok: true, label: 'Salto propuesto · aceptá para insertarlo', id: tid });
+              await reply({ ok: true, id: proposal.id, note: 'Pending user Accept/Reject.' });
+              continue;
+            }
+
+            if (name === 'insert_image') {
+              const tid = `image_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const src = String(args.src || '').trim();
+              const wrap = ['inline', 'left', 'right', 'center', 'break', 'behind'].includes(args.wrap) ? args.wrap : 'break';
+              send({ type: 'tool_start', name, label: 'Preparando imagen…', id: tid });
+              if (!/^(https?:\/\/|data:image\/)/i.test(src)) {
+                send({ type: 'tool_end', name, ok: false, label: 'La imagen debe ser HTTPS o data:image', id: tid });
+                await reply({ ok: false, error: 'src must be an https URL or a data:image URL' });
+                continue;
+              }
+              const width = Math.min(Math.max(Number(args.width) || 640, 40), 2400);
+              const alt = escapeAgentHtml(String(args.alt || 'Imagen insertada'));
+              const safeSrc = escapeAgentHtml(src);
+              const alignment = wrap === 'center' ? 'margin:0.85em auto' : wrap === 'left' ? 'margin:0.25em 1.1em 0.6em 0' : wrap === 'right' ? 'margin:0.25em 0 0.6em 1.1em' : wrap === 'inline' ? 'margin:0 0.3em' : 'margin:0.85em 0';
+              const position = wrap === 'behind' ? `position:absolute;left:${Math.max(0, Number(args.left) || 0)}px;top:${Math.max(0, Number(args.top) || 0)}px;z-index:0;margin:0` : '';
+              const image = `<p><img src="${safeSrc}" alt="${alt}" data-studio-image="1" data-studio-wrap="${wrap}" style="width:${width}px;max-width:100%;height:auto;display:${wrap === 'inline' ? 'inline-block' : 'block'};${alignment};${position}"></p>`;
+              const proposal = proposeGeneratedDocument({
+                title: 'Insertar imagen',
+                summary: 'Preparé la imagen con texto alternativo, tamaño y modo de incrustación explícitos.',
+                nextHtml: `${liveHtml}${image}<p><br></p>`,
+                changeList: [`Ancho: ${width}px`, `Modo: ${wrap}`, `Alt: ${String(args.alt || 'Imagen insertada').slice(0, 80)}`],
+              });
+              send({ type: 'tool_end', name, ok: true, label: 'Imagen propuesta · aceptá para insertarla', id: tid });
+              await reply({ ok: true, id: proposal.id, width, wrap, note: 'Pending user Accept/Reject.' });
               continue;
             }
 
@@ -745,10 +1146,10 @@ G. read_document may show tag "math" for display equation blocks — use those i
 
         let finalText = finalTextParts.join('\n').trim();
 
-        // Only ask for a second model completion when the first call did not
-        // answer at all. A proposal already has enough context to close with a
-        // truthful local message, so avoid paying for another network round.
-        if (!finalText) {
+        // A proposal benefits from a short model-written closing message. For
+        // a no-op/non-proposal, return the local truthful fallback immediately
+        // instead of paying for another model round.
+        if (!finalText && proposedSomething) {
           try {
             send({ type: 'thinking', label: 'Escribiendo respuesta…' });
             const closeRes = await deepseekChat({
@@ -801,11 +1202,17 @@ G. read_document may show tag "math" for display equation blocks — use those i
           mathSafeMode,
           finalEquations: listEquations(liveHtml).length,
         });
-        send({ type: 'done', finalText, model: usedModel });
+        send({
+          type: 'done',
+          finalText,
+          model: usedModel,
+          durationMs: Date.now() - t0,
+          outcome: proposedSomething ? 'proposal' : 'answer',
+        });
       } catch (e: any) {
         slog.error('chat', 'request.error', { ms: Date.now() - t0, err: e?.message || String(e) });
         send({ type: 'error', message: e?.message || 'Chat failed' });
-        send({ type: 'done' });
+        send({ type: 'done', durationMs: Date.now() - t0, outcome: 'error' });
       } finally {
         try {
           controller.close();

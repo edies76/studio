@@ -87,6 +87,7 @@ export default function DocsStudioClient({
   const { toast } = useToast();
 
   const [documentTitle, setDocumentTitle] = useState('Untitled');
+  const [documentBriefContext, setDocumentBriefContext] = useState('');
   const [documentContent, setDocumentContent] = useState('');
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -485,6 +486,9 @@ export default function DocsStudioClient({
         if (cancelled || !data.doc) return;
         setDocId(data.doc.id);
         setDocumentTitle(data.doc.title || 'Untitled');
+        if (data.doc.brief) {
+          setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
+        }
         setDocumentContent(data.doc.html || EMPTY_DOCUMENT_HTML);
         lastSavedHtml.current = data.doc.html || '';
         lastSavedTitle.current = data.doc.title || '';
@@ -661,6 +665,7 @@ export default function DocsStudioClient({
     async (prompt: string) => {
       const p = prompt.trim();
       if (!p) return;
+      let completed = false;
       const startedAt = Date.now();
       startLatencyTimer();
       setIsBusy(true);
@@ -754,6 +759,7 @@ export default function DocsStudioClient({
               }
             }
             if (ev.type === 'html_ready') {
+              completed = true;
               const finalHtml = sanitizeDocumentHtml(ev.html || htmlAcc);
               // First document: full HTML already ready → vertical shine reveal (not fake streaming on canvas)
               applyHtml(finalHtml, true, 'firstReveal');
@@ -804,10 +810,24 @@ export default function DocsStudioClient({
         }
       } catch (e: any) {
         toast({ variant: 'destructive', title: 'Draft failed', description: e?.message });
+        setMessages((ms) =>
+          ms.map((m) =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content: 'No pude crear el documento. Abrí el chat para ver el detalle o intentá de nuevo.',
+                  streaming: false,
+                  isDraftStream: false,
+                  elapsedMs: Date.now() - startedAt,
+                }
+              : m,
+          ),
+        );
       } finally {
         setIsBusy(false);
         if (requestStartedAt.current === startedAt) requestStartedAt.current = null;
       }
+      return completed;
     },
     [model, applyHtml, toast, documentTitle, pushEvent],
   );
@@ -825,7 +845,11 @@ export default function DocsStudioClient({
       const empty = isDocEmpty(liveDocumentHtml);
       // Only full-draft on clear document requests — never on "hola"
       if (empty && wantsFullDocument(text)) {
-        await runFastDraft(text);
+        const completed = await runFastDraft(text);
+        if (opts?.fromComposer && !completed) {
+          setChatCollapsed(false);
+          setAgentOpen(true);
+        }
         return;
       }
 
@@ -867,6 +891,9 @@ export default function DocsStudioClient({
         } catch {
           /* ignore */
         }
+        if (documentBriefContext) {
+          assignmentContext = [assignmentContext, documentBriefContext].filter(Boolean).join('\n');
+        }
 
         const intensityNote =
           opts?.intensity != null
@@ -889,6 +916,18 @@ export default function DocsStudioClient({
             model,
             autoStart: false,
             assignmentContext,
+            workspaceContext: {
+              documentId: docId,
+              pageCount,
+              historyIndex: historyIndexRef.current,
+              historyLength: historyRef.current.length,
+              canUndo: historyIndexRef.current > 0,
+              canRedo: historyIndexRef.current < historyRef.current.length - 1,
+              pendingEdits: pendingEdits.filter((edit) => edit.status === 'pending').length,
+              agentMode,
+              fontFamily,
+              fontSize,
+            },
           }),
         });
 
@@ -999,6 +1038,10 @@ export default function DocsStudioClient({
                 true,
               );
             }
+            if (ev.type === 'workspace_command') {
+              if (ev.command === 'undo') undo();
+              if (ev.command === 'redo') redo();
+            }
             if (ev.type === 'error') {
               toast({ variant: 'destructive', title: 'Chat error', description: ev.message });
             }
@@ -1066,7 +1109,7 @@ export default function DocsStudioClient({
         }
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, fontFamily, fontSize, documentBriefContext, undo, redo],
   );
 
   useEffect(() => {
@@ -1187,9 +1230,9 @@ export default function DocsStudioClient({
     if (!text) return;
     const selected = selectedTextRef.current.trim();
     if (selected) {
-      void runChat(text, { selectedText: selected });
+      void runChat(text, { selectedText: selected, fromComposer: true });
     } else {
-      void runChat(text);
+      void runChat(text, { fromComposer: true });
     }
   };
 
@@ -1319,6 +1362,17 @@ export default function DocsStudioClient({
       }
     } else {
       applyHtml(edit.afterHtml, true, 'cascade');
+    }
+
+    // Persist each accepted proposal as its own recoverable snapshot. The
+    // in-memory undo stack remains immediate; this is the durable agent-safe
+    // history used by the remote MCP and version drawer.
+    if (docId) {
+      void fetch(`/api/docs/${docId}/versions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ label: edit.title, source: 'agent', html: readEditorHtml() }),
+      }).catch(() => undefined);
     }
 
     setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'accepted' } : e)));
@@ -1908,6 +1962,7 @@ export default function DocsStudioClient({
                   activity.find((a) => a.state === 'active')?.label ||
                   (isBusy ? 'Recogiendo información…' : null)
                 }
+                elapsedSeconds={elapsedSeconds}
                 onStop={handleStopAgent}
                 toolLogs={floatingLogs}
                 statusLine={floatingStatus}
@@ -1987,6 +2042,7 @@ export default function DocsStudioClient({
               isBusy={isBusy}
               onQuickAction={(p) => void runChat(p)}
               topBar={chatTopBar}
+              elapsedSeconds={elapsedSeconds}
             />
           )}
         </div>
