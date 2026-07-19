@@ -847,9 +847,16 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 });
               }
               const afterHtml = guarded.html;
-              // Patch liveHtml for multi-tool turns
-              if (liveHtml.includes(block.html)) {
-                liveHtml = liveHtml.replace(block.html, afterHtml);
+              // A proposal is not an applied edit. Mutating the server-side
+              // working copy here made later block indices refer to a virtual
+              // document that the browser never had, so accept could target a
+              // different paragraph. Every proposal stays anchored to the
+              // same real snapshot until the user accepts it.
+              const proposedBlocks = extractHtmlBlocks(afterHtml);
+              if (proposedBlocks.length !== 1 || proposedBlocks[0].tag !== block.tag) {
+                send({ type: 'tool_end', name, ok: false, label: 'La edición debe contener un solo bloque', id: tid });
+                await reply({ ok: false, error: 'edit_paragraph must return exactly one HTML block of the same kind as the requested block. Do not return surrounding paragraphs or a whole document.' });
+                continue;
               }
               send({
                 type: 'propose_edit',

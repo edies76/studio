@@ -10,6 +10,8 @@ export type ProposeEditPayload = {
   mode: 'replace_document' | 'replace_selection' | 'insert_html' | 'replace_block';
   /** 0-based block index for replace_block (p, h1-h3, li, table, etc.) */
   blockIndex?: number;
+  /** Client-created stable anchor. Never use blockIndex when applying a pending edit. */
+  targetAnchor?: string;
   selectionHint?: string;
   changeList?: string[];
 };

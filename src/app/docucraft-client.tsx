@@ -9,7 +9,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import DocumentEditorToolbar from '@/components/document-editor-toolbar';
-import LocaleSwitch from '@/components/locale-switch';
 import EquationEditorDialog from '@/components/equation-editor-dialog';
 import PaperCanvas, { type PaperCanvasHandle } from '@/components/paper-canvas';
 import StudioChat, {
@@ -17,7 +16,7 @@ import StudioChat, {
   type ChatMessage,
   type PendingEdit,
 } from '@/components/studio-chat';
-import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
+import ToolsDock, { type ImproveStyle, type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
 import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History, Settings2 } from 'lucide-react';
@@ -209,6 +208,16 @@ export default function DocsStudioClient({
     }
     return out;
   }, []);
+
+  const findProposalTarget = useCallback((edit: ProposeEditPayload): HTMLElement | null => {
+    const blocks = queryAllBlocks();
+    if (edit.targetAnchor) {
+      const target = blocks.find((block) => block.getAttribute('data-studio-proposal-anchor') === edit.targetAnchor);
+      if (target) return target;
+    }
+    // Compatibility for stored proposals created before stable anchors.
+    return edit.beforeHtml ? blocks.find((block) => block.outerHTML === edit.beforeHtml) || null : null;
+  }, [queryAllBlocks]);
 
   const selectionInCanvas = useCallback((node: Node | null) => {
     if (!node) return false;
@@ -1088,7 +1097,11 @@ export default function DocsStudioClient({
                 typeof edit.blockIndex === 'number'
               ) {
                 const el = queryAllBlocks()[edit.blockIndex];
-                if (el) edit.beforeHtml = el.outerHTML;
+                if (el) {
+                  edit.targetAnchor = `proposal_${ev.id}`;
+                  el.setAttribute('data-studio-proposal-anchor', edit.targetAnchor);
+                  edit.beforeHtml = el.outerHTML;
+                }
               }
               setPendingEdits((p) => [...p, { id: ev.id, edit, status: 'pending' }]);
               setActiveEditId((cur) => cur || ev.id);
@@ -1296,7 +1309,7 @@ export default function DocsStudioClient({
     openAgent('edit');
   };
 
-  const handleToolsAction = (action: OrbitAction, intensity: number) => {
+  const handleToolsAction = (action: OrbitAction, intensity: number, improveStyle?: ImproveStyle) => {
     const selected = selectedTextRef.current.trim();
     if (action === 'norms') {
       // Full level brief (APA→minimal) so the agent applies real norms, not a one-liner
@@ -1311,17 +1324,19 @@ export default function DocsStudioClient({
       shorter: 'Make shorter',
       expand: 'Expand',
       grammar: 'Fix grammar',
-      academic: 'More academic',
     };
     const label = labels[action as Exclude<OrbitAction, 'norms'>] || action;
+    const improveInstruction = action === 'improve'
+      ? ` Rewrite in a ${improveStyle || 'direct'} style. ${prefs.improvePrompt}`
+      : '';
     if (selected) {
       void runChat(
-        `${label} the selected text at intensity ${intensity}%. Prefer edit_paragraph or propose_edit (replace_selection). If selection is a formula, use list_equations + edit_equation (MATH-SAFE).`,
+        `${label} the selected text.${improveInstruction} Prefer edit_paragraph or propose_edit (replace_selection). If selection is a formula, use list_equations + edit_equation (MATH-SAFE).`,
         { selectedText: selected, intensity },
       );
     } else {
       void runChat(
-        `${label} the entire document at intensity ${intensity}%. Prefer targeted edit_paragraph; full replace_document only if necessary. MATH-SAFE: list_equations before touching formulas.`,
+        `${label} the entire document.${improveInstruction} Prefer targeted edit_paragraph; full replace_document only if necessary. MATH-SAFE: list_equations before touching formulas.`,
         { intensity },
       );
     }
@@ -1368,12 +1383,12 @@ export default function DocsStudioClient({
     }
 
     if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-      const target = queryAllBlocks()[edit.blockIndex];
+      const target = findProposalTarget(edit);
       if (!target) {
         toast({
           variant: 'destructive',
-          title: 'No se encontró el bloque',
-          description: `Índice ${edit.blockIndex}`,
+          title: 'El párrafo ya no está disponible',
+          description: 'La propuesta no se aplicó sobre otro contenido.',
         });
         return;
       }
@@ -1403,7 +1418,7 @@ export default function DocsStudioClient({
     if (edit.mode === 'replace_document') {
       applyHtml(edit.afterHtml, true, 'cascade');
     } else if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-      const target = queryAllBlocks()[edit.blockIndex];
+      const target = findProposalTarget(edit);
       if (target) {
         const wrap = document.createElement('div');
         wrap.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
@@ -1416,8 +1431,8 @@ export default function DocsStudioClient({
       } else {
         toast({
           variant: 'destructive',
-          title: 'No se encontró el bloque',
-          description: `Índice ${edit.blockIndex}`,
+          title: 'El párrafo ya no está disponible',
+          description: 'La propuesta no modificó el documento.',
         });
       }
     } else if (edit.mode === 'replace_selection' && selectionRef.current) {
@@ -1498,6 +1513,9 @@ export default function DocsStudioClient({
 
   const rejectEdit = (id: string) => {
     const item = pendingEdits.find((p) => p.id === id);
+    if (item?.edit.mode === 'replace_block') {
+      findProposalTarget(item.edit)?.removeAttribute('data-studio-proposal-anchor');
+    }
     setPendingEdits((p) => p.map((e) => (e.id === id ? { ...e, status: 'rejected' } : e)));
     setActiveEditId((cur) => {
       if (cur !== id) return cur;
@@ -1534,7 +1552,7 @@ export default function DocsStudioClient({
       const currentHtml = readEditorHtml();
       let nextDocument = currentHtml;
       if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-        const target = queryAllBlocks()[edit.blockIndex];
+        const target = findProposalTarget(edit);
         if (!target) {
           toast({ variant: 'destructive', title: 'El párrafo ya cambió', description: 'Volvé a generar la propuesta sobre el texto actual.' });
           return;
@@ -2027,36 +2045,26 @@ export default function DocsStudioClient({
               className="pointer-events-none absolute inset-x-0 top-3 z-30 h-10"
             >
               <div className="pointer-events-auto absolute left-3 top-0 flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 p-1 backdrop-blur-md">
-                <a href="/home" className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Volver a biblioteca" aria-label="Volver a biblioteca"><ArrowLeft className="h-4 w-4" /></a>
+                <a href="/home" className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Back to library" aria-label="Back to library"><ArrowLeft className="h-4 w-4" /></a>
                 <span className="h-4 w-px bg-neutral-200" aria-hidden="true" />
-                <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'} aria-label={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'}>
+                <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title={saveState === 'saving' ? 'Saving changes' : saveConflict || saveState === 'error' ? 'Could not save' : 'Changes saved'} aria-label={saveState === 'saving' ? 'Saving changes' : saveConflict || saveState === 'error' ? 'Could not save' : 'Changes saved'}>
                   {saveState === 'saving' ? <CloudUpload className="h-4 w-4 animate-pulse" /> : saveConflict || saveState === 'error' ? <CloudOff className="h-4 w-4 text-amber-700" /> : <CircleCheck className="h-4 w-4 text-emerald-700" />}
                 </span>
-                <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Importar Word" aria-label="Importar Word"><FileUp className="h-4 w-4" /></button>
-                <button type="button" onClick={() => setSettingsOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Configuración" aria-label="Configuración"><Settings2 className="h-4 w-4" /></button>
-              </div>
-              <div className="pointer-events-auto absolute right-3 top-0">
-                <LocaleSwitch />
+                <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Import Word" aria-label="Import Word"><FileUp className="h-4 w-4" /></button>
+                <button type="button" onClick={() => setSettingsOpen(true)} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Settings" aria-label="Settings"><Settings2 className="h-4 w-4" /></button>
               </div>
               <div className="pointer-events-auto absolute left-1/2 top-0 max-w-[min(980px,calc(100vw-210px))] -translate-x-1/2 overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
                 <DocumentEditorToolbar
-                  onRequestLink={() => {
-                    const url = window.prompt('URL');
-                    if (url) document.execCommand('createLink', false, url);
-                  }}
                   onUndo={undo}
                   onRedo={redo}
                   canUndo={historyIndex > 0}
                   canRedo={historyIndex < history.length - 1}
                   fontFamily={fontFamily}
                   onFontFamily={setFontFamily}
-                  pageCount={pageCount}
-                  wordCount={countWords()}
                   onInsertMath={handleInsertMath}
                   onInsertTable={handleInsertTable}
                   onInsertImage={handleInsertImage}
                   onImportWord={() => importInputRef.current?.click()}
-                  onOpenSettings={() => setSettingsOpen(true)}
                   onBeforeFormat={() => {
                     canvasRef.current?.restoreSelection();
                   }}
