@@ -462,7 +462,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             const wasFocused = document.activeElement === el;
             el.innerHTML = pageHtml;
             typesetEditor(el);
-            if (wasFocused && !grew) placeCaretAtEnd(el);
+            // A reflow replaces page DOM. Never move a live caret to the end
+            // when a logical bookmark will restore its exact text offset.
+            if (wasFocused && !grew && !bookmark) placeCaretAtEnd(el);
           });
           if (bookmark) {
             restoreSelectionBookmark(bookmark, bodyRefs.current.filter(Boolean) as HTMLElement[], lastSelection);
@@ -933,7 +935,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     if (selectedImage && !liveBodies().some((b) => b.contains(selectedImage))) {
       setSelectedImage(null);
     }
-    scheduleRebalance(pageIdx);
+    // Capture after the browser mutation (including Enter) so page reflow can
+    // rebuild DOM without stealing the caret to a page end.
+    scheduleRebalance(pageIdx, selectionBookmark(liveBodies()));
     onInput();
   };
 
@@ -1010,6 +1014,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       const body = bodyRefs.current[pageIdx];
       if (body) {
         requestAnimationFrame(() => {
+          const bookmark = selectionBookmark(liveBodies());
           if (body.scrollHeight > body.clientHeight + 2) {
             body.scrollTop = 0;
             if (rebalanceTimer.current) {
@@ -1033,7 +1038,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                 el.innerHTML = pageHtml;
                 typesetEditor(el);
               });
-              if (grew) {
+              if (bookmark) {
+                restoreSelectionBookmark(bookmark, bodyRefs.current.filter(Boolean) as HTMLElement[], lastSelection);
+              } else if (grew) {
                 const last = bodyRefs.current[next.length - 1];
                 if (last) {
                   placeCaretAtEnd(last);
