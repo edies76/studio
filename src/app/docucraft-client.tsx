@@ -102,7 +102,10 @@ export default function DocsStudioClient({
   // the existing contentEditable canvas while it is migrated block by block.
   const [documentModel, setDocumentModel] = useState<StudioDocumentModel>(() => createStudioDocument());
   const documentModelRef = useRef<StudioDocumentModel>(createStudioDocument());
-  const [nativeEngine, setNativeEngine] = useState(false);
+  // Native blocks/pages are the default rendering path. The legacy canvas is
+  // retained below only as an implementation fallback while advanced tools
+  // (free-positioned objects and rich table editing) migrate.
+  const [nativeEngine] = useState(true);
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveConflict, setSaveConflict] = useState(false);
@@ -247,10 +250,6 @@ export default function DocsStudioClient({
   }, []);
 
   useEffect(() => setIsClient(true), []);
-
-  useEffect(() => {
-    setNativeEngine(new URLSearchParams(window.location.search).get('native') === '1');
-  }, []);
 
   // Resize chat panel (drag) — collapse below threshold
   useEffect(() => {
