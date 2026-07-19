@@ -21,8 +21,8 @@ export type DocxImportResult = {
   userSummary: string;
 };
 
-type OoxmlStyle = { name?: string; basedOn?: string; css: string; heading?: number };
-type OoxmlListLevel = { ordered: boolean; start?: number };
+type OoxmlStyle = { name?: string; basedOn?: string; css: string; paragraphCss: string; heading?: number };
+type OoxmlListLevel = { ordered: boolean; start?: number; listStyle?: string };
 type OoxmlTableStyle = { background?: string; firstRowBackground?: string };
 export type WordImportProfile = { title: string; styles: string[]; tables: number; headings: number; source: 'docx-ooxml' };
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -54,8 +54,11 @@ function cssFromProperties(properties: Element | null): string {
 }
 
 function paragraphCss(properties: Element | null): string {
-  if (!properties) return '';
-  const css: string[] = [];
+  // Word paragraphs do not get browser heading/p margins. Starting from zero
+  // makes a fidelity paragraph a Word box, then OOXML spacing adds only what
+  // the source explicitly asks for.
+  const css: string[] = ['margin:0'];
+  if (!properties) return css.join(';');
   const jc = wAttr(ooxmlChild(properties, 'jc'), 'val');
   const spacing = ooxmlChild(properties, 'spacing');
   const ind = ooxmlChild(properties, 'ind');
@@ -64,6 +67,17 @@ function paragraphCss(properties: Element | null): string {
   const before = Number(wAttr(spacing, 'before')), after = Number(wAttr(spacing, 'after'));
   if (before) css.push(`margin-top:${before / 20}pt`);
   if (after) css.push(`margin-bottom:${after / 20}pt`);
+  const line = Number(wAttr(spacing, 'line'));
+  if (line) {
+    const rule = wAttr(spacing, 'lineRule');
+    // Word stores auto line spacing in 1/240ths of a line (360 = 1.5×).
+    // Exact/atLeast values are twentieths of a point.
+    css.push(
+      rule === 'exact' || rule === 'atLeast'
+        ? `line-height:${line / 20}pt`
+        : `line-height:${line / 240}`,
+    );
+  }
   const left = Number(wAttr(ind, 'left') || wAttr(ind, 'start'));
   if (left) css.push(`margin-left:${left / 20}pt`);
   return css.join(';');
@@ -98,7 +112,13 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
   stylesXml?.querySelectorAll('style').forEach((style) => {
     const id = wAttr(style, 'styleId'); const name = wAttr(ooxmlChild(style, 'name'), 'val');
     const heading = /heading\s*(\d)|título apartado\s*(\d)/i.exec(name)?.slice(1).find(Boolean);
-    styles.set(id, { name, basedOn: wAttr(ooxmlChild(style, 'basedOn'), 'val'), css: cssFromProperties(ooxmlChild(style, 'rPr')), heading: heading ? Number(heading) : undefined });
+    styles.set(id, {
+      name,
+      basedOn: wAttr(ooxmlChild(style, 'basedOn'), 'val'),
+      css: cssFromProperties(ooxmlChild(style, 'rPr')),
+      paragraphCss: paragraphCss(ooxmlChild(style, 'pPr')),
+      heading: heading ? Number(heading) : undefined,
+    });
   });
   stylesXml?.querySelectorAll('style').forEach((style) => {
     if (wAttr(style, 'type') !== 'table') return;
@@ -123,6 +143,7 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
       levels.set(ilvl, {
         ordered: !['bullet', 'none'].includes(format),
         start: Number(wAttr(ooxmlChild(level, 'start'), 'val')) || 1,
+        listStyle: wAttr(ooxmlChild(level, 'lvlText'), 'val').includes('○') ? 'circle' : undefined,
       });
     });
     abstractLevels.set(wAttr(abstractNum, 'abstractNumId'), levels);
@@ -131,9 +152,21 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
     const levels = abstractLevels.get(wAttr(ooxmlChild(num, 'abstractNumId'), 'val'));
     if (levels) numbering.set(wAttr(num, 'numId'), levels);
   });
+  const defaultParagraphStyle = Array.from(styles.entries()).find(([id]) => id === 'Normal')?.[0] || '';
   const resolveStyle = (id: string): OoxmlStyle => {
-    const own: OoxmlStyle = styles.get(id) || { css: '' }; const parent: OoxmlStyle = own.basedOn && own.basedOn !== id ? resolveStyle(own.basedOn) : { css: '' };
-    return { ...parent, ...own, css: [parent.css, own.css].filter(Boolean).join(';'), heading: own.heading || parent.heading };
+    const own: OoxmlStyle = styles.get(id) || { css: '', paragraphCss: '' };
+    const parent: OoxmlStyle = own.basedOn && own.basedOn !== id
+      ? resolveStyle(own.basedOn)
+      : id !== defaultParagraphStyle && defaultParagraphStyle
+        ? resolveStyle(defaultParagraphStyle)
+        : { css: '', paragraphCss: '' };
+    return {
+      ...parent,
+      ...own,
+      css: [parent.css, own.css].filter(Boolean).join(';'),
+      paragraphCss: [parent.paragraphCss, own.paragraphCss].filter(Boolean).join(';'),
+      heading: own.heading || parent.heading,
+    };
   };
   const renderRun = (run: Element) => {
     const drawing = run.querySelector('drawing, pict');
@@ -164,8 +197,8 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
     return config ? { numId, level, ...config } : null;
   };
   const renderParagraph = (paragraph: Element) => {
-    const props = ooxmlChild(paragraph, 'pPr'); const styleId = wAttr(ooxmlChild(props || paragraph, 'pStyle'), 'val'); const style = resolveStyle(styleId);
-    const css = [style.css, paragraphCss(props)].filter(Boolean).join(';');
+    const props = ooxmlChild(paragraph, 'pPr'); const styleId = wAttr(ooxmlChild(props || paragraph, 'pStyle'), 'val'); const style = resolveStyle(styleId || defaultParagraphStyle);
+    const css = [style.css, style.paragraphCss, paragraphCss(props)].filter(Boolean).join(';');
     const content = renderInline(paragraph) || escapeHtml(ooxmlText(paragraph));
     if (listInfo(paragraph)) return `<li class="docx-fidelity-paragraph"${css ? ` style="${css}"` : ''}>${content || '<br>'}</li>`;
     const tag = style.heading ? `h${Math.min(6, style.heading)}` : 'p';
@@ -188,7 +221,8 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
       if (!openList || openList.numId !== info.numId || openList.level !== info.level || openList.ordered !== info.ordered) {
         closeList(); const tag = info.ordered ? 'ol' : 'ul';
         const start = info.ordered && info.start && info.start !== 1 ? ` start="${info.start}"` : '';
-        html += `<${tag} class="docx-fidelity-list"${start}>`; openList = { numId: info.numId, level: info.level, ordered: info.ordered };
+        const style = info.listStyle ? ` style="list-style-type:${info.listStyle}"` : '';
+        html += `<${tag} class="docx-fidelity-list"${start}${style}>`; openList = { numId: info.numId, level: info.level, ordered: info.ordered };
       }
       html += renderParagraph(node);
     });
