@@ -42,6 +42,7 @@ import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
 import OnlyOfficeEditor from '@/components/onlyoffice-editor';
+import NativeDocumentCanvas from '@/components/native-document-canvas';
 import {
   createStudioDocument,
   modelFromHtml,
@@ -101,6 +102,7 @@ export default function DocsStudioClient({
   // the existing contentEditable canvas while it is migrated block by block.
   const [documentModel, setDocumentModel] = useState<StudioDocumentModel>(() => createStudioDocument());
   const documentModelRef = useRef<StudioDocumentModel>(createStudioDocument());
+  const [nativeEngine, setNativeEngine] = useState(false);
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveConflict, setSaveConflict] = useState(false);
@@ -245,6 +247,10 @@ export default function DocsStudioClient({
   }, []);
 
   useEffect(() => setIsClient(true), []);
+
+  useEffect(() => {
+    setNativeEngine(new URLSearchParams(window.location.search).get('native') === '1');
+  }, []);
 
   // Resize chat panel (drag) — collapse below threshold
   useEffect(() => {
@@ -2118,7 +2124,14 @@ export default function DocsStudioClient({
         >
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {/* Handmade paper canvas: full pages + math + tables */}
-            <PaperCanvas
+            {nativeEngine ? <NativeDocumentCanvas
+              document={documentModel}
+              paperSize={paperSize}
+              fontFamily={fontFamily}
+              fontSize={fontSize}
+              editable={!isBusy}
+              onChange={(nextModel) => applyDocumentModel(nextModel, true)}
+            /> : <PaperCanvas
               ref={canvasRef}
               paperSize={paperSize}
               onPaperSizeChange={(nextSize) => {
@@ -2151,7 +2164,7 @@ export default function DocsStudioClient({
               showEditButton={prefs.showEditButton}
               allowImages={prefs.allowImages}
               imageMaxMb={prefs.imageMaxMb}
-            />
+            />}
             <input
               ref={importInputRef}
               type="file"
