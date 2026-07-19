@@ -1,6 +1,7 @@
 import NextAuth from 'next-auth';
 import Google from 'next-auth/providers/google';
 import type { NextAuthConfig } from 'next-auth';
+import { cookies, headers } from 'next/headers';
 
 /**
  * Optional Google auth (Auth.js). Guest mode is the default:
@@ -48,7 +49,7 @@ export function isAuthConfigured(): boolean {
   return Boolean(id && secret && (process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET));
 }
 
-/** Stable user id for storage: session user id or local-dev guest */
+/** Stable user id for storage: session user id or isolated browser guest. */
 export async function requireUserId(): Promise<{
   userId: string;
   guest: boolean;
@@ -56,8 +57,14 @@ export async function requireUserId(): Promise<{
   email?: string | null;
   image?: string | null;
 }> {
+  const guestCookie =
+    (await cookies()).get('docs-guest-id')?.value ||
+    (await headers()).get('x-docs-guest-id') ||
+    undefined;
   const guest = {
-    userId: 'local-guest',
+    // Keep the old fallback for direct server calls that predate the cookie;
+    // browser requests receive the cookie from middleware before storage.
+    userId: guestCookie ? `guest-${guestCookie}` : 'local-guest',
     guest: true as const,
     name: 'Invitado local',
     email: null as string | null,

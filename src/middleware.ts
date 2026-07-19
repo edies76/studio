@@ -25,22 +25,39 @@ export function middleware(req: NextRequest) {
     }
   }
 
+  const withGuestIdentity = () => {
+    const guestId = req.cookies.get('docs-guest-id')?.value || crypto.randomUUID();
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-docs-guest-id', guestId);
+    const nextResponse = NextResponse.next({ request: { headers: requestHeaders } });
+    if (!req.cookies.get('docs-guest-id')) {
+      nextResponse.cookies.set('docs-guest-id', guestId, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: req.nextUrl.protocol === 'https:',
+        maxAge: 60 * 60 * 24 * 365,
+        path: '/',
+      });
+    }
+    return nextResponse;
+  };
+
   const force = process.env.FORCE_AUTH === '1';
-  if (!force) return NextResponse.next();
+  if (!force) return withGuestIdentity();
 
   const hasGoogle =
     (process.env.AUTH_GOOGLE_ID || process.env.GOOGLE_CLIENT_ID) &&
     (process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET);
-  if (!hasGoogle) return NextResponse.next();
+  if (!hasGoogle) return withGuestIdentity();
 
   const isProtected =
     path.startsWith('/home') ||
     path.startsWith('/studio') ||
     path.startsWith('/api/docs');
 
-  if (!isProtected) return NextResponse.next();
+  if (!isProtected) return withGuestIdentity();
   if (path.startsWith('/login') || path.startsWith('/api/auth')) {
-    return NextResponse.next();
+    return withGuestIdentity();
   }
 
   const token =
@@ -58,7 +75,7 @@ export function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  return withGuestIdentity();
 }
 
 export const config = {
