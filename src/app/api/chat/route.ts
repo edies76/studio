@@ -23,6 +23,8 @@ import { slog } from '@/lib/server-log';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
 import { buildDocumentIntelligence, buildDocsAgentSystem, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 import { replaceTableCell } from '@/lib/table-tools';
+import { reviewAssignment } from '@/lib/assignment-review';
+import type { AssignmentBrief } from '@/lib/assignment-types';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const runtime = 'nodejs';
@@ -113,6 +115,12 @@ function isSelectionRewriteRequest(text: string) {
   );
 }
 
+function requestsLongForm(text: string) {
+  return /\b(?:\d{3,}\s*(?:words?|palabras?)|\d+\s*(?:pages?|p[áa]ginas?)|long(?:er)?|detailed|comprehensive|in[- ]depth|extenso|detallado|exhaustivo|profundo|amplio)\b/i.test(
+    text,
+  );
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const {
@@ -124,6 +132,7 @@ export async function POST(req: NextRequest) {
     model: preferredModel,
     autoStart = false,
     assignmentContext = '',
+    assignmentBrief,
     workspaceContext,
     attachedImage = null,
   } = body as {
@@ -135,6 +144,7 @@ export async function POST(req: NextRequest) {
     model?: string;
     autoStart?: boolean;
     assignmentContext?: string;
+    assignmentBrief?: AssignmentBrief;
     workspaceContext?: WorkspaceAgentContext;
     /** data:image/... URL pasted by the user this turn, if any. */
     attachedImage?: string | null;
@@ -197,6 +207,9 @@ export async function POST(req: NextRequest) {
           .reverse()
           .find((m) => m.role === 'user')
           ?.content || '';
+        const explicitWholeDocumentEdit = /\b(?:todo el documento|documento completo|documento entero|entire document|whole document|full document|all paragraphs|todos los p[áa]rrafos)\b/i.test(
+          lastUser,
+        );
 
         // Fast lane: no document HTML, no tool schema, no long conversation
         // history, no second completion. This is the path for greetings and
@@ -258,6 +271,10 @@ export async function POST(req: NextRequest) {
 
         // Working HTML copy for math-safe tools within this request
         liveHtml = ensureMathHosts(documentHtml || '');
+        const documentIsEffectivelyEmpty = !liveHtml
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/&nbsp;/gi, ' ')
+          .trim();
         /** Special MATH-SAFE mode: active when doc has equations or user talks math */
         mathSafeMode = listEquations(liveHtml).length > 0;
 
@@ -413,13 +430,13 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               messages: [
                 {
                   role: 'system',
-                  content: 'Write the requested replacement document. Match the user language. Return plain text only, with paragraphs separated by blank lines; no markdown, notes, or preamble.',
+                  content: `Write the requested replacement document. Match the user language. Return plain text only, with paragraphs separated by blank lines; no markdown, notes, or preamble. Default to the shortest complete result. ${requestsLongForm(lastUser) ? 'The user explicitly requested a longer result; satisfy that stated scope.' : 'Unless the user specified a length, use no more than 3 short paragraphs.'}`,
                 },
                 { role: 'user', content: lastUser },
               ],
               stream: false,
               temperature: 0.7,
-              maxTokens: 1800,
+              maxTokens: requestsLongForm(lastUser) ? 1800 : 700,
             });
             const data = await rewriteRes.json().catch(() => null);
             draft = String(data?.choices?.[0]?.message?.content || '').trim();
@@ -658,7 +675,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 tools,
                 stream: false,
                 temperature: 0.5,
-                maxTokens: 4096,
+                maxTokens: requestsLongForm(lastUser) ? 4096 : 1200,
               });
               const data = await res.json();
               if (!res.ok) {
@@ -847,6 +864,15 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               continue;
             }
 
+            if (name === 'review_assignment') {
+              const tid = `assignment_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Comparando con la consigna…', id: tid });
+              const review = reviewAssignment(assignmentBrief, liveHtml);
+              send({ type: 'tool_end', name, ok: Boolean(review), label: review ? `${review.covered}/${review.total} requisitos cubiertos` : 'No hay consigna adjunta', id: tid });
+              await reply({ ok: Boolean(review), review, error: review ? undefined : 'No attached assignment brief. Ask the user to create the document from a brief or attach the assignment first.' });
+              continue;
+            }
+
             if (name === 'workspace_command') {
               const tid = `workspace_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               const command = args.command === 'redo' ? 'redo' : args.command === 'undo' ? 'undo' : null;
@@ -983,13 +1009,22 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
             }
 
             if (name === 'propose_edit') {
-              proposedSomething = true;
               const title = args.title || 'Cambio de documento';
               const tid = `pe_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               send({ type: 'status', label: `Proponiendo: ${title}` });
               send({ type: 'tool_start', name, label: `Proponiendo: ${title}`, id: tid });
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const mode = args.mode || 'replace_document';
+              if (selectedText.trim() && mode !== 'replace_selection') {
+                send({ type: 'tool_end', name, ok: false, label: 'La selección requiere un reemplazo local', id: tid });
+                await reply({ ok: false, error: 'The user selected text. Propose mode=replace_selection and return only the replacement for that selection; never replace a block or document.' });
+                continue;
+              }
+              if (mode === 'replace_document' && !explicitWholeDocumentEdit && !documentIsEffectivelyEmpty) {
+                send({ type: 'tool_end', name, ok: false, label: 'Reemplazo total no solicitado', id: tid });
+                await reply({ ok: false, error: 'The user did not explicitly request the entire document. Do not use replace_document. Use edit_paragraph for exactly one existing block, or replace_selection when text is selected.' });
+                continue;
+              }
               const beforeHtml =
                 args.beforeHtml ??
                 (mode === 'replace_document' ? liveHtml : selectedText || liveHtml);
@@ -1007,9 +1042,10 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 });
               }
               const afterHtml = guarded.html;
-              if (mode === 'replace_document') {
-                liveHtml = afterHtml;
-              }
+              // A proposal is not document state. Keeping a virtual rewritten
+              // copy here desynchronizes later block indices from the browser
+              // and makes accept/reject target the wrong paragraph.
+              proposedSomething = true;
               const changeList = Array.isArray(args.changeList)
                 ? args.changeList.map(String)
                 : [];
