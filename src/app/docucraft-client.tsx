@@ -19,7 +19,7 @@ import StudioChat, {
 import ToolsDock, { type ImproveStyle, type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, History, Plus, Settings2 } from 'lucide-react';
+import { ArrowLeft, CircleCheck, ClipboardCheck, CloudOff, CloudUpload, Download, FileText, History, Plus, Settings2 } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -41,6 +41,9 @@ import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
+import AssignmentReviewDrawer from '@/components/assignment-review-drawer';
+import type { AssignmentReview } from '@/lib/assignment-review';
+import type { AssignmentBrief } from '@/lib/assignment-types';
 import OnlyOfficeEditor from '@/components/onlyoffice-editor';
 import NativeDocumentCanvas from '@/components/native-document-canvas';
 import {
@@ -97,15 +100,16 @@ export default function DocsStudioClient({
   const [sourceDocx, setSourceDocx] = useState<{ fileName: string; size: number; updatedAt: number } | null>(null);
   const [officeOpen, setOfficeOpen] = useState(false);
   const [documentBriefContext, setDocumentBriefContext] = useState('');
+  const [documentBrief, setDocumentBrief] = useState<AssignmentBrief | undefined>(undefined);
   const [documentContent, setDocumentContent] = useState('');
   // The native model owns persistence. HTML remains the temporary adapter for
   // the existing contentEditable canvas while it is migrated block by block.
   const [documentModel, setDocumentModel] = useState<StudioDocumentModel>(() => createStudioDocument());
   const documentModelRef = useRef<StudioDocumentModel>(createStudioDocument());
-  // Native blocks/pages are the default rendering path. The legacy canvas is
-  // retained below only as an implementation fallback while advanced tools
-  // (free-positioned objects and rich table editing) migrate.
-  const [nativeEngine] = useState(true);
+  // Do not route users through the native renderer until its selection and
+  // keyboard controller is complete. It currently remains an internal engine
+  // component, while PaperCanvas is the production interaction surface.
+  const nativeEngine = false;
   const [docId, setDocId] = useState<string | null>(initialDocumentId);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveConflict, setSaveConflict] = useState(false);
@@ -126,6 +130,8 @@ export default function DocsStudioClient({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [insertOpen, setInsertOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [assignmentReviewOpen, setAssignmentReviewOpen] = useState(false);
+  const [assignmentReview, setAssignmentReview] = useState<AssignmentReview | null>(null);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
   const [versions, setVersions] = useState<VersionSnapshot[]>([]);
   const [equationEditor, setEquationEditor] = useState<{
@@ -604,6 +610,7 @@ export default function DocsStudioClient({
         setDocumentTitle(data.doc.title || 'Untitled');
         setSourceDocx(data.doc.sourceDocx || null);
         if (data.doc.brief) {
+          setDocumentBrief(data.doc.brief as AssignmentBrief);
           setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
         }
         const loadedModel = data.doc.model as StudioDocumentModel | undefined;
@@ -1068,6 +1075,7 @@ export default function DocsStudioClient({
             model,
             autoStart: false,
             assignmentContext,
+            assignmentBrief: documentBrief,
             attachedImage: opts?.attachedImage || null,
             workspaceContext: {
               documentId: docId,
@@ -2065,8 +2073,29 @@ export default function DocsStudioClient({
     </DropdownMenu>
   );
 
+  const openAssignmentReview = async () => {
+    if (!docId) return;
+    try {
+      const response = await fetch(`/api/docs/${docId}/review`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'review_failed');
+      setAssignmentReview(data.review || null);
+      setAssignmentReviewOpen(true);
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'No se pudo revisar la entrega', description: error?.message });
+    }
+  };
+
   const chatTopBar = (
     <>
+      <button
+        type="button"
+        title="Revisar entrega y rúbrica"
+        onClick={() => void openAssignmentReview()}
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+      >
+        <ClipboardCheck className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
       <button
         type="button"
         title="Historial de cambios"
@@ -2383,6 +2412,11 @@ export default function DocsStudioClient({
         items={changeLog}
         versions={versions}
         onRestoreVersion={(id) => void restoreVersion(id)}
+      />
+      <AssignmentReviewDrawer
+        open={assignmentReviewOpen}
+        onClose={() => setAssignmentReviewOpen(false)}
+        review={assignmentReview}
       />
     </div>
   );
