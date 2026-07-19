@@ -19,6 +19,8 @@ export type DocxImportResult = {
 };
 
 type OoxmlStyle = { name?: string; basedOn?: string; css: string; heading?: number };
+type OoxmlListLevel = { ordered: boolean; start?: number };
+type OoxmlTableStyle = { background?: string; firstRowBackground?: string };
 export type WordImportProfile = { title: string; styles: string[]; tables: number; headings: number; source: 'docx-ooxml' };
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
@@ -74,33 +76,132 @@ export async function importDocxFidelityHtml(buffer: ArrayBuffer): Promise<strin
   };
   const documentXml = await readXml('word/document.xml');
   if (!documentXml) throw new Error('No se encontró word/document.xml.');
+  const documentRels = await readXml('word/_rels/document.xml.rels');
+  const imageSources = new Map<string, string>();
+  const mimeForImage = (path: string) => ({
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', bmp: 'image/bmp', svg: 'image/svg+xml', webp: 'image/webp',
+  }[path.split('.').pop()?.toLowerCase() || ''] || 'application/octet-stream');
+  await Promise.all(Array.from(documentRels?.querySelectorAll('Relationship') || []).map(async (relation) => {
+    const id = relation.getAttribute('Id'); const target = relation.getAttribute('Target');
+    if (!id || !target || !/\/image$/i.test(relation.getAttribute('Type') || '')) return;
+    const path = target.startsWith('word/') ? target : `word/${target.replace(/^\.\//, '')}`;
+    const file = zip.file(path);
+    if (!file) return;
+    imageSources.set(id, `data:${mimeForImage(path)};base64,${await file.async('base64')}`);
+  }));
   const stylesXml = await readXml('word/styles.xml');
   const styles = new Map<string, OoxmlStyle>();
+  const tableStyles = new Map<string, OoxmlTableStyle>();
   stylesXml?.querySelectorAll('style').forEach((style) => {
     const id = wAttr(style, 'styleId'); const name = wAttr(ooxmlChild(style, 'name'), 'val');
     const heading = /heading\s*(\d)|título apartado\s*(\d)/i.exec(name)?.slice(1).find(Boolean);
     styles.set(id, { name, basedOn: wAttr(ooxmlChild(style, 'basedOn'), 'val'), css: cssFromProperties(ooxmlChild(style, 'rPr')), heading: heading ? Number(heading) : undefined });
+  });
+  stylesXml?.querySelectorAll('style').forEach((style) => {
+    if (wAttr(style, 'type') !== 'table') return;
+    const readFill = (properties: Element | null) => {
+      const fill = wAttr(ooxmlChild(properties || style, 'shd'), 'fill');
+      return fill && fill !== 'auto' ? `#${fill}` : undefined;
+    };
+    const firstRow = Array.from(style.querySelectorAll('tblStylePr')).find((node) => wAttr(node, 'type') === 'firstRow');
+    tableStyles.set(wAttr(style, 'styleId'), {
+      background: readFill(ooxmlChild(style, 'tblPr')),
+      firstRowBackground: firstRow ? readFill(ooxmlChild(firstRow, 'tcPr')) : undefined,
+    });
+  });
+  const numbering = new Map<string, Map<number, OoxmlListLevel>>();
+  const numberingXml = await readXml('word/numbering.xml');
+  const abstractLevels = new Map<string, Map<number, OoxmlListLevel>>();
+  numberingXml?.querySelectorAll('abstractNum').forEach((abstractNum) => {
+    const levels = new Map<number, OoxmlListLevel>();
+    ooxmlChildren(abstractNum, 'lvl').forEach((level) => {
+      const ilvl = Number(wAttr(level, 'ilvl')) || 0;
+      const format = wAttr(ooxmlChild(level, 'numFmt'), 'val');
+      levels.set(ilvl, {
+        ordered: !['bullet', 'none'].includes(format),
+        start: Number(wAttr(ooxmlChild(level, 'start'), 'val')) || 1,
+      });
+    });
+    abstractLevels.set(wAttr(abstractNum, 'abstractNumId'), levels);
+  });
+  numberingXml?.querySelectorAll('num').forEach((num) => {
+    const levels = abstractLevels.get(wAttr(ooxmlChild(num, 'abstractNumId'), 'val'));
+    if (levels) numbering.set(wAttr(num, 'numId'), levels);
   });
   const resolveStyle = (id: string): OoxmlStyle => {
     const own: OoxmlStyle = styles.get(id) || { css: '' }; const parent: OoxmlStyle = own.basedOn && own.basedOn !== id ? resolveStyle(own.basedOn) : { css: '' };
     return { ...parent, ...own, css: [parent.css, own.css].filter(Boolean).join(';'), heading: own.heading || parent.heading };
   };
   const renderRun = (run: Element) => {
-    const text = ooxmlText(run); if (!text) return '';
+    const drawing = run.querySelector('drawing, pict');
+    const blip = drawing?.querySelector('blip');
+    const embed = blip?.getAttributeNS(R, 'embed') || blip?.getAttribute('r:embed') || '';
+    const image = imageSources.get(embed);
+    const text = ooxmlText(run);
+    if (!text && !image) return '';
     const css = cssFromProperties(ooxmlChild(run, 'rPr'));
-    return `<span${css ? ` style="${css}"` : ''}>${escapeHtml(text)}</span>`;
+    return `${text ? `<span${css ? ` style="${css}"` : ''}>${escapeHtml(text)}</span>` : ''}${image ? `<img src="${image}" alt="Imagen importada de Word">` : ''}`;
   };
-  const renderTable = (table: Element) => `<table class="studio-table docx-fidelity-table">${ooxmlChildren(table, 'tr').map((row) => `<tr>${ooxmlChildren(row, 'tc').map((cell) => { const props = ooxmlChild(cell, 'tcPr'); const shade = wAttr(ooxmlChild(props || cell, 'shd'), 'fill'); const width = Number(wAttr(ooxmlChild(props || cell, 'tcW'), 'w')); const style = [shade && shade !== 'auto' ? `background:#${shade}` : '', width ? `width:${width / 20}pt` : ''].filter(Boolean).join(';'); return `<td${style ? ` style="${style}"` : ''}>${ooxmlChildren(cell, 'p').map(renderParagraph).join('')}</td>`; }).join('')}</tr>`).join('')}</table>`;
+  const renderMath = (math: Element) => {
+    const text = ooxmlText(math).replace(/\s+/g, ' ').trim();
+    return text ? `<span class="docx-equation">${escapeHtml(text)}</span>` : '';
+  };
+  const renderInline = (paragraph: Element) => Array.from(paragraph.children).map((node) => {
+    if (node.localName === 'r') return renderRun(node);
+    if (node.localName === 'oMath' || node.localName === 'oMathPara') return renderMath(node);
+    if (node.localName === 'hyperlink') return Array.from(node.children).filter((child) => child.localName === 'r').map(renderRun).join('');
+    return '';
+  }).join('');
+  const listInfo = (paragraph: Element) => {
+    const props = ooxmlChild(paragraph, 'pPr'); const numPr = ooxmlChild(props || paragraph, 'numPr');
+    const numId = wAttr(ooxmlChild(numPr || paragraph, 'numId'), 'val');
+    if (!numId) return null;
+    const level = Number(wAttr(ooxmlChild(numPr || paragraph, 'ilvl'), 'val')) || 0;
+    const config = numbering.get(numId)?.get(level) || numbering.get(numId)?.get(0);
+    return config ? { numId, level, ...config } : null;
+  };
   const renderParagraph = (paragraph: Element) => {
     const props = ooxmlChild(paragraph, 'pPr'); const styleId = wAttr(ooxmlChild(props || paragraph, 'pStyle'), 'val'); const style = resolveStyle(styleId);
     const css = [style.css, paragraphCss(props)].filter(Boolean).join(';');
-    const content = ooxmlChildren(paragraph, 'r').map(renderRun).join('') || escapeHtml(ooxmlText(paragraph));
+    const content = renderInline(paragraph) || escapeHtml(ooxmlText(paragraph));
+    if (listInfo(paragraph)) return `<li class="docx-fidelity-paragraph"${css ? ` style="${css}"` : ''}>${content || '<br>'}</li>`;
     const tag = style.heading ? `h${Math.min(6, style.heading)}` : 'p';
     return `<${tag} class="docx-fidelity-paragraph"${css ? ` style="${css}"` : ''}>${content || '<br>'}</${tag}>`;
   };
+  const renderTable = (table: Element) => {
+    const tableProps = ooxmlChild(table, 'tblPr');
+    const wordTableStyle = tableStyles.get(wAttr(ooxmlChild(tableProps || table, 'tblStyle'), 'val'));
+    const tableWidth = Number(wAttr(ooxmlChild(tableProps || table, 'tblW'), 'w'));
+    const tableStyle = [tableWidth ? `width:${tableWidth / 20}pt` : '', 'border-collapse:collapse'].filter(Boolean).join(';');
+    return `<table class="studio-table docx-fidelity-table"${tableStyle ? ` style="${tableStyle}"` : ''}>${ooxmlChildren(table, 'tr').map((row, rowIndex) => `<tr>${ooxmlChildren(row, 'tc').map((cell) => { const props = ooxmlChild(cell, 'tcPr'); const shade = wAttr(ooxmlChild(props || cell, 'shd'), 'fill'); const width = Number(wAttr(ooxmlChild(props || cell, 'tcW'), 'w')); const vAlign = wAttr(ooxmlChild(props || cell, 'vAlign'), 'val'); const inheritedFill = rowIndex === 0 ? wordTableStyle?.firstRowBackground : wordTableStyle?.background; const style = [shade && shade !== 'auto' ? `background:#${shade}` : inheritedFill ? `background:${inheritedFill}` : '', width ? `width:${width / 20}pt` : '', vAlign ? `vertical-align:${vAlign}` : '', 'border:1px solid #9aa6b2', 'padding:4pt 6pt'].filter(Boolean).join(';'); return `<td${style ? ` style="${style}"` : ''}>${ooxmlChildren(cell, 'p').map(renderParagraph).join('')}</td>`; }).join('')}</tr>`).join('')}</table>`;
+  };
+  const renderBlocks = (nodes: Element[]) => {
+    let html = ''; let openList: { numId: string; level: number; ordered: boolean } | null = null;
+    const closeList = () => { if (openList) { html += openList.ordered ? '</ol>' : '</ul>'; openList = null; } };
+    nodes.forEach((node) => {
+      if (node.localName !== 'p') { closeList(); if (node.localName === 'tbl') html += renderTable(node); return; }
+      const info = listInfo(node);
+      if (!info) { closeList(); html += renderParagraph(node); return; }
+      if (!openList || openList.numId !== info.numId || openList.level !== info.level || openList.ordered !== info.ordered) {
+        closeList(); const tag = info.ordered ? 'ol' : 'ul';
+        const start = info.ordered && info.start && info.start !== 1 ? ` start="${info.start}"` : '';
+        html += `<${tag} class="docx-fidelity-list"${start}>`; openList = { numId: info.numId, level: info.level, ordered: info.ordered };
+      }
+      html += renderParagraph(node);
+    });
+    closeList(); return html;
+  };
+  // Bring the first section header into the editable document. Mammoth drops
+  // headers entirely, which is why institutional tables vanished on import.
+  const headerRef = documentXml.querySelector('sectPr > headerReference');
+  const relationId = headerRef?.getAttributeNS(R, 'id') || headerRef?.getAttribute('r:id');
+  const relation = relationId ? Array.from(documentRels?.querySelectorAll('Relationship') || []).find((item) => item.getAttribute('Id') === relationId) : null;
+  const headerTarget = relation?.getAttribute('Target')?.replace(/^\//, '');
+  const headerXml = headerTarget ? await readXml(headerTarget.startsWith('word/') ? headerTarget : `word/${headerTarget}`) : null;
   const body = documentXml.querySelector('body');
   if (!body) return '<p><br></p>';
-  return Array.from(body.children).map((node) => node.localName === 'p' ? renderParagraph(node) : node.localName === 'tbl' ? renderTable(node) : '').join('') || '<p><br></p>';
+  const headerHtml = headerXml ? renderBlocks(Array.from(headerXml.querySelector('hdr')?.children || []) as Element[]) : '';
+  return `${headerHtml}${renderBlocks(Array.from(body.children) as Element[])}` || '<p><br></p>';
 }
 
 export async function inspectWordProfile(buffer: ArrayBuffer, title: string): Promise<WordImportProfile> {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession, signIn, signOut } from 'next-auth/react';
 import {
@@ -10,7 +10,6 @@ import {
   Loader2,
   LogIn,
   LogOut,
-  Sparkles,
   Trash2,
 } from 'lucide-react';
 import BrandMark from '@/components/brand-mark';
@@ -19,6 +18,7 @@ import LocaleSwitch from '@/components/locale-switch';
 import { useLocale } from '@/lib/i18n/locale-context';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
+import { importDocxToHtml } from '@/lib/import-docx';
 
 type DocItem = {
   id: string;
@@ -58,6 +58,7 @@ export default function HomePage() {
   const { data: session, status } = useSession();
   const { toast } = useToast();
   const { t, locale } = useLocale();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -102,13 +103,13 @@ export default function HomePage() {
     void load();
   }, [load]);
 
-  const createDoc = async (title = 'Untitled') => {
+  const createDoc = async (title = 'Untitled', html = '<p><br></p>') => {
     setCreating(true);
     try {
       const res = await fetch('/api/docs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, html: '<p><br></p>' }),
+        body: JSON.stringify({ title, html }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'create failed');
@@ -121,6 +122,19 @@ export default function HomePage() {
       });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const importWordFromHome = async (file: File) => {
+    setCreating(true);
+    try {
+      const imported = await importDocxToHtml(await file.arrayBuffer(), file.name);
+      await createDoc(imported.titleHint, imported.fidelityHtml || imported.html);
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'No se pudo abrir el documento', description: error?.message || 'Revisa el archivo Word.' });
+    } finally {
+      setCreating(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -190,6 +204,7 @@ export default function HomePage() {
       </header>
 
       <main className="mx-auto max-w-[1080px] px-5 pb-20 pt-12 sm:px-8">
+        <input ref={fileInputRef} type="file" accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importWordFromHome(file); }} />
         {/* Page title — product UI, not marketing serif */}
         <div className="mb-10 flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -221,13 +236,14 @@ export default function HomePage() {
 
         {/* One creation action only. A brief is a distinct contextual workflow. */}
         <div className="mb-12 grid gap-3 sm:grid-cols-2">
+          <button type="button" disabled={creating} onClick={() => fileInputRef.current?.click()} className="group flex items-start gap-4 rounded-xl border border-sky-200 bg-sky-50/40 p-6 text-left transition hover:border-sky-400 hover:bg-sky-50 disabled:opacity-50"><span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-700">{creating ? <Loader2 className="h-5 w-5 animate-spin" /> : <FileText className="h-5 w-5" strokeWidth={1.75} />}</span><span className="min-w-0 flex-1"><span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">Abrir documento Word<ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" /></span><span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">Elige tu .doc o .docx: se crea una copia editable conservando su formato.</span></span></button>
           <button
             type="button"
             onClick={() => router.push('/home/brief')}
             className="group flex items-start gap-4 rounded-xl border border-neutral-200 bg-white p-6 text-left transition hover:border-neutral-400 hover:bg-neutral-50"
           >
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-800">
-              <Sparkles className="h-5 w-5" strokeWidth={1.75} />
+              <FileText className="h-5 w-5" strokeWidth={1.75} />
             </span>
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
