@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { generateTextWithFallback } from '@/lib/ai-runtime';
 import { buildGaussTallerBrief } from '@/lib/gauss-taller-brief';
 import { gaussianElimination, GAUSS_TALLER_SYSTEMS } from '@/lib/gauss-solver';
+import { storageBackend } from '@/lib/doc-store';
+import { isAuthConfigured } from '@/lib/auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,10 +12,23 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const deep = url.searchParams.get('deep') === '1';
 
+  const forceAuth = process.env.FORCE_AUTH === '1';
   const checks: Record<string, unknown> = {
     ok: true,
     hasApiKey: Boolean(process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
-    provider: process.env.DEEPSEEK_API_KEY ? 'deepseek' : process.env.GOOGLE_API_KEY ? 'gemini' : 'none',
+    provider: process.env.DEEPSEEK_API_KEY
+      ? 'deepseek'
+      : process.env.GOOGLE_API_KEY
+        ? 'gemini'
+        : 'none',
+    storage: storageBackend(),
+    authConfigured: isAuthConfigured(),
+    /** Login is optional unless FORCE_AUTH=1 */
+    forceAuth,
+    guestAllowed: !forceAuth,
+    authUrl: process.env.AUTH_URL || process.env.NEXTAUTH_URL || null,
+    docsTable: process.env.DOCS_TABLE || null,
+    region: process.env.AWS_REGION || null,
     timestamp: new Date().toISOString(),
   };
 

@@ -1,13 +1,14 @@
 'use client';
 
 import { signIn } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense } from 'react';
 import BrandMark from '@/components/brand-mark';
 import { cn } from '@/lib/utils';
 
 function LoginInner() {
   const params = useSearchParams();
+  const router = useRouter();
   const callbackUrl = params.get('callbackUrl') || '/home';
   const error = params.get('error');
 
@@ -20,15 +21,42 @@ function LoginInner() {
             Docs Studio
           </h1>
           <p className="mt-1.5 text-[13px] leading-relaxed text-neutral-500">
-            Workspace académico: guardá documentos del lienzo, autosave y biblioteca en tu cuenta.
+            Podés trabajar sin cuenta. Google es opcional para sincronizar entre dispositivos.
           </p>
         </div>
 
         {error && (
           <p className="mb-4 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-center text-[12px] text-red-700">
-            No se pudo iniciar sesión. Revisá las credenciales de Google OAuth.
+            {error === 'Configuration' || error === 'OAuthCallback'
+              ? 'Google OAuth mal configurado (redirect_uri). Podés seguir sin cuenta.'
+              : 'No se pudo iniciar sesión con Google. Podés seguir sin cuenta.'}
           </p>
         )}
+
+        {/* Primary path: guest — login never required */}
+        <button
+          type="button"
+          onClick={() => router.push(callbackUrl || '/home')}
+          className={cn(
+            'flex w-full items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-3',
+            'text-[14px] font-semibold text-white shadow-sm transition',
+            'hover:bg-neutral-800 active:scale-[0.99]',
+          )}
+        >
+          Continuar sin cuenta
+        </button>
+
+        <p className="mt-3 text-center text-[11px] text-neutral-400">
+          Invitado · documentos en este servidor (DynamoDB)
+        </p>
+
+        <div className="my-5 flex items-center gap-3">
+          <span className="h-px flex-1 bg-neutral-200" />
+          <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+            opcional
+          </span>
+          <span className="h-px flex-1 bg-neutral-200" />
+        </div>
 
         <button
           type="button"
@@ -40,18 +68,18 @@ function LoginInner() {
           )}
         >
           <GoogleIcon />
-          Continuar con Google
+          Entrar con Google
         </button>
 
-        <p className="mt-5 text-center text-[11px] text-neutral-400">
-          Solo Google. Sin contraseñas.
+        <p className="mt-4 text-center text-[11px] leading-relaxed text-neutral-400">
+          Si Google falla (redirect_uri), no pasa nada: usá sin cuenta.
         </p>
 
         <a
-          href="/home"
+          href="/studio"
           className="mt-4 block text-center text-[12px] font-medium text-neutral-500 underline-offset-2 hover:text-neutral-800 hover:underline"
         >
-          Seguir sin cuenta (modo local)
+          Ir directo al workspace
         </a>
       </div>
     </div>

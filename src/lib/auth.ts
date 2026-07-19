@@ -3,8 +3,9 @@ import Google from 'next-auth/providers/google';
 import type { NextAuthConfig } from 'next-auth';
 
 /**
- * Google-only auth. In production set AUTH_SECRET + Google OAuth credentials.
- * When Google env is missing, auth is disabled and routes work in "local guest" mode.
+ * Optional Google auth (Auth.js). Guest mode is the default:
+ * - FORCE_AUTH != '1' → always allow userId "local-guest" without session
+ * - Google login is opt-in when AUTH_GOOGLE_* + AUTH_SECRET are set
  */
 export const authConfig = {
   providers: [

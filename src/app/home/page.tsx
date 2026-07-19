@@ -50,14 +50,22 @@ export default function HomePage() {
     setLoading(true);
     try {
       const res = await fetch('/api/docs');
+      // Guest is always allowed unless FORCE_AUTH=1 on server
       if (res.status === 401) {
-        router.replace('/login?callbackUrl=/home');
+        toast({
+          title: 'Sesión requerida',
+          description: 'El servidor está en FORCE_AUTH. Entrá con Google o desactivá FORCE_AUTH.',
+        });
         return;
       }
       const data = await res.json();
       setDocs(data.docs || []);
-      setGuest(Boolean(data.user?.guest));
-      setUserLabel(data.user?.name || data.user?.email || 'Usuario');
+      setGuest(Boolean(data.user?.guest ?? true));
+      setUserLabel(
+        data.user?.guest
+          ? 'Invitado (sin cuenta)'
+          : data.user?.name || data.user?.email || 'Usuario',
+      );
     } catch {
       toast({ variant: 'destructive', title: 'No se pudieron cargar los documentos' });
     } finally {
