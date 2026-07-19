@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createVersion, listVersions, restoreVersion } from '@/lib/doc-store';
 import { requireUserId } from '@/lib/auth';
+import type { StudioDocumentModel } from '@/lib/studio-document';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,7 +25,7 @@ export async function POST(request: Request, { params }: Params) {
   try {
     const { userId } = await requireUserId();
     const { id } = await params;
-    const body = (await request.json().catch(() => ({}))) as { label?: string; source?: 'agent' | 'manual' | 'restore' | 'system'; html?: string };
+    const body = (await request.json().catch(() => ({}))) as { label?: string; source?: 'agent' | 'manual' | 'restore' | 'system'; html?: string; model?: StudioDocumentModel };
     const version = await createVersion(userId, id, body);
     return version ? NextResponse.json({ version }) : NextResponse.json({ error: 'Document not found' }, { status: 404 });
   } catch (error) {

@@ -362,7 +362,10 @@ export async function saveDocument(
   if (typeof expectedRevision === 'number' && existing.revision !== expectedRevision) {
     throw new DocumentConflictError(existing);
   }
-  const nextModel = patch.model ?? existing.model;
+  // External MCP/API callers that only send HTML cannot safely update a
+  // structured document server-side. Drop the stale model in that case so a
+  // client rehydrates it from the actual HTML rather than rendering old data.
+  const nextModel = patch.model ?? (typeof patch.html === 'string' ? undefined : existing.model);
   const nextHtml = patch.model ? modelToHtml(patch.model) : patch.html ?? existing.html;
   const next: StudioDocument = {
     ...existing,
