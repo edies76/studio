@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import type { AssignmentBrief } from './assignment-types';
+import { modelToHtml, type StudioDocumentModel } from './studio-document';
 
 export type StoredHistoryEntry = {
   id: string;
@@ -40,6 +41,7 @@ export type DocumentVersion = {
   id: string;
   label: string;
   html: string;
+  model?: StudioDocumentModel;
   title: string;
   createdAt: number;
   source: 'agent' | 'manual' | 'restore' | 'system';
@@ -51,6 +53,8 @@ export type StudioDocument = {
   userId: string;
   title: string;
   html: string;
+  /** Native document source of truth. `html` remains a renderer-compatible projection. */
+  model?: StudioDocumentModel;
   paperSize: 'letter' | 'legal' | 'a4';
   /** Original OOXML source retained for the high-fidelity office editor. */
   sourceDocx?: { fileName: string; size: number; updatedAt: number };
@@ -232,7 +236,9 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     userId: String(it.userId),
     title: String(it.title || 'Untitled'),
     html: String(it.html || ''),
+    model: it.model as StudioDocumentModel | undefined,
     paperSize: it.paperSize === 'legal' || it.paperSize === 'a4' ? it.paperSize : 'letter',
+    sourceDocx: it.sourceDocx as StudioDocument['sourceDocx'] | undefined,
     brief: it.brief as AssignmentBrief | undefined,
     history: Array.isArray(it.history) ? (it.history as StoredHistoryEntry[]) : [],
     pendingEdits: Array.isArray(it.pendingEdits) ? (it.pendingEdits as StoredPendingEdit[]) : [],
@@ -264,7 +270,9 @@ async function dynamoSave(doc: StudioDocument, expectedRevision?: number): Promi
         userId: doc.userId,
         title: doc.title,
         html: doc.html,
+        model: doc.model,
         paperSize: doc.paperSize,
+        sourceDocx: doc.sourceDocx,
         brief: doc.brief,
         history: doc.history || [],
         pendingEdits: doc.pendingEdits || [],
@@ -306,19 +314,22 @@ export async function getDocument(userId: string, id: string): Promise<StudioDoc
 
 export async function createDocument(
   userId: string,
-  opts?: { title?: string; html?: string; paperSize?: 'letter' | 'legal' | 'a4'; brief?: AssignmentBrief },
+  opts?: { title?: string; html?: string; model?: StudioDocumentModel; paperSize?: 'letter' | 'legal' | 'a4'; brief?: AssignmentBrief },
 ): Promise<StudioDocument> {
   const now = Date.now();
+  const model = opts?.model;
+  const html = model ? modelToHtml(model) : opts?.html || '<p><br></p>';
   const doc: StudioDocument = {
     id: randomUUID(),
     userId,
     title: opts?.title || 'Untitled',
-    html: opts?.html || '<p><br></p>',
+    html,
+    model,
     paperSize: opts?.paperSize === 'legal' || opts?.paperSize === 'a4' ? opts.paperSize : 'letter',
     brief: opts?.brief,
     history: [],
     pendingEdits: [],
-    preview: previewFromHtml(opts?.html || ''),
+    preview: previewFromHtml(html),
     createdAt: now,
     updatedAt: now,
     revision: 1,
@@ -335,6 +346,7 @@ export async function saveDocument(
   patch: {
     title?: string;
     html?: string;
+    model?: StudioDocumentModel;
     paperSize?: 'letter' | 'legal' | 'a4';
     sourceDocx?: StudioDocument['sourceDocx'];
     brief?: AssignmentBrief;
@@ -350,10 +362,13 @@ export async function saveDocument(
   if (typeof expectedRevision === 'number' && existing.revision !== expectedRevision) {
     throw new DocumentConflictError(existing);
   }
+  const nextModel = patch.model ?? existing.model;
+  const nextHtml = patch.model ? modelToHtml(patch.model) : patch.html ?? existing.html;
   const next: StudioDocument = {
     ...existing,
     title: patch.title ?? existing.title,
-    html: patch.html ?? existing.html,
+    html: nextHtml,
+    model: nextModel,
     paperSize: patch.paperSize ?? existing.paperSize ?? 'letter',
     sourceDocx: patch.sourceDocx ?? existing.sourceDocx,
     brief: patch.brief ?? existing.brief,
@@ -429,7 +444,7 @@ async function saveDocumentMetadata(
 export async function createVersion(
   userId: string,
   id: string,
-  input: { label?: string; source?: DocumentVersion['source']; html?: string },
+  input: { label?: string; source?: DocumentVersion['source']; html?: string; model?: StudioDocumentModel },
 ): Promise<DocumentVersion | null> {
   const existing = await getDocument(userId, id);
   if (!existing) return null;
@@ -437,6 +452,7 @@ export async function createVersion(
     id: randomUUID(),
     label: input.label || 'Cambio aceptado',
     html: input.html ?? existing.html,
+    model: input.model ?? existing.model,
     title: existing.title,
     createdAt: Date.now(),
     source: input.source || 'agent',
@@ -457,9 +473,9 @@ export async function restoreVersion(userId: string, id: string, versionId: stri
   const doc = await getDocument(userId, id);
   const version = doc?.versions?.find((item) => item.id === versionId);
   if (!doc || !version) return null;
-  const restored = await saveDocument(userId, id, { html: version.html });
+  const restored = await saveDocument(userId, id, { html: version.html, model: version.model });
   if (!restored) return null;
-  await createVersion(userId, id, { label: `Restaurado: ${version.label}`, source: 'restore', html: version.html });
+  await createVersion(userId, id, { label: `Restaurado: ${version.label}`, source: 'restore', html: version.html, model: version.model });
   return getDocument(userId, id);
 }
 

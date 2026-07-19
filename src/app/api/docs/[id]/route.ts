@@ -38,6 +38,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
     const doc = await saveDocument(user.userId, id, {
       title: body.title,
       html: body.html,
+      model: body.model,
       paperSize: body.paperSize,
       chat: body.chat as ChatTurn[] | undefined,
     }, typeof body.revision === 'number' ? body.revision : undefined);
@@ -58,6 +59,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         latest: {
           title: e.latest.title,
           html: e.latest.html,
+          model: e.latest.model,
           updatedAt: e.latest.updatedAt,
           revision: e.latest.revision,
         },

@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     const doc = await createDocument(user.userId, {
       title: body.title || 'Untitled',
       html: body.html || '<p><br></p>',
+      model: body.model,
       paperSize: body.paperSize,
       brief: body.brief,
     });

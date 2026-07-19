@@ -9,6 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "smoke": "tsx scripts/smoke-ready.ts",
+    "smoke:native-document": "tsx scripts/native-document-smoke.ts",
     "mcp:stdio": "tsx src/mcp/server.ts",
     "mcp:http": "tsx src/mcp/http.ts"
   },
