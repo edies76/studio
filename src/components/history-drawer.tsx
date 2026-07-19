@@ -11,14 +11,24 @@ export type HistoryItem = {
   event: ChatEvent;
 };
 
+export type VersionSnapshot = {
+  id: string;
+  label: string;
+  html: string;
+  createdAt: number;
+  source: 'agent' | 'manual' | 'restore' | 'system';
+};
+
 type Props = {
   open: boolean;
   onClose: () => void;
   items: HistoryItem[];
+  versions?: VersionSnapshot[];
+  onRestoreVersion?: (id: string) => void;
 };
 
 /** Git-like change log — not inline spam */
-export default function HistoryDrawer({ open, onClose, items }: Props) {
+export default function HistoryDrawer({ open, onClose, items, versions = [], onRestoreVersion }: Props) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -57,7 +67,7 @@ export default function HistoryDrawer({ open, onClose, items }: Props) {
             <History className="h-4 w-4 text-neutral-700" strokeWidth={1.75} />
             <span className="text-sm font-semibold text-neutral-900">Historial</span>
             <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-500">
-              {items.length}
+              {items.length + versions.length}
             </span>
           </div>
           <button
@@ -69,7 +79,32 @@ export default function HistoryDrawer({ open, onClose, items }: Props) {
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
-          {items.length === 0 ? (
+          {versions.length > 0 && (
+            <section className="mb-4">
+              <div className="mb-2 flex items-center justify-between px-2">
+                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-neutral-400">Versiones seguras</p>
+                <span className="font-mono text-[10px] text-neutral-400">{versions.length}</span>
+              </div>
+              {[...versions].map((version) => (
+                <div key={version.id} className="mb-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-semibold text-neutral-800">{version.label}</p>
+                      <p className="mt-0.5 font-mono text-[10px] text-neutral-400">
+                        {version.source} · {new Date(version.createdAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
+                      </p>
+                    </div>
+                    {onRestoreVersion && (
+                      <button type="button" onClick={() => onRestoreVersion(version.id)} className="shrink-0 rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-semibold text-neutral-700 hover:bg-neutral-50">
+                        Restaurar
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
+          {items.length === 0 && versions.length === 0 ? (
             <p className="px-2 py-10 text-center text-[12px] text-neutral-400">
               Todavía no hay cambios puntuales.
             </p>

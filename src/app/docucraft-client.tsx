@@ -40,7 +40,7 @@ import { importDocxToHtml } from '@/lib/import-docx';
 import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
-import HistoryDrawer, { type HistoryItem } from '@/components/history-drawer';
+import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
 import jsPDF from 'jspdf';
 
 const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, ol';
@@ -107,6 +107,7 @@ export default function DocsStudioClient({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
+  const [versions, setVersions] = useState<VersionSnapshot[]>([]);
   const [equationEditor, setEquationEditor] = useState<{
     target: HTMLElement | null;
     tex: string;
@@ -403,6 +404,41 @@ export default function DocsStudioClient({
   const readEditorHtml = useCallback(() => {
     return canvasRef.current?.getHtml() || documentContent;
   }, [documentContent]);
+
+  useEffect(() => {
+    if (!historyOpen || !docId) return;
+    let cancelled = false;
+    void fetch(`/api/docs/${docId}/versions`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.versions)) setVersions(data.versions);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, historyOpen]);
+
+  const restoreVersion = useCallback(async (versionId: string) => {
+    if (!docId) return;
+    const response = await fetch(`/api/docs/${docId}/versions`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ versionId }),
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (data?.doc?.html) {
+      applyHtml(data.doc.html, true, 'cascade');
+      void fetch(`/api/docs/${docId}/versions`)
+        .then((latest) => (latest.ok ? latest.json() : null))
+        .then((latest) => {
+          if (Array.isArray(latest?.versions)) setVersions(latest.versions);
+        })
+        .catch(() => undefined);
+      requestAnimationFrame(() => typesetAll());
+    }
+  }, [applyHtml, docId, typesetAll]);
 
   const draftKey = `docs-studio:draft:${(topic.trim() || 'blank')
     .toLowerCase()
@@ -2058,6 +2094,8 @@ export default function DocsStudioClient({
         open={historyOpen}
         onClose={() => setHistoryOpen(false)}
         items={changeLog}
+        versions={versions}
+        onRestoreVersion={(id) => void restoreVersion(id)}
       />
     </div>
   );
