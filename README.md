@@ -4,44 +4,60 @@
 
 El lienzo (Letter / Legal / A4) es la fuente de verdad. El agente propone; vos aceptás o rechazás. Normas APA / IEEE / MLA, ecuaciones MathJax, import DOCX, export PDF vectorial y Word.
 
-**Dev:** `http://localhost:9003` · **Prod:** [docss.studio](https://docss.studio)
+**Dev:** `http://localhost:9003` · **Prod:** [docss.studio](https://docss.studio)  
+**Repo:** [github.com/edies76/studio](https://github.com/edies76/studio)
 
 ---
 
-## Origen del proyecto
-
-Docs Studio nació dentro del repositorio **[edies76/studio](https://github.com/edies76/studio)** (este repo), que contiene todo el historial real de desarrollo desde `v0.2.1`.
-
-El nombre y la marca **DocsS / Docs Studio** se establecieron en el commit:
-
-```
-3ae6949  feat(studio): DocsS brand + docss.studio marketing  v0.4.6
-```
-
-Antes de ese commit el producto ya existía funcionalmente pero sin nombre de marca definido.
-
-### Por qué hay dos repositorios
-
-El repo **[edies76/docs-studio](https://github.com/edies76/docs-studio)** fue creado como destino de publicación, pero por problemas técnicos (historias de commits incompatibles entre ambos repos) el push tuvo que hacerse como una **rama huérfana** basada en el estado actual (`v0.8.5`), sin historia previa.
-
-**El historial completo de commits vive únicamente en `edies76/studio`**, desde `96824af` (primer commit, `v0.2.1`) hasta el estado actual.
-
-| Repo | Propósito | Historia |
-|------|-----------|----------|
-| [edies76/studio](https://github.com/edies76/studio) | Desarrollo activo | ✅ Historial completo desde v0.2.1 |
-| [edies76/docs-studio](https://github.com/edies76/docs-studio) | Publicación / distribución | ⚠️ Huérfana desde v0.8.5, sin historia previa |
-
----
-
-## Antes y después
-
-### Antes — Studio v0.2.x (editor base, sin marca)
-
-> *(captura pendiente — corresponde a commits previos a `3ae6949` en `edies76/studio`)*
-
-### Ahora — Docs Studio v0.8.5
+## Estado actual (v0.8.5)
 
 ![Docs Studio v0.8.5](./docs/demo/screenshot-current-v085.png)
+
+---
+
+## Origen del proyecto — qué existía y qué se construyó
+
+### Base preexistente (diciembre 2025)
+
+El commit `96824af` (18 dic 2025) es el estado original del proyecto: un editor de documentos con IA básico, sin nombre de producto, sin dominio, sin MCP, sin canvas multi-página real.
+
+Era la base de **Studio** — el primer producto de Bamba, un experimento de plataforma de documentos con IA que fue abandonado y no tenía identidad de producto clara.
+
+### Lo construido para la hackathon (16–19 julio 2026)
+
+Todo desde el commit `44bf440` en adelante es trabajo nuevo. La línea de tiempo:
+
+| Fecha | Commits | Qué se hizo |
+|-------|---------|-------------|
+| **16 jul** | `44bf440` | Punto de partida — layout multi-página + polish base (`v0.2.1`) |
+| **17 jul** | `v0.2.2` → `v0.2.8` | Canvas Word-like, import DOCX, composer flotante, zoom, MCP surface, motor de paginación real |
+| **18 jul** | `v0.2.9` → `v0.5.2` | Drop Syncfusion → canvas propio, DeepSeek, auth Google, DynamoDB, **marca DocsS** (`3ae6949` = `v0.4.6`), dominio `docss.studio`, landing, `/home`, `/studio/doc/[id]`, deploy EC2 |
+| **19 jul** | `v0.5.3` → `v0.8.5` | Motor nativo de paginación, canvas continuo, MCP completo (25 tools), credenciales remotas, import Word fiel, brief workflow, assignment review, fixes de editor (scroll, font size, undo) |
+
+### El commit que nació la marca
+
+```
+3ae6949  feat(studio): DocsS brand + docss.studio marketing  v0.4.6  (18 jul 2026)
+```
+
+Antes de ese commit: funcional pero sin identidad.  
+Después: producto con nombre, dominio, landing, y propuesta de valor definida.
+
+---
+
+## Historial de commits
+
+El historial completo vive en **este repo** (`edies76/studio`).
+
+No está en `edies76/docs-studio` — ese repo fue creado como destino de publicación pero por incompatibilidad de historias entre repos el push tuvo que hacerse como rama huérfana desde `v0.8.5`. No tiene historia previa.
+
+**Para auditar el trabajo real:**
+
+```bash
+git clone https://github.com/edies76/studio
+cd studio
+git log --oneline --date=short --format="%ad %h %s" | grep "2026-07"
+```
 
 ---
 
@@ -49,10 +65,10 @@ El repo **[edies76/docs-studio](https://github.com/edies76/docs-studio)** fue cr
 
 | Ruta | Rol |
 |------|-----|
-| `/` | Landing — promesa del producto |
+| `/` | Landing |
 | `/home` | Biblioteca de documentos |
 | `/studio/doc/[id]` | Workspace — lienzo + agente + Tools + export |
-| `/login` | Google OAuth (opcional) |
+| `/login` | Google OAuth (opcional, modo invitado por defecto) |
 | `/mcp` | Guía de integración MCP |
 | `/usecases` | Casos de uso |
 | `/origin` | Historia del producto |
@@ -63,14 +79,15 @@ El repo **[edies76/docs-studio](https://github.com/edies76/docs-studio)** fue cr
 
 | Área | Feature |
 |------|---------|
-| Canvas | Multi-página Letter / Legal / A4, rebalance automático |
+| Canvas | Multi-página Letter / Legal / A4, rebalance automático sin saltos |
 | Draft | SSE → primer borrador directo en el lienzo |
 | Edits | Propose → diff rojo/verde → Accept / Reject |
 | Normas | APA / IEEE / MLA / Simple / Mínimo |
 | Math | MathJax inline + block, editor LaTeX |
 | Export | PDF vectorial (print nativo) + DOCX servidor |
-| MCP | 25 tools — leer, crear, editar, exportar desde cualquier agente |
+| MCP | 25 tools — crear, leer, editar, exportar desde cualquier agente externo |
 | Auth | Google OAuth opcional; modo invitado por defecto |
+| Brief | Flujo de tarea → borrador guiado → revisión por cobertura |
 
 ---
 
@@ -78,7 +95,7 @@ El repo **[edies76/docs-studio](https://github.com/edies76/docs-studio)** fue cr
 
 ```bash
 npm install
-cp .env.example .env.local   # agrega DEEPSEEK_API_KEY
+cp .env.example .env.local   # agrega DEEPSEEK_API_KEY y AUTH_SECRET
 npm run dev                   # http://localhost:9003
 ```
 
@@ -88,8 +105,8 @@ Variables clave:
 |----------|-----------|-------------|
 | `DEEPSEEK_API_KEY` | Sí | Motor del agente (server-side) |
 | `AUTH_SECRET` | Para auth | NextAuth secret |
-| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Para login Google | OAuth client |
-| `AUTH_URL` | Para auth | URL base (`http://localhost:9003` en dev) |
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Para login Google | OAuth client credentials |
+| `AUTH_URL` | Para auth | URL base — `http://localhost:9003` en dev, `https://docss.studio` en prod |
 | `AWS_REGION` + `DOCS_TABLE` | Para persistencia | DynamoDB |
 | `MCP_API_KEY` | Para MCP externo | Bearer token del servidor MCP |
 
@@ -104,22 +121,20 @@ src/app/docucraft-client.tsx     # shell del workspace
 src/components/paper-canvas.tsx  # lienzo multi-página + rebalance
 src/lib/page-layout.ts           # motor de paginación
 src/app/api/draft|chat|export-docx
-src/mcp/cloud-server.ts          # 25 MCP tools
-src/lib/auth.ts                  # NextAuth + modo invitado
+src/mcp/cloud-server.ts          # 25 MCP tools (Streamable HTTP)
+src/lib/auth.ts                  # NextAuth v5 + modo invitado
 ```
 
 ---
 
 ## MCP
 
-Docs Studio expone el loop de documentos a agentes externos via MCP:
-
 ```bash
 npm run mcp:stdio   # stdio local
 npm run mcp:http    # HTTP en http://localhost:8787/mcp
 ```
 
-Configuración para Claude Desktop / cualquier cliente HTTP:
+Configuración para Claude Desktop u otro cliente HTTP:
 
 ```json
 {
@@ -133,7 +148,7 @@ Configuración para Claude Desktop / cualquier cliente HTTP:
 }
 ```
 
-Documentación completa: [`docs/mcp/README.md`](./docs/mcp/README.md) · Guía visual: [`/mcp`](http://localhost:9003/mcp)
+Documentación completa: [`docs/mcp/README.md`](./docs/mcp/README.md)
 
 ---
 
