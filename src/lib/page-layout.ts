@@ -137,14 +137,91 @@ export function packBlocksIntoPages(
 
   const pages: string[][] = [[]];
   let used = 0;
+  // A partial reflow can start after an existing table fragment. Reserve any
+  // identifiers already present in that tail so a newly split table can never
+  // be stitched into an unrelated earlier table on save.
+  const usedTableFragmentGroups = new Set<string>();
+  blockHtmls.forEach((html) => {
+    const matches = html.matchAll(/data-studio-table-fragment=["']([^"']+)["']/gi);
+    for (const match of matches) usedTableFragmentGroups.add(match[1]);
+  });
+  let tableFragmentGroup = 0;
 
   const pushPage = () => {
     pages.push([]);
     used = 0;
   };
 
+  const measureHtml = (html: string): number => {
+    measure.innerHTML = html;
+    const element = measure.firstElementChild as HTMLElement | null;
+    return element ? Math.max(1, blockOuterHeight(element)) : 0;
+  };
+
+  /**
+   * Tables used to be atomic layout blocks. A table taller than one sheet was
+   * therefore inserted whole and clipped by the fixed page body. Split only
+   * genuinely over-height tables into valid table fragments, repeating the
+   * header. joinPageHtmls() stitches those temporary fragments back into one
+   * semantic table before persistence/export.
+   */
+  const splitTallTable = (raw: string, height: number): string[] | null => {
+    if (height <= m.usableHeight + 0.5 || !/^<table\b/i.test(raw.trim())) return null;
+    const host = document.createElement('div');
+    host.innerHTML = raw;
+    const table = host.querySelector(':scope > table') as HTMLTableElement | null;
+    if (!table) return null;
+
+    const rows = Array.from(table.rows);
+    if (rows.length < 2) return null;
+    const headerRows = table.tHead
+      ? Array.from(table.tHead.rows)
+      : rows[0].querySelectorAll('th').length === rows[0].cells.length
+        ? [rows[0]]
+        : [];
+    const bodyRows = rows.filter((row) => !headerRows.includes(row));
+    if (!bodyRows.length) return null;
+
+    let group = `table-${tableFragmentGroup++}`;
+    while (usedTableFragmentGroups.has(group)) group = `table-${tableFragmentGroup++}`;
+    usedTableFragmentGroups.add(group);
+    const createFragment = (fragmentRows: HTMLTableRowElement[]) => {
+      const clone = table.cloneNode(false) as HTMLTableElement;
+      clone.dataset.studioTableFragment = group;
+      // Captions and column geometry must be repeated so each rendered sheet
+      // remains intelligible while the serialized document stays lossless.
+      table.querySelectorAll(':scope > caption, :scope > colgroup').forEach((node) => clone.append(node.cloneNode(true)));
+      if (headerRows.length) {
+        const head = document.createElement('thead');
+        headerRows.forEach((row) => head.append(row.cloneNode(true)));
+        clone.append(head);
+      }
+      const body = document.createElement('tbody');
+      fragmentRows.forEach((row) => body.append(row.cloneNode(true)));
+      clone.append(body);
+      return clone.outerHTML;
+    };
+
+    const fragments: string[] = [];
+    let current: HTMLTableRowElement[] = [];
+    for (const row of bodyRows) {
+      const candidate = [...current, row];
+      if (current.length && measureHtml(createFragment(candidate)) > m.usableHeight + 0.5) {
+        fragments.push(createFragment(current));
+        current = [row];
+      } else {
+        current = candidate;
+      }
+    }
+    if (current.length) fragments.push(createFragment(current));
+    return fragments.length > 1 ? fragments : null;
+  };
+
   try {
-    for (const raw of blockHtmls) {
+    for (const originalRaw of blockHtmls) {
+      const initialHeight = measureHtml(originalRaw);
+      const raws = splitTallTable(originalRaw, initialHeight) || [originalRaw];
+      for (const raw of raws) {
       // Manual breaks are layout boundaries, not visible content. Keep the
       // marker at the start of the next page so the boundary survives joining
       // pages, autosave, undo/redo, and a second pagination pass.
@@ -171,6 +248,7 @@ export function packBlocksIntoPages(
       pages[pages.length - 1].push(raw);
       used += h;
       if (used > m.usableHeight) used = m.usableHeight;
+      }
     }
   } finally {
     measure.remove();
@@ -209,8 +287,28 @@ export function joinPageHtmls(pages: string[]): string {
       return !Array.from(d.children).every((c) => isVisuallyEmpty(c as HTMLElement)) || pages.length === 1;
     });
   if (!parts.length) return '<p><br></p>';
+
+  const host = document.createElement('div');
+  host.innerHTML = parts.join('');
+  const fragments = new Map<string, HTMLTableElement>();
+  host.querySelectorAll('table[data-studio-table-fragment]').forEach((node) => {
+    const table = node as HTMLTableElement;
+    const group = table.dataset.studioTableFragment;
+    if (!group) return;
+    const first = fragments.get(group);
+    if (!first) {
+      fragments.set(group, table);
+      table.removeAttribute('data-studio-table-fragment');
+      return;
+    }
+    const targetBody = first.tBodies[0] || first.createTBody();
+    Array.from(table.tBodies).forEach((body) => {
+      Array.from(body.rows).forEach((row) => targetBody.append(row.cloneNode(true)));
+    });
+    table.remove();
+  });
   // If only empties kept for caret on page 1
-  return parts.join('') || '<p><br></p>';
+  return host.innerHTML || '<p><br></p>';
 }
 
 /**
