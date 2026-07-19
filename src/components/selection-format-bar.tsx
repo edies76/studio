@@ -7,7 +7,8 @@ import {
   Italic,
   Pencil,
   Underline,
-  Type,
+  ChevronDown,
+  ChevronUp,
   Palette,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -57,34 +58,39 @@ function cmd(command: string, value?: string) {
   document.execCommand(command, false, value);
 }
 
-const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+function selectionFontSize(): number {
+  const sel = window.getSelection();
+  const node = sel?.anchorNode;
+  const element = node
+    ? node.nodeType === Node.ELEMENT_NODE
+      ? (node as HTMLElement)
+      : node.parentElement
+    : null;
+  const px = Number.parseFloat(element ? window.getComputedStyle(element).fontSize : '');
+  return Number.isFinite(px) ? px : 12;
+}
 
 /**
- * execCommand('fontSize', ...) only accepts the legacy 1-7 scale, not real
- * point values. The standard workaround: mark the selection with a unique
- * legacy size (7), then swap the resulting <font size="7"> wrappers for
- * <span style="font-size:Npx"> so the user gets an actual numeric size.
+ * Applies a real inline style to exactly the selected range. Unlike the
+ * legacy execCommand(fontSize) path, this does not depend on browser-specific
+ * <font size="7"> output, so it remains independent per character/range.
  */
-function applyFontSizePx(px: number) {
-  try {
-    document.execCommand('styleWithCSS', false, 'true');
-  } catch {
-    /* ignore */
-  }
-  document.execCommand('fontSize', false, '7');
+function adjustSelectionFontSize(delta: number) {
   const sel = window.getSelection();
-  const root = sel?.anchorNode
-    ? (sel.anchorNode.nodeType === Node.ELEMENT_NODE
-        ? (sel.anchorNode as Element)
-        : sel.anchorNode.parentElement)
-    : null;
-  const scope = root?.closest('[data-studio-editor], [data-page-body]') || document.body;
-  scope.querySelectorAll('font[size="7"]').forEach((node) => {
-    const span = document.createElement('span');
-    span.style.fontSize = `${px}px`;
-    span.innerHTML = (node as HTMLElement).innerHTML;
-    node.replaceWith(span);
-  });
+  if (!sel?.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed) return;
+
+  const nextSize = Math.min(96, Math.max(6, Math.round(selectionFontSize() + delta)));
+  const wrapper = document.createElement('span');
+  wrapper.style.fontSize = `${nextSize}px`;
+  wrapper.appendChild(range.extractContents());
+  range.insertNode(wrapper);
+
+  const nextRange = document.createRange();
+  nextRange.selectNodeContents(wrapper);
+  sel.removeAllRanges();
+  sel.addRange(nextRange);
 }
 
 /**
@@ -117,9 +123,9 @@ export default function SelectionFormatBar({
     cmd(command, value);
     onFormatChange?.();
   };
-  const applySize = (size: number) => {
+  const adjustSize = (delta: number) => {
     onBeforeFormat?.();
-    applyFontSizePx(size);
+    adjustSelectionFontSize(delta);
     onFormatChange?.();
   };
 
@@ -191,20 +197,26 @@ export default function SelectionFormatBar({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button type="button" className={btn} title="Tamaño">
-            <Type className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="center" className="max-h-64 overflow-y-auto">
-          {FONT_SIZES.map((px) => (
-            <DropdownMenuItem key={px} onClick={() => applySize(px)} className="text-[12px]">
-              {px} pt
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <div className="mx-0.5 h-5 w-px bg-neutral-200" />
+
+      <button
+        type="button"
+        className={btn}
+        title="Aumentar tamaño de la selección"
+        aria-label="Aumentar tamaño de la selección"
+        onClick={() => adjustSize(1)}
+      >
+        <ChevronUp className="h-4 w-4" strokeWidth={1.9} />
+      </button>
+      <button
+        type="button"
+        className={btn}
+        title="Reducir tamaño de la selección"
+        aria-label="Reducir tamaño de la selección"
+        onClick={() => adjustSize(-1)}
+      >
+        <ChevronDown className="h-4 w-4" strokeWidth={1.9} />
+      </button>
 
       {showAiPencil && (
         <>

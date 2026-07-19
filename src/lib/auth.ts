@@ -8,14 +8,24 @@ import { cookies, headers } from 'next/headers';
  * - FORCE_AUTH != '1' → always allow userId "local-guest" without session
  * - Google login is opt-in when AUTH_GOOGLE_* + AUTH_SECRET are set
  */
+const googleClientId = process.env.AUTH_GOOGLE_ID || process.env.GOOGLE_CLIENT_ID;
+const googleClientSecret = process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET;
+const authSecret = process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET;
+const authConfigured = Boolean(googleClientId && googleClientSecret && authSecret);
+
 export const authConfig = {
-  providers: [
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID || process.env.GOOGLE_CLIENT_ID || '',
-      clientSecret: process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET || '',
-      allowDangerousEmailAccountLinking: true,
-    }),
-  ],
+  // Guest mode must never instantiate a Google provider with empty
+  // credentials. Auth.js otherwise responds from /api/auth/session with an
+  // HTML 500 page, which clients then fail to parse as JSON.
+  providers: authConfigured
+    ? [
+        Google({
+          clientId: googleClientId!,
+          clientSecret: googleClientSecret!,
+          allowDangerousEmailAccountLinking: true,
+        }),
+      ]
+    : [],
   pages: {
     signIn: '/login',
   },
@@ -38,15 +48,13 @@ export const authConfig = {
     },
   },
   trustHost: true,
-  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
+  secret: authSecret,
 } satisfies NextAuthConfig;
 
 export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
 
 export function isAuthConfigured(): boolean {
-  const id = process.env.AUTH_GOOGLE_ID || process.env.GOOGLE_CLIENT_ID;
-  const secret = process.env.AUTH_GOOGLE_SECRET || process.env.GOOGLE_CLIENT_SECRET;
-  return Boolean(id && secret && (process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET));
+  return authConfigured;
 }
 
 /** Stable user id for storage: session user id or isolated browser guest. */

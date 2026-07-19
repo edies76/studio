@@ -4968,9 +4968,14 @@
 /* Landing: one calm header rather than a separate floating brand and navigation pill. */
 .landing-top { width: min(1320px, calc(100% - 44px)); }
 .landing-nav--full { width: 100%; max-width: none; justify-content: space-between; margin: 0; padding-left: 13px; border-radius: 10px; box-shadow: none; }
-.landing-nav--full .landing-brand-lockup { color: #fff8f0; padding: 3px 8px 3px 0; }
+.landing-nav--full { background: #f7f6f3; border-color: #e5e1db; }
+.landing-nav--full .landing-brand-lockup { color: #2f2823; padding: 3px 8px 3px 0; }
 .landing-nav--full .landing-brand-lockup .animated-brand__word { font-size: 17px; }
 .landing-nav--full .landing-brand-lockup svg { filter: none; }
+.landing-nav--full .landing-brand-lockup .animated-brand__studio { color: #49362b; }
+.landing-nav--full .landing-nav__links { margin-left: auto; }
+.landing-nav--full .landing-nav__links a { color: #665d55; }
+.landing-nav--full .landing-nav__links a:hover { color: #211b17; }
 .landing-page .document-frame { border-radius: 12px; box-shadow: none; }
 .landing-page .document-preview { cursor: default; touch-action: auto; }
 .landing-page .document-preview__spotlight,
@@ -4991,6 +4996,27 @@
 .mcp-brand-wrap > small, .pre-summary-brand-wrap > small { color: var(--mcp-muted, var(--pre-muted)); font-family: var(--font-mono, monospace); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .mcp-brand .animated-brand__word { font-size: 13px; }
 .pre-summary-brand .animated-brand__word { font-size: 14px; }
+
+/* First-library walkthrough: deliberately small, skippable, and content-led. */
+.home-onboarding { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(37, 31, 26, .28); }
+.home-onboarding__card { position: relative; width: min(100%, 610px); padding: 42px; border: 1px solid #e4dfd8; border-radius: 12px; background: #fbfbfa; color: #292421; }
+.home-onboarding__skip { position: absolute; top: 22px; right: 24px; border: 0; background: none; color: #78716b; font: inherit; font-size: 12px; cursor: pointer; }
+.home-onboarding__skip:hover { color: #292421; }
+.home-onboarding__index { display: flex; gap: 6px; margin-bottom: 32px; }
+.home-onboarding__index i { display: block; width: 22px; height: 2px; background: #ded9d1; }
+.home-onboarding__index i.is-active { background: #41342b; }
+.home-onboarding__eyebrow { margin: 0; color: #796d63; font-family: var(--font-mono, monospace); font-size: 10px; font-weight: 700; letter-spacing: .1em; }
+.home-onboarding h2 { max-width: 500px; margin: 18px 0 0; font-family: 'Newsreader', Georgia, serif; font-size: clamp(37px, 6vw, 56px); font-weight: 500; letter-spacing: -.05em; line-height: .96; }
+.home-onboarding__body { max-width: 515px; margin: 21px 0 0; color: #6c645e; font-size: 15px; line-height: 1.65; }
+.home-onboarding__example { display: grid; gap: 6px; margin-top: 30px; padding: 15px 17px; border: 1px solid #e8e4de; background: #f4f1ed; }
+.home-onboarding__example span { color: #877b71; font-family: var(--font-mono, monospace); font-size: 9px; font-weight: 700; letter-spacing: .11em; }
+.home-onboarding__example strong { font-size: 13px; font-weight: 650; }
+.home-onboarding__actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 34px; }
+.home-onboarding__quiet, .home-onboarding__next { border: 0; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.home-onboarding__quiet { padding: 10px 0; background: transparent; color: #716961; }
+.home-onboarding__next { min-height: 38px; padding: 0 14px; border-radius: 6px; background: #302a26; color: #fffdfa; }
+.home-onboarding__next:hover { background: #49403a; }
+@media (max-width: 560px) { .home-onboarding { padding: 14px; } .home-onboarding__card { padding: 34px 24px 24px; } .home-onboarding__actions { align-items: flex-start; flex-direction: column-reverse; } }
 
 .home-landing__product { border-top: 1px solid var(--landing-line); }
 .home-landing__section-heading { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 0.55fr); align-items: end; gap: 10vw; margin-top: 27px; }

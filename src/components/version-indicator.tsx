@@ -1,11 +1,13 @@
 'use client';
 
 import { PACKAGE_VERSION } from '@/lib/constants';
+import { usePathname } from 'next/navigation';
 
 /** Bottom-right version badge (same idea as Lunar). */
 export default function VersionIndicator() {
+  const pathname = usePathname();
   const version = PACKAGE_VERSION;
-  if (!version) return null;
+  if (!version || pathname?.startsWith('/studio')) return null;
 
   return (
     <div

@@ -24,9 +24,6 @@ export default function LandingNav() {
           <Link href="/origin">{t('nav.origin')}</Link>
         </nav>
         <LocaleSwitch />
-        <Link className="landing-nav__save" href="/login?callbackUrl=%2Fhome">
-          {t('nav.save')}
-        </Link>
         <Link className="landing-nav__cta" href="/home">
           {t('nav.open')} <span aria-hidden="true">↗</span>
         </Link>

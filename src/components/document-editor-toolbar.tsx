@@ -181,7 +181,17 @@ export default function DocumentEditorToolbar({
       <Button variant="ghost" size="icon" className={btn} onClick={() => applyCommand('underline')} title="Underline">
         <Underline className="h-4 w-4" strokeWidth={1.5} />
       </Button>
-      <Button variant="ghost" size="icon" className={btn} onClick={onRequestLink} title="Link">
+      <Button
+        variant="ghost"
+        size="icon"
+        className={btn}
+        onClick={() => {
+          onBeforeFormat?.();
+          onRequestLink();
+          onFormatChange?.();
+        }}
+        title="Link"
+      >
         <Link2 className="h-4 w-4" strokeWidth={1.5} />
       </Button>
       <DropdownMenu>

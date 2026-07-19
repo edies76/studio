@@ -14,6 +14,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import BrandMark from '@/components/brand-mark';
+import HomeOnboarding from '@/components/home-onboarding';
 import LocaleSwitch from '@/components/locale-switch';
 import { useLocale } from '@/lib/i18n/locale-context';
 import { cn } from '@/lib/utils';
@@ -147,7 +148,7 @@ export default function HomePage() {
           <a href="/" className="flex items-center gap-2.5 no-underline">
             <BrandMark size={26} />
             <span className="text-[14px] font-semibold tracking-tight text-neutral-900">
-              Docs<span className="text-[#8b4a34]">S</span>
+              Docs
             </span>
           </a>
           <div className="flex items-center gap-2">
@@ -303,6 +304,7 @@ export default function HomePage() {
           </ul>
         )}
       </main>
+      <HomeOnboarding />
     </div>
   );
 }

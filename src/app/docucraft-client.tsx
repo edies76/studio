@@ -20,7 +20,7 @@ import StudioChat, {
 import ToolsDock, { type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { Download, FileText, History } from 'lucide-react';
+import { ArrowLeft, CircleCheck, CloudOff, CloudUpload, Download, FileText, FileUp, History } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
@@ -2020,28 +2020,17 @@ export default function DocsStudioClient({
               className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-3"
             >
               <div className="pointer-events-auto flex max-w-[min(980px,100%)] items-center gap-2">
-              <a
-                href="/home"
-                className="pointer-events-auto flex h-9 shrink-0 items-center rounded-full border border-neutral-200 bg-white/95 px-3 text-[11px] font-semibold text-neutral-600 shadow-sm backdrop-blur-md hover:bg-white hover:text-neutral-900"
-              >
-                Biblioteca
-              </a>
+              <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 p-1 backdrop-blur-md">
+                <a href="/home" className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Volver a biblioteca" aria-label="Volver a biblioteca"><ArrowLeft className="h-4 w-4" /></a>
+                <span className="h-4 w-px bg-neutral-200" aria-hidden="true" />
+                <span className="flex h-8 w-8 items-center justify-center text-neutral-400" title={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'} aria-label={saveState === 'saving' ? 'Guardando cambios' : saveConflict || saveState === 'error' ? 'No se pudo guardar' : 'Cambios guardados'}>
+                  {saveState === 'saving' ? <CloudUpload className="h-4 w-4 animate-pulse" /> : saveConflict || saveState === 'error' ? <CloudOff className="h-4 w-4 text-amber-700" /> : <CircleCheck className="h-4 w-4 text-emerald-700" />}
+                </span>
+                <button type="button" onClick={() => importInputRef.current?.click()} className="flex h-8 w-8 items-center justify-center rounded-md text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-900" title="Importar Word" aria-label="Importar Word"><FileUp className="h-4 w-4" /></button>
+              </div>
               <div className="pointer-events-auto">
                 <LocaleSwitch />
               </div>
-              {docId && (
-                <span className="pointer-events-none hidden rounded-full border border-neutral-200 bg-white/90 px-2.5 py-1 font-mono text-[10px] text-neutral-400 sm:inline">
-                  {saveState === 'saving'
-                    ? 'Guardando…'
-                    : saveConflict
-                      ? 'Cambios externos · recargá'
-                      : saveState === 'error'
-                      ? 'Error al guardar'
-                      : saveState === 'saved'
-                        ? 'Guardado'
-                        : '·'}
-                </span>
-              )}
               <div className="pointer-events-auto max-w-[min(980px,100%)] overflow-x-auto rounded-2xl border border-neutral-200/90 bg-white/95 shadow-[0_8px_30px_rgba(0,0,0,0.08)] backdrop-blur-md">
                 <DocumentEditorToolbar
                   onRequestLink={() => {
