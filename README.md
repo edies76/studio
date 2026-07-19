@@ -1,12 +1,47 @@
 # Docs Studio
 
-**Promesa:** workspace académico, no un chat genérico.
+**Core message:** a brief is not a document — Docs Studio turns it into one you can review.
 
-**Core message:** a brief is not a document; Docs Studio turns it into one you can review.
+El lienzo (Letter / Legal / A4) es la fuente de verdad. El agente propone; vos aceptás o rechazás. Normas APA / IEEE / MLA, ecuaciones MathJax, import DOCX, export PDF vectorial y Word.
 
-El papel (lienzo Letter/Legal) es la fuente de verdad. El agente propone; vos aceptás o rechazás. Normas APA/IEEE/MLA, ecuaciones MATH-SAFE, import DOCX y export PDF/Word.
+**Dev:** `http://localhost:9003` · **Prod:** [docss.studio](https://docss.studio)
 
-**Dev:** `http://localhost:9003`
+---
+
+## Origen del proyecto
+
+Docs Studio nació dentro del repositorio **[edies76/studio](https://github.com/edies76/studio)** (este repo), que contiene todo el historial real de desarrollo desde `v0.2.1`.
+
+El nombre y la marca **DocsS / Docs Studio** se establecieron en el commit:
+
+```
+3ae6949  feat(studio): DocsS brand + docss.studio marketing  v0.4.6
+```
+
+Antes de ese commit el producto ya existía funcionalmente pero sin nombre de marca definido.
+
+### Por qué hay dos repositorios
+
+El repo **[edies76/docs-studio](https://github.com/edies76/docs-studio)** fue creado como destino de publicación, pero por problemas técnicos (historias de commits incompatibles entre ambos repos) el push tuvo que hacerse como una **rama huérfana** basada en el estado actual (`v0.8.5`), sin historia previa.
+
+**El historial completo de commits vive únicamente en `edies76/studio`**, desde `96824af` (primer commit, `v0.2.1`) hasta el estado actual.
+
+| Repo | Propósito | Historia |
+|------|-----------|----------|
+| [edies76/studio](https://github.com/edies76/studio) | Desarrollo activo | ✅ Historial completo desde v0.2.1 |
+| [edies76/docs-studio](https://github.com/edies76/docs-studio) | Publicación / distribución | ⚠️ Huérfana desde v0.8.5, sin historia previa |
+
+---
+
+## Antes y después
+
+### Antes — Studio v0.2.x (editor base, sin marca)
+
+> *(captura pendiente — corresponde a commits previos a `3ae6949` en `edies76/studio`)*
+
+### Ahora — Docs Studio v0.8.5
+
+![Docs Studio v0.8.5](./docs/demo/screenshot-current-v085.png)
 
 ---
 
@@ -14,38 +49,28 @@ El papel (lienzo Letter/Legal) es la fuente de verdad. El agente propone; vos ac
 
 | Ruta | Rol |
 |------|-----|
-| `/` | Landing — promesa del producto + arranque con tema/guía |
-| `/home` | Biblioteca de documentos (autosave local o Google) |
-| `/studio` | Workspace — lienzo + agente + Tools + export |
+| `/` | Landing — promesa del producto |
+| `/home` | Biblioteca de documentos |
+| `/studio/doc/[id]` | Workspace — lienzo + agente + Tools + export |
 | `/login` | Google OAuth (opcional) |
-| `/mcp` | Superficie MCP para agentes externos |
-| `/usecases` | Casos de uso y diferencia frente a un editor general |
-| `/origin` | Historia y evolución del producto |
-| `/pre-summary` | Redirect legacy → `/` |
-
-Legacy: `/?doc=` y `/?topic=` redirigen a `/studio` (middleware).
+| `/mcp` | Guía de integración MCP |
+| `/usecases` | Casos de uso |
+| `/origin` | Historia del producto |
 
 ---
 
-## Qué hace de verdad
+## Qué hace
 
 | Área | Feature |
 |------|---------|
-| Canvas | Lienzo multi-página Letter/Legal (no transcript de chat) |
-| Draft | `/api/draft` SSE → primer borrador en el papel |
+| Canvas | Multi-página Letter / Legal / A4, rebalance automático |
+| Draft | SSE → primer borrador directo en el lienzo |
 | Edits | Propose → diff rojo/verde → Accept / Reject |
-| Normas | Tools → Aplicar normas: APA → IEEE → MLA → Simple → Mínimo |
-| Math | MATH-SAFE: `list/edit/insert_equation` + protector server-side |
-| Tools | Improve / shorter / expand / grammar / academic / normas |
-| Export | PDF + `.docx` generado en servidor |
-| Modo Word | OOXML original en OnlyOffice para documentos importados |
-| Biblioteca | `/home` + autosave |
-
----
-
-## Origin (honestidad)
-
-Base: [edies76/studio](https://github.com/edies76/studio). Submission: [edies76/docs-studio](https://github.com/edies76/docs-studio). Log: [`docs/HACKATHON_CHANGES.md`](./docs/HACKATHON_CHANGES.md).
+| Normas | APA / IEEE / MLA / Simple / Mínimo |
+| Math | MathJax inline + block, editor LaTeX |
+| Export | PDF vectorial (print nativo) + DOCX servidor |
+| MCP | 25 tools — leer, crear, editar, exportar desde cualquier agente |
+| Auth | Google OAuth opcional; modo invitado por defecto |
 
 ---
 
@@ -53,47 +78,65 @@ Base: [edies76/studio](https://github.com/edies76/studio). Submission: [edies76/
 
 ```bash
 npm install
-cp .env.example .env.local   # DEEPSEEK_API_KEY=
-npm run dev                  # http://localhost:9003
+cp .env.example .env.local   # agrega DEEPSEEK_API_KEY
+npm run dev                   # http://localhost:9003
 ```
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `DEEPSEEK_API_KEY` | Yes for the agent | Private key used by the server-side agent runtime |
-| `GOOGLE_API_KEY` | No | Optional legacy/provider fallback; never exposed in the product UI |
-| `GEMINI_MODEL` | No | Text model used by the Google/Genkit pipeline |
-| `GEMINI_VISION_MODEL` | No | Vision model used when image context is analyzed |
+Variables clave:
 
-Never commit `.env.local`. The provider and model are implementation details; public product language should refer only to “the agent”.
+| Variable | Requerida | Descripción |
+|----------|-----------|-------------|
+| `DEEPSEEK_API_KEY` | Sí | Motor del agente (server-side) |
+| `AUTH_SECRET` | Para auth | NextAuth secret |
+| `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` | Para login Google | OAuth client |
+| `AUTH_URL` | Para auth | URL base (`http://localhost:9003` en dev) |
+| `AWS_REGION` + `DOCS_TABLE` | Para persistencia | DynamoDB |
+| `MCP_API_KEY` | Para MCP externo | Bearer token del servidor MCP |
+
+Nunca commitear `.env.local`.
 
 ---
 
-## Architecture (short)
+## Arquitectura
 
 ```
-src/app/docucraft-client.tsx   # workspace shell
-src/components/paper-canvas.tsx # pages + reflow breaks
-src/lib/page-layout.ts          # real pagination engine
+src/app/docucraft-client.tsx     # shell del workspace
+src/components/paper-canvas.tsx  # lienzo multi-página + rebalance
+src/lib/page-layout.ts           # motor de paginación
 src/app/api/draft|chat|export-docx
+src/mcp/cloud-server.ts          # 25 MCP tools
+src/lib/auth.ts                  # NextAuth + modo invitado
 ```
-
-**Pagination fix (important):** page count must **never** be derived from `scrollHeight` when `minHeight` is also derived from page count (that loop created 40–400 empty pages). Count = number of `data-studio-break` spacers + 1 after measuring real blocks.
 
 ---
 
-## MCP integration
+## MCP
 
-Docs Studio now exposes the document loop to external AI clients through an official MCP server:
+Docs Studio expone el loop de documentos a agentes externos via MCP:
 
 ```bash
-npm run mcp:stdio   # local stdio client
-npm run mcp:http    # Streamable HTTP at http://localhost:8787/mcp
+npm run mcp:stdio   # stdio local
+npm run mcp:http    # HTTP en http://localhost:8787/mcp
 ```
 
-The surface includes `create_document`, `parse_brief`, `draft_document`, `read_document`, `chat_document`, reviewable `propose_edit` / `accept_edit` / `reject_edit`, math/table insertion, history, and HTML/DOCX/PDF export. Full setup, client config, resources, prompts, and honest integration boundaries live in [`docs/mcp/README.md`](./docs/mcp/README.md). The visual guide is available at [`/mcp`](http://localhost:9003/mcp).
+Configuración para Claude Desktop / cualquier cliente HTTP:
+
+```json
+{
+  "mcpServers": {
+    "docss-studio": {
+      "type": "http",
+      "url": "https://docss.studio/api/mcp",
+      "headers": { "Authorization": "Bearer <tu-token>" }
+    }
+  }
+}
+```
+
+Documentación completa: [`docs/mcp/README.md`](./docs/mcp/README.md) · Guía visual: [`/mcp`](http://localhost:9003/mcp)
 
 ---
 
-## License / contact
+## Licencia / contacto
 
-Hackathon build for Bamba / Spark. Founder context: bambalunar.app.
+Bamba · [bambalunar.app](https://bambalunar.app) · Founder: Edigarlos (edies76)
