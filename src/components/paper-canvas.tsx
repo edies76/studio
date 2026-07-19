@@ -1,10 +1,10 @@
 'use client';
 
 /**
- * Real continuous document editor (Word Online / Docs style).
- * One contentEditable — paste, type, and images just work.
- * Page chrome is visual: sheet height segments, break lines, page numbers.
- * No per-page clipping, no scroll trap inside a fake sheet.
+ * Real multi-page document editor (Word-like).
+ * Each page is a fixed-height white sheet. Content lives only inside
+ * [data-page-body] — never in the inter-page gap (real DOM spacing).
+ * Blocks are packed with page-layout.ts so prose cannot cross sheet edges.
  */
 
 import {
@@ -21,7 +21,14 @@ import { cn } from '@/lib/utils';
 import type { PaperSize } from '@/lib/doc-tools';
 import { insertImageAtSelection, sanitizeDocumentHtml, typesetEditor } from '@/lib/math-html';
 import { buildCanvasDiffHtml } from '@/lib/canvas-diff';
-import { placeCaretAtEnd } from '@/lib/page-layout';
+import {
+  distributeHtmlToPages,
+  joinPageHtmls,
+  pageMetrics,
+  placeCaretAtEnd,
+  rebalanceFromPage,
+  serializeEditorHtml,
+} from '@/lib/page-layout';
 import {
   AlignCenter,
   AlignLeft,
@@ -49,6 +56,9 @@ export const MARGIN_PRESETS: Record<StudioPrefs['marginPreset'], number> = {
   apa: 72,
 };
 
+/** Visual gap between real sheets — empty DOM space, not painted under text */
+const PAGE_GAP = 28;
+const REBALANCE_MS = 160;
 const BLOCK_SEL = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table';
 
 type ImageWrapMode = 'inline' | 'left' | 'right' | 'center' | 'break' | 'behind';
@@ -135,11 +145,20 @@ function applyImageWrapMode(image: HTMLImageElement, mode: ImageWrapMode, editor
   if (mode === 'break') image.style.margin = '0.85em 0';
 }
 
+function bodyContaining(node: Node | null, bodies: (HTMLElement | null)[]): HTMLElement | null {
+  if (!node) return null;
+  for (const b of bodies) {
+    if (b && (b === node || b.contains(node))) return b;
+  }
+  return null;
+}
+
 export type PaperCanvasHandle = {
   getHtml: () => string;
   setHtml: (html: string, opts?: { reveal?: boolean }) => void;
   getPageCount: () => number;
   focusEnd: () => void;
+  restoreSelection: () => boolean;
   getBodies: () => HTMLElement[];
   insertImage: (file: File) => Promise<boolean>;
 };
@@ -156,6 +175,7 @@ type Props = {
   onRedo?: () => void;
   onMouseUp: (e: React.MouseEvent) => void;
   onDoubleClick?: (e: React.MouseEvent) => void;
+  onEditMath?: (math: HTMLElement) => void;
   onEditBlock?: (html: string, plain: string) => void;
   onPageCountChange?: (n: number) => void;
   ghostHtml?: string | null;
@@ -180,13 +200,12 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     onRedo,
     onMouseUp,
     onDoubleClick,
-    onEditBlock,
+    onEditMath,
     onPageCountChange,
     ghostHtml,
     ghostBeforeHtml,
     zoom = 1,
     marginPreset = 'normal',
-    showEditButton = true,
     className,
     documentHtml,
   },
@@ -194,35 +213,272 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
 ) {
   const spec = PAPER[paperSize];
   const margin = MARGIN_PRESETS[marginPreset] ?? 72;
+  const metrics = useMemo(
+    () => pageMetrics(spec.heightPx, margin, PAGE_GAP, spec.widthPx),
+    [spec.heightPx, spec.widthPx, margin],
+  );
+  const styleOpts = useMemo(() => ({ fontFamily, fontSize }), [fontFamily, fontSize]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const editorRef = useRef<HTMLDivElement>(null);
-  const ghostRef = useRef<HTMLDivElement>(null);
+  const bodyRefs = useRef<(HTMLDivElement | null)[]>([]);
   const skipInput = useRef(false);
+  const rebalanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastExternalHtml = useRef<string | null>(null);
   const lastSelection = useRef<Range | null>(null);
   const pageNotify = useRef(1);
+  const resizeSession = useRef<ResizeSession | null>(null);
+  const dragSession = useRef<DragSession | null>(null);
 
-  const rememberSelection = useCallback(() => {
-    const el = editorRef.current;
-    const sel = window.getSelection();
-    if (!el || !sel || !sel.rangeCount || !sel.anchorNode || !el.contains(sel.anchorNode)) return;
-    lastSelection.current = sel.getRangeAt(0).cloneRange();
-  }, []);
-
-  const [pageCount, setPageCount] = useState(1);
-  const paperHeight = Math.max(spec.heightPx, pageCount * spec.heightPx);
+  const [pages, setPages] = useState<string[]>(['<p><br></p>']);
+  const [activePage, setActivePage] = useState(0);
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
   const [imageTools, setImageTools] = useState<ImageToolsRect | null>(null);
   const [selectedTable, setSelectedTable] = useState<HTMLTableElement | null>(null);
   const [tableTools, setTableTools] = useState<TableToolsRect | null>(null);
-  const resizeSession = useRef<ResizeSession | null>(null);
-  const dragSession = useRef<DragSession | null>(null);
+  const [selectedMath, setSelectedMath] = useState<HTMLElement | null>(null);
+  const [mathTools, setMathTools] = useState<TableToolsRect | null>(null);
+
+  const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
+
+  const liveBodies = useCallback(
+    () => bodyRefs.current.filter(Boolean) as HTMLElement[],
+    [],
+  );
+
+  const rememberSelection = useCallback(() => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount || !sel.anchorNode) return;
+    const body = bodyContaining(sel.anchorNode, bodyRefs.current);
+    if (!body) return;
+    lastSelection.current = sel.getRangeAt(0).cloneRange();
+  }, []);
+
+  const getHtml = useCallback(() => {
+    const live = bodyRefs.current
+      .slice(0, Math.max(pages.length, bodyRefs.current.length))
+      .filter(Boolean)
+      .map((b) => (b as HTMLElement).innerHTML);
+    if (live.length) return joinPageHtmls(live);
+    return joinPageHtmls(pages);
+  }, [pages]);
+
+  const writePagesToDom = useCallback((packed: string[]) => {
+    packed.forEach((pageHtml, i) => {
+      const el = bodyRefs.current[i];
+      if (el && el.innerHTML !== pageHtml) el.innerHTML = pageHtml;
+    });
+  }, []);
+
+  const setHtml = useCallback(
+    (html: string, opts?: { reveal?: boolean }) => {
+      const clean = sanitizeDocumentHtml(html) || '<p><br></p>';
+      const packed = distributeHtmlToPages(clean, metrics, styleOpts);
+      skipInput.current = true;
+      setSelectedImage(null);
+      setImageTools(null);
+      setSelectedTable(null);
+      setTableTools(null);
+      setSelectedMath(null);
+      setMathTools(null);
+      setPages(packed);
+      lastExternalHtml.current = clean;
+      requestAnimationFrame(() => {
+        writePagesToDom(packed);
+        packed.forEach((_, i) => {
+          const el = bodyRefs.current[i];
+          if (el) typesetEditor(el);
+        });
+        skipInput.current = false;
+        if (opts?.reveal && bodyRefs.current[0]) {
+          const el = bodyRefs.current[0];
+          el.classList.add('studio-first-reveal');
+          window.setTimeout(() => el.classList.remove('studio-first-reveal'), 2200);
+        }
+      });
+    },
+    [metrics, styleOpts, writePagesToDom],
+  );
+
+  const scheduleRebalance = useCallback(
+    (pageIdx: number) => {
+      if (rebalanceTimer.current) clearTimeout(rebalanceTimer.current);
+      rebalanceTimer.current = setTimeout(() => {
+        const liveCount = Math.max(bodyRefs.current.filter(Boolean).length, 1);
+        const live = Array.from({ length: liveCount }, (_, i) =>
+          bodyRefs.current[i]?.innerHTML ?? '<p><br></p>',
+        );
+        const next = rebalanceFromPage(live, pageIdx, metrics, styleOpts);
+        lastExternalHtml.current = joinPageHtmls(next);
+        skipInput.current = true;
+        setPages(next);
+        requestAnimationFrame(() => {
+          const grew = next.length > live.length;
+          next.forEach((pageHtml, i) => {
+            const el = bodyRefs.current[i];
+            if (!el) return;
+            if (el.innerHTML === pageHtml) return;
+            const wasFocused = document.activeElement === el;
+            el.innerHTML = pageHtml;
+            typesetEditor(el);
+            if (wasFocused && !grew) placeCaretAtEnd(el);
+          });
+          if (grew) {
+            const last = bodyRefs.current[next.length - 1];
+            if (last) placeCaretAtEnd(last);
+          }
+          skipInput.current = false;
+          onInput();
+        });
+      }, REBALANCE_MS);
+    },
+    [metrics, styleOpts, onInput],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getHtml,
+      setHtml,
+      getPageCount: () => pages.length,
+      focusEnd: () => {
+        const last = bodyRefs.current[pages.length - 1];
+        if (last) placeCaretAtEnd(last);
+      },
+      restoreSelection: () => {
+        const range = lastSelection.current;
+        if (!range) return false;
+        const body = bodyContaining(range.startContainer, bodyRefs.current);
+        if (!body || !body.contains(range.startContainer)) return false;
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range.cloneRange());
+        body.focus({ preventScroll: true });
+        return true;
+      },
+      getBodies: () => liveBodies(),
+      insertImage: async (file: File) => {
+        if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) return false;
+        const bodies = liveBodies();
+        let el =
+          bodyContaining(lastSelection.current?.startContainer ?? null, bodies) ||
+          bodies[activePage] ||
+          bodies[0];
+        if (!el) return false;
+        const src = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(reader.error || new Error('Could not read image'));
+          reader.readAsDataURL(file);
+        });
+        const image = insertImageAtSelection(
+          el,
+          src,
+          file.name.replace(/\.[^.]+$/, '') || 'Inserted image',
+          lastSelection.current,
+        );
+        applyImageWrapMode(image, 'break', el);
+        setSelectedImage(image);
+        const idx = bodies.indexOf(el);
+        scheduleRebalance(Math.max(0, idx));
+        requestAnimationFrame(() => onInput());
+        return true;
+      },
+    }),
+    [getHtml, setHtml, pages.length, liveBodies, activePage, scheduleRebalance, onInput],
+  );
+
+  useEffect(() => {
+    if (documentHtml == null) return;
+    if (documentHtml === lastExternalHtml.current) return;
+    setHtml(documentHtml);
+  }, [documentHtml, setHtml]);
+
+  useEffect(() => {
+    if (pageNotify.current === pages.length) return;
+    pageNotify.current = pages.length;
+    onPageCountChange?.(pages.length);
+  }, [pages.length, onPageCountChange]);
+
+  // Re-pack when paper metrics / font change
+  useEffect(() => {
+    const html = getHtml();
+    const packed = distributeHtmlToPages(html, metrics, styleOpts);
+    if (packed.length !== pages.length || packed.some((p, i) => p !== pages[i])) {
+      skipInput.current = true;
+      setPages(packed);
+      requestAnimationFrame(() => {
+        writePagesToDom(packed);
+        skipInput.current = false;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics, styleOpts.fontFamily, styleOpts.fontSize, paperSize, marginPreset]);
+
+  // Sync React page state → DOM when not mid-keystroke
+  useEffect(() => {
+    pages.forEach((html, i) => {
+      const el = bodyRefs.current[i];
+      if (!el) return;
+      if (!skipInput.current && document.activeElement === el) return;
+      if (el.innerHTML !== html) {
+        const wasSkip = skipInput.current;
+        skipInput.current = true;
+        el.innerHTML = html;
+        skipInput.current = wasSkip;
+      }
+    });
+  }, [pages]);
+
+  bodyRefs.current = bodyRefs.current.slice(0, pages.length);
+
+  const ghostPages = useMemo(() => {
+    if (!hasGhost) return null;
+    const before =
+      ghostBeforeHtml?.trim() ||
+      (typeof document !== 'undefined' ? getHtml() : '') ||
+      '';
+    const diff = buildCanvasDiffHtml(before, ghostHtml || '');
+    return distributeHtmlToPages(sanitizeDocumentHtml(diff) || '<p><br></p>', metrics, styleOpts);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasGhost, ghostHtml, ghostBeforeHtml, metrics, styleOpts]);
+
+  useEffect(() => {
+    if (!hasGhost || !ghostPages) return;
+    requestAnimationFrame(() => {
+      document.querySelectorAll('[data-ghost-page-body]').forEach((el) => typesetEditor(el as HTMLElement));
+    });
+  }, [hasGhost, ghostPages]);
+
+  const updateImageTools = useCallback(() => {
+    const scroll = scrollRef.current;
+    const image = selectedImage;
+    if (!scroll || !image || hasGhost) {
+      setImageTools(null);
+      return;
+    }
+    const bodies = liveBodies();
+    if (!bodies.some((b) => b.contains(image))) {
+      setImageTools(null);
+      return;
+    }
+    const rect = image.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    setImageTools({
+      top: rect.top - scrollRect.top + scroll.scrollTop,
+      left: rect.left - scrollRect.left + scroll.scrollLeft,
+      width: rect.width,
+      height: rect.height,
+    });
+  }, [hasGhost, selectedImage, liveBodies]);
 
   const updateTableTools = useCallback(() => {
     const table = selectedTable;
     const scroll = scrollRef.current;
-    if (!table || !scroll || !editorRef.current?.contains(table)) {
+    if (!table || !scroll || hasGhost) {
+      setTableTools(null);
+      return;
+    }
+    if (!liveBodies().some((b) => b.contains(table))) {
       setTableTools(null);
       return;
     }
@@ -233,7 +489,43 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       left: Math.max(8, rect.left - scrollRect.left + scroll.scrollLeft),
       width: rect.width,
     });
-  }, [selectedTable]);
+  }, [selectedTable, hasGhost, liveBodies]);
+
+  const updateMathTools = useCallback(() => {
+    const math = selectedMath;
+    const scroll = scrollRef.current;
+    if (!math || !scroll || hasGhost) {
+      setMathTools(null);
+      return;
+    }
+    if (!liveBodies().some((b) => b.contains(math))) {
+      setMathTools(null);
+      return;
+    }
+    const rect = math.getBoundingClientRect();
+    const scrollRect = scroll.getBoundingClientRect();
+    setMathTools({
+      top: Math.max(8, rect.top - scrollRect.top + scroll.scrollTop - 44),
+      left: Math.max(8, rect.left - scrollRect.left + scroll.scrollLeft),
+      width: rect.width,
+    });
+  }, [hasGhost, selectedMath, liveBodies]);
+
+  useLayoutEffect(() => {
+    updateImageTools();
+    const scroll = scrollRef.current;
+    if (!scroll || !selectedImage) return;
+    const onScroll = () => updateImageTools();
+    scroll.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onScroll) : null;
+    if (observer) observer.observe(selectedImage);
+    return () => {
+      scroll.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      observer?.disconnect();
+    };
+  }, [selectedImage, updateImageTools]);
 
   useEffect(() => {
     if (!selectedTable) return;
@@ -247,6 +539,133 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       window.removeEventListener('resize', sync);
     };
   }, [selectedTable, updateTableTools]);
+
+  useEffect(() => {
+    if (!selectedMath) return;
+    const scroll = scrollRef.current;
+    const sync = () => updateMathTools();
+    scroll?.addEventListener('scroll', sync, { passive: true });
+    window.addEventListener('resize', sync);
+    requestAnimationFrame(sync);
+    return () => {
+      scroll?.removeEventListener('scroll', sync);
+      window.removeEventListener('resize', sync);
+    };
+  }, [selectedMath, updateMathTools]);
+
+  useEffect(() => {
+    liveBodies().forEach((editor) => {
+      editor.querySelectorAll('[data-studio-image-selected="1"]').forEach((node) => {
+        node.removeAttribute('data-studio-image-selected');
+      });
+    });
+    if (selectedImage) {
+      selectedImage.setAttribute('data-studio-image-selected', '1');
+    }
+  }, [selectedImage, liveBodies, pages.length]);
+
+  useEffect(() => {
+    if (hasGhost || !contentEditable) setSelectedImage(null);
+  }, [contentEditable, hasGhost]);
+
+  useEffect(() => {
+    if (hasGhost || !contentEditable) {
+      setSelectedMath(null);
+      setMathTools(null);
+    }
+  }, [contentEditable, hasGhost]);
+
+  const commitImageMutation = useCallback(() => {
+    const bodies = liveBodies();
+    const body = selectedImage ? bodyContaining(selectedImage, bodies) : null;
+    const idx = body ? bodies.indexOf(body) : activePage;
+    scheduleRebalance(Math.max(0, idx));
+    requestAnimationFrame(() => updateImageTools());
+    onInput();
+  }, [liveBodies, selectedImage, activePage, scheduleRebalance, updateImageTools, onInput]);
+
+  const updateImageWidth = useCallback(
+    (nextWidth: number) => {
+      const image = selectedImage;
+      if (!image) return;
+      const parentWidth = image.parentElement?.clientWidth || metrics.contentWidth || 1200;
+      const maxWidth = Math.max(120, parentWidth);
+      const width = Math.min(Math.max(Math.round(nextWidth || 0), 80), maxWidth);
+      image.style.width = `${width}px`;
+      image.style.height = 'auto';
+      image.style.maxWidth = '100%';
+      updateImageTools();
+    },
+    [selectedImage, metrics.contentWidth, updateImageTools],
+  );
+
+  const handleResizePointerDown = useCallback(
+    (event: React.PointerEvent<HTMLButtonElement>, direction: ResizeSession['direction']) => {
+      const image = selectedImage;
+      if (!image) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = image.getBoundingClientRect();
+      const ratio =
+        image.naturalWidth && image.naturalHeight
+          ? image.naturalWidth / image.naturalHeight
+          : rect.width / Math.max(rect.height, 1);
+      resizeSession.current = {
+        image,
+        direction,
+        startX: event.clientX,
+        startWidth: rect.width,
+        ratio: ratio || 1,
+      };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    [selectedImage],
+  );
+
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const session = resizeSession.current;
+      if (!session) return;
+      event.preventDefault();
+      const sign = session.direction.endsWith('e') ? 1 : -1;
+      const delta = (event.clientX - session.startX) * sign;
+      const parentWidth = session.image.parentElement?.clientWidth || metrics.contentWidth || 1200;
+      const width = Math.min(Math.max(session.startWidth + delta, 80), Math.max(120, parentWidth));
+      session.image.style.width = `${Math.round(width)}px`;
+      session.image.style.height = 'auto';
+      session.image.style.maxWidth = '100%';
+      updateImageTools();
+    };
+    const onPointerUp = () => {
+      if (!resizeSession.current) return;
+      resizeSession.current = null;
+      commitImageMutation();
+    };
+    window.addEventListener('pointermove', onPointerMove, { passive: false });
+    window.addEventListener('pointerup', onPointerUp);
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+  }, [commitImageMutation, updateImageTools, metrics.contentWidth]);
+
+  const changeImageWrap = useCallback(
+    (mode: ImageWrapMode) => {
+      if (!selectedImage) return;
+      const body = bodyContaining(selectedImage, bodyRefs.current);
+      applyImageWrapMode(selectedImage, mode, body);
+      commitImageMutation();
+    },
+    [commitImageMutation, selectedImage],
+  );
+
+  const removeSelectedImage = useCallback(() => {
+    if (!selectedImage) return;
+    selectedImage.remove();
+    setSelectedImage(null);
+    setImageTools(null);
+    commitImageMutation();
+  }, [commitImageMutation, selectedImage]);
 
   const mutateTable = useCallback(
     (action: 'add-row' | 'remove-row' | 'add-column' | 'remove-column') => {
@@ -276,388 +695,33 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         return;
       }
       updateTableTools();
+      const idx = liveBodies().findIndex((b) => b.contains(table));
+      scheduleRebalance(Math.max(0, idx));
       onInput();
     },
-    [onInput, selectedTable, updateTableTools],
+    [onInput, selectedTable, updateTableTools, liveBodies, scheduleRebalance],
   );
 
-  const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
-
-  /**
-   * Filler paragraphs are editor chrome, not document content. Keep them out
-   * of the serialized HTML and make them disposable so a page can disappear
-   * after its content is deleted.
-   */
-  const padEditorToPage = useCallback(
-    (el: HTMLElement, targetH: number) => {
-      if (skipInput.current || hasGhost) return;
-      el.querySelectorAll('[data-studio-pad="1"]').forEach((n) => n.remove());
-      let guard = 0;
-      while (el.scrollHeight < targetH - 8 && guard < 160) {
-        const p = document.createElement('p');
-        p.setAttribute('data-studio-pad', '1');
-        p.innerHTML = '<br>';
-        el.appendChild(p);
-        guard++;
-      }
-    },
-    [hasGhost],
-  );
-
-  const countContentPages = useCallback(
-    (el: HTMLElement) => {
-      const editorRect = el.getBoundingClientRect();
-      const realChildren = Array.from(el.children).filter(
-        (child) => (child as HTMLElement).getAttribute('data-studio-pad') !== '1',
-      ) as HTMLElement[];
-      const contentBottom = realChildren.reduce(
-        (bottom, child) => Math.max(bottom, child.getBoundingClientRect().bottom),
-        editorRect.top + margin + 40,
-      );
-      // Absolutely positioned images do not contribute to their paragraph's
-      // flow height, but they still occupy a page in the visual document.
-      const floatingImageBottom = Array.from(
-        el.querySelectorAll<HTMLImageElement>('img[data-studio-wrap="behind"]'),
-      ).reduce((bottom, image) => Math.max(bottom, image.getBoundingClientRect().bottom), contentBottom);
-      const contentHeight = Math.max(1, floatingImageBottom - editorRect.top + 8);
-      return Math.max(1, Math.ceil(contentHeight / spec.heightPx));
-    },
-    [margin, spec.heightPx],
-  );
-
-  const diffOverlayHtml = useMemo(() => {
-    if (!hasGhost) return null;
-    // Prefer current live editor as "before" if beforeHtml missing (full-doc edits)
-    const before =
-      ghostBeforeHtml?.trim() ||
-      (typeof document !== 'undefined' ? editorRef.current?.innerHTML || '' : '') ||
-      '';
-    return buildCanvasDiffHtml(before, ghostHtml || '');
-  }, [hasGhost, ghostHtml, ghostBeforeHtml]);
-
-  const measurePages = useCallback(() => {
-    // When reviewing a proposal, size pages from the ghost (del+add stacked)
-    const el = hasGhost && ghostRef.current ? ghostRef.current : editorRef.current;
-    if (!el) return;
-    void el.offsetHeight;
-    const n = hasGhost
-      ? Math.max(1, Math.ceil(Math.max(el.scrollHeight, el.offsetHeight, 1) / spec.heightPx))
-      : countContentPages(el);
-    setPageCount((prev) => (prev === n ? prev : n));
-  }, [countContentPages, hasGhost, spec.heightPx]);
-
-  // Typeset MathJax on structural ghost so LaTeX stays rendered
-  useEffect(() => {
-    if (!hasGhost || !ghostRef.current) return;
-    const el = ghostRef.current;
-    requestAnimationFrame(() => {
-      typesetEditor(el);
-      measurePages();
-    });
-  }, [hasGhost, diffOverlayHtml, measurePages]);
-
-  const getHtml = useCallback(() => {
-    const el = editorRef.current;
-    if (!el) return '<p><br></p>';
-    // Clone and strip trailing empty pad paragraphs (Word blank-page filler)
-    const clone = el.cloneNode(true) as HTMLElement;
-    const kids = Array.from(clone.children);
-    for (let i = kids.length - 1; i >= 0; i--) {
-      const k = kids[i] as HTMLElement;
-      if (k.getAttribute('data-studio-pad') === '1') {
-        k.remove();
-        continue;
-      }
-      // A real empty paragraph is user content and must survive so intentional
-      // blank lines remain exportable.
-      break;
-    }
-    if (!clone.children.length) return '<p><br></p>';
-    return clone.innerHTML?.trim() || '<p><br></p>';
-  }, []);
-
-  const setHtml = useCallback(
-    (html: string, opts?: { reveal?: boolean }) => {
-      const clean = sanitizeDocumentHtml(html) || '<p><br></p>';
-      lastExternalHtml.current = clean;
-      setSelectedImage(null);
-      setImageTools(null);
-      const el = editorRef.current;
-      if (!el) return;
-      skipInput.current = true;
-      el.innerHTML = clean;
-      if (opts?.reveal) {
-        el.classList.add('studio-first-reveal');
-        window.setTimeout(() => el.classList.remove('studio-first-reveal'), 2200);
-      }
-      requestAnimationFrame(() => {
-        skipInput.current = false;
-        measurePages();
-      });
-    },
-    [measurePages],
-  );
-
-  const updateImageTools = useCallback(() => {
-    const editor = editorRef.current;
-    const scroll = scrollRef.current;
-    const image = selectedImage;
-    if (!editor || !scroll || !image || !editor.contains(image) || hasGhost) {
-      setImageTools(null);
-      return;
-    }
-    const rect = image.getBoundingClientRect();
-    const scrollRect = scroll.getBoundingClientRect();
-    setImageTools({
-      top: rect.top - scrollRect.top + scroll.scrollTop,
-      left: rect.left - scrollRect.left + scroll.scrollLeft,
-      width: rect.width,
-      height: rect.height,
-    });
-  }, [hasGhost, selectedImage]);
-
-  useLayoutEffect(() => {
-    updateImageTools();
-    const scroll = scrollRef.current;
-    if (!scroll || !selectedImage) return;
-    const onScroll = () => updateImageTools();
-    scroll.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onScroll) : null;
-    if (observer) observer.observe(selectedImage);
-    return () => {
-      scroll.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onScroll);
-      observer?.disconnect();
-    };
-  }, [selectedImage, updateImageTools]);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    editor.querySelectorAll('[data-studio-image-selected="1"]').forEach((node) => {
-      node.removeAttribute('data-studio-image-selected');
-    });
-    if (selectedImage && editor.contains(selectedImage)) {
-      selectedImage.setAttribute('data-studio-image-selected', '1');
-    }
-  }, [selectedImage]);
-
-  useEffect(() => {
-    if (hasGhost || !contentEditable) setSelectedImage(null);
-  }, [contentEditable, hasGhost]);
-
-  const promoteRealContentBlocks = useCallback((el: HTMLElement) => {
-    el.querySelectorAll('[data-studio-pad="1"]').forEach((node) => {
-      const block = node as HTMLElement;
-      const hasText = (block.textContent || '').replace(/\u00a0/g, ' ').trim();
-      const hasEmbeddedContent = block.querySelector('img, table, svg, mjx-container, hr, video');
-      if (hasText || hasEmbeddedContent) block.removeAttribute('data-studio-pad');
-    });
-  }, []);
-
-  const syncPageGeometry = useCallback(
-    (el: HTMLElement) => {
-      if (skipInput.current || hasGhost) return;
-      promoteRealContentBlocks(el);
-      const pages = countContentPages(el);
-      setPageCount((prev) => (prev === pages ? prev : pages));
-      padEditorToPage(el, pages * spec.heightPx);
-    },
-    [countContentPages, hasGhost, padEditorToPage, promoteRealContentBlocks, spec.heightPx],
-  );
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      getHtml,
-      setHtml,
-      getPageCount: () => pageCount,
-      focusEnd: () => {
-        if (editorRef.current) placeCaretAtEnd(editorRef.current);
-      },
-      getBodies: () => (editorRef.current ? [editorRef.current] : []),
-      insertImage: async (file: File) => {
-        if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) return false;
-        const el = editorRef.current;
-        if (!el) return false;
-        const src = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = () => reject(reader.error || new Error('Could not read image'));
-          reader.readAsDataURL(file);
-        });
-        const image = insertImageAtSelection(
-          el,
-          src,
-          file.name.replace(/\.[^.]+$/, '') || 'Inserted image',
-          lastSelection.current,
-        );
-        applyImageWrapMode(image, 'break', el);
-        setSelectedImage(image);
-        promoteRealContentBlocks(el);
-        requestAnimationFrame(() => {
-          promoteRealContentBlocks(el);
-          measurePages();
-          onInput();
-        });
-        return true;
-      },
-    }),
-    [getHtml, setHtml, pageCount, measurePages, onInput, promoteRealContentBlocks],
-  );
-
-  useEffect(() => {
-    if (documentHtml == null) return;
-    if (documentHtml === lastExternalHtml.current) return;
-    setHtml(documentHtml);
-  }, [documentHtml, setHtml]);
-
-  useEffect(() => {
-    if (pageNotify.current === pageCount) return;
-    pageNotify.current = pageCount;
-    onPageCountChange?.(pageCount);
-  }, [pageCount, onPageCountChange]);
-
-  useLayoutEffect(() => {
-    measurePages();
-  }, [measurePages, fontFamily, fontSize, zoom, paperSize, marginPreset]);
-
-  useEffect(() => {
-    const el = editorRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => measurePages());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [measurePages]);
-
-  // Seed empty doc + pad blank page so click-below-content works (Word-like)
-  useEffect(() => {
-    const el = editorRef.current;
-    if (!el) return;
-    if (!el.innerHTML.trim()) {
-      el.innerHTML = '<p><br></p>';
-    }
-    padEditorToPage(el, paperHeight);
-  }, [paperHeight]);
-
-  const commitImageMutation = useCallback(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    promoteRealContentBlocks(editor);
-    const pages = countContentPages(editor);
-    setPageCount((prev) => (prev === pages ? prev : pages));
-    padEditorToPage(editor, pages * spec.heightPx);
-    measurePages();
-    requestAnimationFrame(() => updateImageTools());
-    onInput();
-  }, [countContentPages, measurePages, onInput, padEditorToPage, promoteRealContentBlocks, spec.heightPx, updateImageTools]);
-
-  const updateImageWidth = useCallback(
-    (nextWidth: number) => {
-      const image = selectedImage;
-      if (!image) return;
-      const parentWidth = image.parentElement?.clientWidth || editorRef.current?.clientWidth || 1200;
-      const maxWidth = Math.max(120, parentWidth);
-      const width = Math.min(Math.max(Math.round(nextWidth || 0), 80), maxWidth);
-      image.style.width = `${width}px`;
-      image.style.height = 'auto';
-      image.style.maxWidth = '100%';
-      updateImageTools();
-    },
-    [selectedImage, updateImageTools],
-  );
-
-  const handleResizePointerDown = useCallback(
-    (event: React.PointerEvent<HTMLButtonElement>, direction: ResizeSession['direction']) => {
-      const image = selectedImage;
-      if (!image) return;
-      event.preventDefault();
-      event.stopPropagation();
-      const rect = image.getBoundingClientRect();
-      const ratio = image.naturalWidth && image.naturalHeight
-        ? image.naturalWidth / image.naturalHeight
-        : rect.width / Math.max(rect.height, 1);
-      resizeSession.current = {
-        image,
-        direction,
-        startX: event.clientX,
-        startWidth: rect.width,
-        ratio: ratio || 1,
-      };
-      event.currentTarget.setPointerCapture?.(event.pointerId);
-    },
-    [selectedImage],
-  );
-
-  useEffect(() => {
-    const onPointerMove = (event: PointerEvent) => {
-      const session = resizeSession.current;
-      if (!session) return;
-      event.preventDefault();
-      const sign = session.direction.endsWith('e') ? 1 : -1;
-      const delta = (event.clientX - session.startX) * sign;
-      const parentWidth = session.image.parentElement?.clientWidth || editorRef.current?.clientWidth || 1200;
-      const width = Math.min(Math.max(session.startWidth + delta, 80), Math.max(120, parentWidth));
-      session.image.style.width = `${Math.round(width)}px`;
-      session.image.style.height = 'auto';
-      session.image.style.maxWidth = '100%';
-      updateImageTools();
-    };
-    const onPointerUp = () => {
-      if (!resizeSession.current) return;
-      resizeSession.current = null;
-      commitImageMutation();
-    };
-    window.addEventListener('pointermove', onPointerMove, { passive: false });
-    window.addEventListener('pointerup', onPointerUp);
-    return () => {
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
-    };
-  }, [commitImageMutation, updateImageTools]);
-
-  const changeImageWrap = useCallback(
-    (mode: ImageWrapMode) => {
-      if (!selectedImage) return;
-      applyImageWrapMode(selectedImage, mode, editorRef.current);
-      commitImageMutation();
-    },
-    [commitImageMutation, selectedImage],
-  );
-
-  const removeSelectedImage = useCallback(() => {
-    if (!selectedImage) return;
-    selectedImage.remove();
-    setSelectedImage(null);
-    setImageTools(null);
-    commitImageMutation();
-  }, [commitImageMutation, selectedImage]);
-
-  const handleInput = () => {
+  const handlePageInput = (pageIdx: number) => {
     if (skipInput.current) return;
-    const el = editorRef.current;
-    if (el) {
-      rememberSelection();
-      if (selectedImage && !el.contains(selectedImage)) setSelectedImage(null);
-      // User typed into a pad paragraph → promote to real content
-      syncPageGeometry(el);
+    rememberSelection();
+    if (selectedImage && !liveBodies().some((b) => b.contains(selectedImage))) {
+      setSelectedImage(null);
     }
-    measurePages();
+    scheduleRebalance(pageIdx);
     onInput();
   };
 
-  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+  const handlePaste = (pageIdx: number, event: React.ClipboardEvent<HTMLDivElement>) => {
     const imageItem = Array.from(event.clipboardData.items).find((item) => item.type.startsWith('image/'));
     if (imageItem) {
       const file = imageItem.getAsFile();
       if (file) {
         event.preventDefault();
         void (async () => {
-          const el = editorRef.current;
-          if (!el) return;
+          const el = bodyRefs.current[pageIdx];
+          if (!el || file.size > 12 * 1024 * 1024) return;
           rememberSelection();
-          if (file.size > 12 * 1024 * 1024) return;
           const src = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(String(reader.result || ''));
@@ -667,31 +731,22 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           const image = insertImageAtSelection(el, src, 'Pasted image', lastSelection.current);
           applyImageWrapMode(image, 'break', el);
           setSelectedImage(image);
-          syncPageGeometry(el);
-          requestAnimationFrame(() => {
-            syncPageGeometry(el);
-            measurePages();
-            onInput();
-          });
+          scheduleRebalance(pageIdx);
+          requestAnimationFrame(() => onInput());
         })().catch(() => {
-          /* Keep native paste available when an image cannot be decoded. */
+          /* keep native paste */
         });
         return;
       }
     }
-
     requestAnimationFrame(() => {
-      const el = editorRef.current;
-      if (el) {
-        rememberSelection();
-        syncPageGeometry(el);
-        measurePages();
-      }
+      rememberSelection();
+      scheduleRebalance(pageIdx);
       onInput();
     });
   };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (pageIdx: number, event: React.KeyboardEvent<HTMLDivElement>) => {
     const modifier = event.ctrlKey || event.metaKey;
     if (modifier && event.key.toLowerCase() === 'z') {
       event.preventDefault();
@@ -706,21 +761,42 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       onRedo?.();
       return;
     }
-    if (event.key === 'Enter') {
-      const sel = window.getSelection();
-      const anchor = sel?.anchorNode instanceof Element ? sel.anchorNode : sel?.anchorNode?.parentElement;
-      const pad = anchor?.closest('[data-studio-pad="1"]');
-      // A filler paragraph becomes real content as soon as the user creates a line
-      // inside it. This is what preserves intentional blank lines.
-      if (pad) pad.removeAttribute('data-studio-pad');
+
+    // Backspace on empty last page → remove page (Word-like)
+    if (event.key === 'Backspace' && pageIdx > 0) {
+      const body = bodyRefs.current[pageIdx];
+      if (body) {
+        const text = (body.innerText || '').replace(/\u00a0/g, ' ').trim();
+        const sel = window.getSelection();
+        const atStart =
+          sel &&
+          sel.isCollapsed &&
+          sel.anchorOffset === 0 &&
+          (sel.anchorNode === body || (sel.anchorNode && body.contains(sel.anchorNode)));
+        if (!text && atStart) {
+          event.preventDefault();
+          setPages((prev) => {
+            if (prev.length <= 1) return prev;
+            const next = prev.filter((_, i) => i !== pageIdx);
+            lastExternalHtml.current = joinPageHtmls(next);
+            return next;
+          });
+          requestAnimationFrame(() => {
+            const prevBody = bodyRefs.current[pageIdx - 1];
+            if (prevBody) placeCaretAtEnd(prevBody);
+            onInput();
+          });
+          return;
+        }
+      }
     }
     rememberSelection();
   };
 
   const handleEditorPointerDown = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (pageIdx: number, event: React.PointerEvent<HTMLDivElement>) => {
       if (!contentEditable || hasGhost) return;
-      const el = editorRef.current;
+      const el = bodyRefs.current[pageIdx];
       const target = event.target as HTMLElement;
       const image = target.closest('img') as HTMLImageElement | null;
       if (!el || !image || !el.contains(image) || getImageWrapMode(image) !== 'behind') return;
@@ -746,7 +822,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     const onPointerMove = (event: PointerEvent) => {
       const session = dragSession.current;
       if (!session) return;
-      const editor = editorRef.current;
+      const editor = bodyContaining(session.image, bodyRefs.current);
       if (!editor) return;
       event.preventDefault();
       const editorRect = editor.getBoundingClientRect();
@@ -768,13 +844,13 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     };
   }, [commitImageMutation, updateImageTools]);
 
-  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (pageIdx: number, event: React.DragEvent<HTMLDivElement>) => {
     const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith('image/'));
     if (!file) return;
     event.preventDefault();
     rememberSelection();
     void (async () => {
-      const el = editorRef.current;
+      const el = bodyRefs.current[pageIdx];
       if (!el || file.size > 12 * 1024 * 1024) return;
       const src = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -790,14 +866,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       );
       applyImageWrapMode(image, 'break', el);
       setSelectedImage(image);
-      syncPageGeometry(el);
-      requestAnimationFrame(() => {
-        syncPageGeometry(el);
-        measurePages();
-        onInput();
-      });
+      scheduleRebalance(pageIdx);
+      requestAnimationFrame(() => onInput());
     })().catch(() => {
-      /* Ignore an invalid dropped file without breaking the editor. */
+      /* ignore invalid drop */
     });
   };
 
@@ -813,14 +885,11 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     onMouseUp(event);
   };
 
-  /**
-   * Word-like: click empty area of the page places caret there without flicker.
-   * Uses caretRangeFromPoint; if click is below content, pad then place.
-   */
-  const handleEditorMouseDown = (e: React.MouseEvent) => {
+  const handleEditorMouseDown = (pageIdx: number, e: React.MouseEvent) => {
     if (!contentEditable || hasGhost) return;
-    const el = editorRef.current;
+    const el = bodyRefs.current[pageIdx];
     if (!el) return;
+    setActivePage(pageIdx);
     const t = e.target as HTMLElement;
     const image = t.closest('img') as HTMLImageElement | null;
     if (image && el.contains(image)) {
@@ -828,93 +897,54 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       e.stopPropagation();
       image.setAttribute('data-studio-image', '1');
       setSelectedImage(image);
+      setSelectedMath(null);
+      setMathTools(null);
+      return;
+    }
+    const mathHost =
+      (t.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null) ||
+      (t.closest('mjx-container') as HTMLElement | null);
+    if (mathHost && el.contains(mathHost)) {
+      const normalized =
+        (mathHost.closest('.studio-math-inline, .studio-math-block') as HTMLElement | null) || mathHost;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedImage(null);
+      setSelectedTable(null);
+      setSelectedMath(normalized);
+      requestAnimationFrame(updateMathTools);
       return;
     }
     if (selectedImage) setSelectedImage(null);
     const table = t.closest('table') as HTMLTableElement | null;
     if (table && el.contains(table)) {
       setSelectedTable(table);
+      setSelectedMath(null);
+      setMathTools(null);
       requestAnimationFrame(updateTableTools);
     } else {
       setSelectedTable(null);
-    }
-    // Native placement inside real text blocks is fine
-    if (t.closest(BLOCK_SEL) && t.closest(BLOCK_SEL) !== el) {
-      const block = t.closest(BLOCK_SEL) as HTMLElement;
-      if (block.getAttribute('data-studio-pad') !== '1') return;
-    }
-
-    const y = e.clientY;
-    const x = e.clientX;
-
-    // Convert the click to document coordinates. This lets a click in the
-    // lower half of a sheet create a caret at that line instead of snapping
-    // to the last real paragraph.
-    const editorRect = el.getBoundingClientRect();
-    const scale = editorRect.width / Math.max(el.offsetWidth, 1);
-    const localY = Math.max(0, (y - editorRect.top) / Math.max(scale, 0.01));
-    const requestedPages = Math.max(1, Math.ceil((localY + margin + 32) / spec.heightPx));
-    const targetPages = Math.max(pageCount, requestedPages);
-    setPageCount((prev) => Math.max(prev, targetPages));
-    padEditorToPage(el, targetPages * spec.heightPx);
-    const last = el.lastElementChild as HTMLElement | null;
-    if (last) {
-      const lr = last.getBoundingClientRect();
-      if (y > lr.bottom - 4) {
-        // Still short of click — add a few more pads
-        for (let i = 0; i < 6; i++) {
-          const p = document.createElement('p');
-          p.setAttribute('data-studio-pad', '1');
-          p.innerHTML = '<br>';
-          el.appendChild(p);
-          if (p.getBoundingClientRect().bottom >= y) break;
-        }
-      }
-    }
-
-    // Place caret at click point (no jump-to-top)
-    try {
-      const doc = document as Document & {
-        caretRangeFromPoint?: (x: number, y: number) => Range | null;
-        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-      };
-      let range: Range | null = null;
-      if (doc.caretRangeFromPoint) {
-        range = doc.caretRangeFromPoint(x, y);
-      } else if (doc.caretPositionFromPoint) {
-        const pos = doc.caretPositionFromPoint(x, y);
-        if (pos) {
-          range = document.createRange();
-          range.setStart(pos.offsetNode, pos.offset);
-          range.collapse(true);
-        }
-      }
-      if (range && el.contains(range.startContainer)) {
-        e.preventDefault();
-        el.focus({ preventScroll: true });
-        const sel = window.getSelection();
-        sel?.removeAllRanges();
-        sel?.addRange(range);
-      }
-    } catch {
-      /* native fallback */
+      setSelectedMath(null);
+      setMathTools(null);
     }
   };
 
-  // Repeating page break markers as background on the white sheet
-  const pageBreakBg = useMemo(() => {
-    // thin line every pageHeight
-    return {
-      backgroundColor: '#ffffff',
-      backgroundImage: `repeating-linear-gradient(
-        to bottom,
-        transparent 0,
-        transparent ${spec.heightPx - 1}px,
-        rgba(0,0,0,0.06) ${spec.heightPx - 1}px,
-        rgba(0,0,0,0.06) ${spec.heightPx}px
-      )`,
-    };
-  }, [spec.heightPx]);
+  /** Click empty sheet chrome → focus that page and place caret */
+  const onPageShellClick = (pageIdx: number, e: React.MouseEvent) => {
+    if (!contentEditable || hasGhost) return;
+    const t = e.target as HTMLElement;
+    if (t.closest(BLOCK_SEL) || t.closest('img') || t.closest('table')) return;
+    const body = bodyRefs.current[pageIdx];
+    if (!body) return;
+    if (t === body || !body.contains(t) || t === e.currentTarget || t.classList.contains('studio-page-sheet')) {
+      e.preventDefault();
+      setActivePage(pageIdx);
+      placeCaretAtEnd(body);
+    }
+  };
+
+  const displayPages = hasGhost && ghostPages ? ghostPages : pages;
+  const stackHeight = displayPages.length * spec.heightPx + Math.max(0, displayPages.length - 1) * PAGE_GAP;
 
   return (
     <div className={cn('flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-neutral-100', className)}>
@@ -929,95 +959,83 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             style={{
               width: spec.widthPx,
               transform: `scale(${zoom})`,
-              marginBottom: Math.max(0, paperHeight * (zoom - 1)),
+              marginBottom: Math.max(0, stackHeight * (zoom - 1)),
             }}
           >
-            {/* Continuous white paper (real editor surface) */}
-            <div
-              className="relative overflow-hidden rounded-[2px] border border-neutral-200/90 shadow-[0_12px_40px_rgba(0,0,0,0.06)]"
-              style={{
-                width: spec.widthPx,
-                minHeight: paperHeight,
-                ...pageBreakBg,
-              }}
-            >
-              {/* Page numbers (chrome) */}
-              {Array.from({ length: pageCount }, (_, i) => (
+            {/* Real sheets: gap is empty space BETWEEN pages — text cannot occupy it */}
+            <div className="flex flex-col" style={{ gap: PAGE_GAP }}>
+              {displayPages.map((html, i) => (
                 <div
-                  key={`pn-${i}`}
-                  className="pointer-events-none absolute left-0 right-0 z-0 text-center font-mono text-[10px] tracking-wide text-neutral-300"
-                  style={{ top: (i + 1) * spec.heightPx - 28 }}
-                  aria-hidden
+                  key={`page-${i}`}
+                  className="studio-page-sheet relative overflow-hidden rounded-[2px] border border-neutral-200/90 bg-white shadow-[0_12px_40px_rgba(0,0,0,0.06)]"
+                  style={{
+                    width: spec.widthPx,
+                    height: spec.heightPx,
+                    flexShrink: 0,
+                  }}
+                  onMouseDown={() => setActivePage(i)}
+                  onClick={(e) => onPageShellClick(i, e)}
                 >
-                  {i + 1}
+                  {hasGhost ? (
+                    <div
+                      data-ghost-page-body
+                      className="studio-doc-editor studio-diff-layer pointer-events-none h-full max-w-none overflow-hidden text-neutral-900"
+                      style={{
+                        boxSizing: 'border-box',
+                        padding: margin,
+                        fontFamily,
+                        fontSize,
+                        lineHeight: 1.65,
+                        height: spec.heightPx,
+                      }}
+                      aria-hidden
+                      dangerouslySetInnerHTML={{ __html: sanitizeDocumentHtml(html) }}
+                    />
+                  ) : (
+                    <div
+                      ref={(el) => {
+                        bodyRefs.current[i] = el;
+                      }}
+                      data-page-body
+                      data-page-index={i}
+                      data-studio-editor={i === 0 ? '1' : undefined}
+                      contentEditable={contentEditable}
+                      suppressContentEditableWarning
+                      onInput={() => handlePageInput(i)}
+                      onPaste={(e) => handlePaste(i, e)}
+                      onKeyDown={(e) => handleKeyDown(i, e)}
+                      onPointerDown={(e) => handleEditorPointerDown(i, e)}
+                      onMouseDown={(e) => handleEditorMouseDown(i, e)}
+                      onMouseUp={handleEditorMouseUp}
+                      onDragOver={handleDragOver}
+                      onDrop={(e) => handleDrop(i, e)}
+                      onDoubleClick={onDoubleClick}
+                      className={cn(
+                        'studio-doc-editor relative z-10 h-full max-w-none overflow-hidden text-neutral-900 outline-none',
+                        'prose prose-neutral prose-p:my-2.5 prose-headings:mb-3 prose-headings:mt-5 prose-headings:font-inherit',
+                        'prose-table:my-3 prose-img:my-3',
+                        isLoading && 'opacity-60',
+                      )}
+                      style={{
+                        boxSizing: 'border-box',
+                        padding: margin,
+                        fontFamily,
+                        fontSize,
+                        lineHeight: 1.65,
+                        height: spec.heightPx,
+                        overflow: 'hidden',
+                        caretColor: '#171717',
+                      }}
+                    />
+                  )}
+                  <div
+                    className="pointer-events-none absolute bottom-4 left-0 right-0 z-20 text-center font-mono text-[10px] tracking-wide text-neutral-300"
+                    aria-hidden
+                  >
+                    {i + 1}
+                  </div>
                 </div>
               ))}
-
-              {/* Live document — faded under ghost (keeps real caret/DOM until accept) */}
-              <div
-                ref={editorRef}
-                data-page-body
-                data-studio-editor
-                contentEditable={contentEditable && !hasGhost}
-                suppressContentEditableWarning
-                onInput={handleInput}
-                onPaste={handlePaste}
-                onKeyDown={handleKeyDown}
-                onPointerDown={handleEditorPointerDown}
-                onMouseDown={handleEditorMouseDown}
-                onMouseUp={handleEditorMouseUp}
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                onDoubleClick={onDoubleClick}
-                className={cn(
-                  'studio-doc-editor relative z-10 max-w-none text-neutral-900 outline-none',
-                  'prose prose-neutral prose-p:my-2.5 prose-headings:mb-3 prose-headings:mt-5 prose-headings:font-inherit',
-                  'prose-table:my-3 prose-img:my-3',
-                  isLoading && 'opacity-60',
-                  hasGhost && 'studio-doc-faded pointer-events-none select-none',
-                )}
-                style={{
-                  boxSizing: 'border-box',
-                  width: '100%',
-                  minHeight: hasGhost ? 0 : paperHeight,
-                  // Collapse live height while ghost is shown so pages size from ghost
-                  ...(hasGhost
-                    ? { height: 0, overflow: 'hidden', padding: 0, margin: 0, opacity: 0 }
-                    : {
-                        padding: margin,
-                        paddingBottom: margin + 32,
-                      }),
-                  fontFamily,
-                  fontSize,
-                  lineHeight: 1.65,
-                  background: 'transparent',
-                  // caret doesn't jump weirdly in empty zones
-                  caretColor: '#171717',
-                }}
-              />
-
-              {/*
-                Structural ghost: real HTML blocks (h1/p/table/math) stacked.
-                del then add share document flow — not the same absolute box.
-              */}
-              {hasGhost && diffOverlayHtml && (
-                <div
-                  ref={ghostRef}
-                  className="studio-doc-editor studio-diff-layer relative z-20 max-w-none"
-                  style={{
-                    width: '100%',
-                    minHeight: paperHeight,
-                    boxSizing: 'border-box',
-                    padding: margin,
-                    paddingBottom: margin + 32,
-                    fontFamily,
-                    fontSize,
-                    lineHeight: 1.65,
-                  }}
-                  aria-hidden
-                  dangerouslySetInnerHTML={{ __html: sanitizeDocumentHtml(diffOverlayHtml) }}
-                />
-              )}
             </div>
           </div>
         </div>
@@ -1057,7 +1075,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
               className="absolute z-50 flex max-w-[calc(100%-16px)] items-center gap-1 rounded-xl border border-neutral-200 bg-white/95 p-1.5 text-neutral-700 shadow-[0_10px_30px_rgba(0,0,0,0.14)] backdrop-blur"
               style={{
                 top: Math.max(8, imageTools.top - 52),
-                left: Math.max(8, Math.min(imageTools.left, Math.max(8, scrollRef.current?.clientWidth || 360) - 350)),
+                left: Math.max(
+                  8,
+                  Math.min(imageTools.left, Math.max(8, (scrollRef.current?.clientWidth || 360) - 350)),
+                ),
               }}
               onMouseDown={(event) => {
                 const target = event.target as HTMLElement;
@@ -1157,26 +1178,81 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         {selectedTable && tableTools && !hasGhost && contentEditable && (
           <div
             className="absolute z-50 flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 px-1.5 py-1 text-[10px] text-neutral-600 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
-            style={{ top: tableTools.top, left: tableTools.left, minWidth: Math.min(280, Math.max(180, tableTools.width)) }}
+            style={{
+              top: tableTools.top,
+              left: tableTools.left,
+              minWidth: Math.min(280, Math.max(180, tableTools.width)),
+            }}
             data-selection-ui
           >
             <span className="px-1 font-semibold text-neutral-500">Tabla</span>
             <span className="h-4 w-px bg-neutral-200" />
-            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('add-row')} title="Agregar fila">
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 hover:bg-neutral-100"
+              onClick={() => mutateTable('add-row')}
+              title="Agregar fila"
+            >
               + fila
             </button>
-            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('remove-row')} title="Quitar fila">
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 hover:bg-neutral-100"
+              onClick={() => mutateTable('remove-row')}
+              title="Quitar fila"
+            >
               − fila
             </button>
-            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('add-column')} title="Agregar columna">
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 hover:bg-neutral-100"
+              onClick={() => mutateTable('add-column')}
+              title="Agregar columna"
+            >
               + col.
             </button>
-            <button type="button" className="rounded px-1.5 py-1 hover:bg-neutral-100" onClick={() => mutateTable('remove-column')} title="Quitar columna">
+            <button
+              type="button"
+              className="rounded px-1.5 py-1 hover:bg-neutral-100"
+              onClick={() => mutateTable('remove-column')}
+              title="Quitar columna"
+            >
               − col.
             </button>
           </div>
         )}
 
+        {selectedMath && mathTools && !hasGhost && contentEditable && (
+          <div
+            className="absolute z-50 flex items-center gap-1 rounded-lg border border-neutral-200 bg-white/95 px-1.5 py-1 text-[10px] text-neutral-700 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+            style={{ top: mathTools.top, left: mathTools.left, minWidth: 150 }}
+            data-selection-ui
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <span className="px-1 font-semibold text-neutral-500">Ecuación</span>
+            <span className="h-4 w-px bg-neutral-200" />
+            <button
+              type="button"
+              className="rounded px-2 py-1 font-medium hover:bg-neutral-100"
+              onClick={() => onEditMath?.(selectedMath)}
+            >
+              Editar
+            </button>
+            <button
+              type="button"
+              className="rounded px-2 py-1 text-red-700 hover:bg-red-50"
+              onClick={() => {
+                selectedMath.remove();
+                setSelectedMath(null);
+                setMathTools(null);
+                scheduleRebalance(activePage);
+                onInput();
+              }}
+            >
+              Eliminar
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1186,5 +1262,5 @@ export default PaperCanvas;
 
 export function readCleanEditorHtml(el: HTMLElement | null): string {
   if (!el) return '';
-  return el.innerHTML || '';
+  return serializeEditorHtml(el) || el.innerHTML || '';
 }

@@ -8,8 +8,11 @@ import { useLocale } from '@/lib/i18n/locale-context';
 import { cn } from '@/lib/utils';
 
 /**
- * Header: logo + DocsS wordmark (studio expands on scroll-down) left;
- * section links + EN/ES + CTA right.
+ * Top chrome:
+ * - LEFT (outside the pill): logo + DocsS wordmark.
+ *   On scroll-down "S" expands to "Studio"; scroll-up closes it.
+ * - RIGHT: slim pill head with ONLY section links + locale + CTA.
+ *   The pill is width:fit-content — not a full-width bar.
  */
 export default function LandingNav() {
   const { t } = useLocale();
@@ -40,13 +43,14 @@ export default function LandingNav() {
   }, []);
 
   return (
-    <header className="landing-nav landing-nav--slim">
+    <div className="landing-top">
+      {/* Brand stays LEFT, outside the reduced head */}
       <Link
         href="/"
         className={cn('landing-brand-lockup', studioOpen && 'is-open')}
         aria-label="Docs Studio"
       >
-        <BrandMark size={32} className="landing-brand-lockup__mark" />
+        <BrandMark size={36} className="landing-brand-lockup__mark" />
         <span className={cn('landing-wordmark', studioOpen && 'is-open')}>
           <span className="landing-wordmark__docs">Docs</span>
           <span className="landing-wordmark__s" aria-hidden="true">
@@ -58,7 +62,8 @@ export default function LandingNav() {
         </span>
       </Link>
 
-      <div className="landing-nav__right">
+      {/* Slim head = right options only, hug content width */}
+      <header className="landing-nav landing-nav--slim" role="navigation">
         <nav className="landing-nav__links" aria-label="Sections">
           <a href="#producto">{t('nav.what')}</a>
           <a href="#canvas">{t('nav.canvas')}</a>
@@ -69,7 +74,7 @@ export default function LandingNav() {
         <Link className="landing-nav__cta" href="/studio">
           {t('nav.open')} <span aria-hidden="true">↗</span>
         </Link>
-      </div>
-    </header>
+      </header>
+    </div>
   );
 }

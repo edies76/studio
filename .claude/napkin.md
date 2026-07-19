@@ -7,8 +7,14 @@
 - Each item includes date + "Do instead".
 
 ## Execution & Validation (Highest Priority)
-1. **[2026-07-17] Continuous paper + pad empty space (Word click)**
-   Do instead: Single contentEditable; pageCount=ceil(height/pageH); `[data-studio-pad]` fillers so click below content doesn't caret-jump; strip pads on getHtml. caretRangeFromPoint on empty click.
+1. **[2026-07-18] Real multi-page sheets (never CSS-only gaps)**
+   Do instead: Stack fixed-height white sheets with real DOM `gap`; content only in `[data-page-body]`; pack/rebalance via `page-layout.ts`. Continuous paper + painted pageBreakBg lets text cross gaps — ban that pattern.
+
+2. **[2026-07-18] Landing head: brand outside, slim pill right-only**
+   Do instead: `.landing-top` row — logo+DocsS left (scroll expands Studio); `.landing-nav--slim` is `width:fit-content` with ONLY links/locale/CTA. Never put brand inside the full-width pill.
+
+3. **[2026-07-17] Continuous paper + pad empty space (Word click)**
+   Do instead: SUPERSEDED by real multi-page sheets (2026-07-18). Pads only inside a page body if needed; never continuous stripe gaps.
 
 2. **[2026-07-17] DOCX import via `import-docx.ts`**
    Do instead: styleMap (ES headings), images base64, clean human warnings (no OOXML noise), promote bold titles. Never dump raw mammoth messages to chat.

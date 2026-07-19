@@ -219,8 +219,31 @@ export default function HomePage() {
           </button>
         </div>
 
-        {/* Two distinct entry paths — not three blank docs */}
-        <div className="mb-12 grid gap-3 sm:grid-cols-2">
+        {/* Three real entry actions (replace the old triplicate blanks) */}
+        <div className="mb-12 grid gap-3 sm:grid-cols-3">
+          <button
+            type="button"
+            disabled={creating}
+            onClick={() => void createDoc()}
+            className="group flex items-start gap-4 rounded-2xl border border-neutral-200/90 bg-white p-5 text-left shadow-[0_1px_2px_rgba(0,0,0,0.03)] transition hover:border-neutral-300 hover:shadow-md disabled:opacity-60"
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-neutral-900 text-white">
+              {creating ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <FilePlus2 className="h-5 w-5" strokeWidth={1.75} />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 text-[14px] font-semibold text-neutral-900">
+                {t('home.blank')}
+                <ArrowUpRight className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-50" />
+              </span>
+              <span className="mt-1 block text-[12.5px] leading-relaxed text-neutral-500">
+                {t('home.blankSub')}
+              </span>
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => router.push('/')}
