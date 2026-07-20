@@ -9,9 +9,19 @@ El lienzo (Letter / Legal / A4) es la fuente de verdad. El agente propone; vos a
 
 ---
 
-## Estado actual (v0.8.5)
+## Antes y después
+
+### Base preexistente — B.A.M.B.A.I (diciembre 2025, commit `96824af`)
+
+![Base original dic 2025](./docs/demo/screenshot-before-base.png)
+
+Pantalla de inicio "DocuGen AI" / B.A.M.B.A.I: un input genérico, dark mode azul marino, sin lienzo, sin MCP, sin canvas multi-página, sin identidad de producto.
+
+### Ahora — Docs Studio v0.8.5 (julio 2026)
 
 ![Docs Studio v0.8.5](./docs/demo/screenshot-current-v085.png)
+
+Landing con propuesta de valor clara, lienzo Word-like, agente con propose/accept/reject, MCP con 25 tools, export PDF vectorial, auth Google, brief workflow.
 
 ---
 
@@ -19,9 +29,7 @@ El lienzo (Letter / Legal / A4) es la fuente de verdad. El agente propone; vos a
 
 ### Base preexistente (diciembre 2025)
 
-El commit `96824af` (18 dic 2025) es el estado original del proyecto: un editor de documentos con IA básico, sin nombre de producto, sin dominio, sin MCP, sin canvas multi-página real.
-
-Era la base de **Studio** — el primer producto de Bamba, un experimento de plataforma de documentos con IA que fue abandonado y no tenía identidad de producto clara.
+El commit `96824af` (18 dic 2025) es el estado original: **B.A.M.B.A.I / DocuGen AI** — un generador de documentos básico con IA, dark mode azul, sin nombre de producto definitivo, sin dominio, sin MCP, sin canvas multi-página real. Era un experimento de Bamba que quedó abandonado.
 
 ### Lo construido para la hackathon (16–19 julio 2026)
 
