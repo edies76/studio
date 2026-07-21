@@ -246,7 +246,7 @@ export default function StudioChat({
           <button
             type="button"
             onClick={onSend}
-            disabled={isBusy || !input.trim()}
+            disabled={isBusy || (!input.trim() && references.length === 0)}
             className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-studio-brown text-[#f3f1ec] disabled:opacity-30"
           >
             {isBusy ? (

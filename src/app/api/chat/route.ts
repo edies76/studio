@@ -147,6 +147,10 @@ function asksAttachmentState(text: string) {
   return /\b(?:qu[eé]\s+archivo|cu[aá]l\s+archivo|ves\s+(?:el\s+)?documento|recibiste|recibido|lleg[oó]|se\s+envi[oó]|enviaste|enviarlo|send|sent|received|did\s+you\s+see|which\s+file|what\s+file)\b/i.test(text);
 }
 
+function asksAttachmentRead(text: string) {
+  return /\b(?:lee(?:lo|la|eso)?|leer|le[ée]|qu[eé]\s+es|qu[eé]\s+dice|resume|resumen|describe|analiza(?:lo|la)?|read(?:\s+it)?|what\s+is\s+it|what\s+does\s+it\s+say|summari[sz]e|describe)\b/i.test(text);
+}
+
 /**
  * A selection is an explicit scope contract. Short imperative requests such
  * as "cámbialo por…" must never enter the document-agent tool loop, where a
@@ -269,13 +273,13 @@ export async function POST(req: NextRequest) {
         // an attachment was merely selected but not actually read.
         if (resolvedReferences.length) {
           const readId = `refs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-          send({ type: 'reference_read_start', id: readId, name: 'read_attached_references', label: 'Leyendo archivo…', count: resolvedReferences.length });
+          send({ type: 'tool_start', id: readId, name: 'read_attached_references', label: 'Leyendo archivo…', count: resolvedReferences.length });
           slog.info('chat', 'references.read', {
             count: resolvedReferences.length,
             cachedCount: resolvedReferences.filter((reference) => !reference.isNew).length,
             files: resolvedReferences.map((reference) => ({ id: reference.id, name: reference.name, chars: reference.text.length, cached: !reference.isNew })),
           });
-          send({ type: 'reference_read_done', id: readId, name: 'read_attached_references', ok: true, label: `${resolvedReferences.length} archivo(s) leído(s)`, count: resolvedReferences.length });
+          send({ type: 'tool_end', id: readId, name: 'read_attached_references', ok: true, label: `${resolvedReferences.length} archivo(s) leído(s)`, count: resolvedReferences.length });
         }
 
         const lastUser = [...(messages || [])]
@@ -293,6 +297,50 @@ export async function POST(req: NextRequest) {
           send({ type: 'text', delta: factText });
           send({ type: 'done', finalText: factText, model: 'studio-attachment-state', durationMs: Date.now() - t0, outcome: 'attachment_state' });
           slog.info('chat', 'request.done', { ms: Date.now() - t0, model: 'studio-attachment-state', path: 'attachment_state', finalLen: factText.length });
+          return;
+        }
+
+        // Simple read/understand requests get a grounded completion with no
+        // previous assistant history and no document-agent tools. This keeps
+        // “lee eso” from being answered from a stale provider continuation or
+        // from a guessed filename/person/date. The only source supplied to
+        // this completion is the text extracted from the resolved attachment.
+        if (resolvedReferences.length && asksAttachmentRead(lastUser)) {
+          const sourceText = resolvedReferences
+            .map((reference) => `\n--- ${reference.name} ---\n${reference.text.slice(0, 30_000)}`)
+            .join('')
+            .slice(0, 60_000);
+          send({ type: 'status', label: 'Analizando el archivo…' });
+          const groundedSystem = `${DOCS_STUDIO_IDENTITY}
+You are answering a question about an uploaded document. Use ONLY the SOURCE FILE CONTENT below. Do not infer or invent identities, institutions, dates, diagnoses, grades, locations, or document types. If the source does not state something, say “No aparece en el texto extraído”. Do not claim to send, share, or export anything. Answer in neutral Spanish, concise but useful, and clearly distinguish what the file states from what is uncertain.
+
+SOURCE FILE CONTENT:
+${sourceText}`;
+          let groundedText = '';
+          try {
+            const groundedResponse = await deepseekChat({
+              apiKey,
+              model: resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL),
+              messages: [
+                { role: 'system', content: groundedSystem },
+                { role: 'user', content: lastUser },
+              ],
+              stream: false,
+              temperature: 0.1,
+              maxTokens: 1200,
+            });
+            const groundedData = await groundedResponse.json().catch(() => null);
+            if (groundedResponse.ok) groundedText = String(groundedData?.choices?.[0]?.message?.content || '').trim();
+            else slog.warn('chat', 'attachment_grounded.http_error', { status: groundedResponse.status });
+          } catch (error: any) {
+            slog.warn('chat', 'attachment_grounded.error', { err: error?.message || String(error) });
+          }
+          if (!groundedText) {
+            groundedText = `**Archivo leído:** ${resolvedReferences.map((reference) => reference.name).join(', ')}.\n\nNo pude generar un análisis seguro en este momento; no voy a inventar qué contiene. Puedes intentarlo de nuevo.`;
+          }
+          send({ type: 'text', delta: groundedText });
+          send({ type: 'done', finalText: groundedText, model: 'grounded-attachment-read', durationMs: Date.now() - t0, outcome: 'grounded_attachment_read' });
+          slog.info('chat', 'request.done', { ms: Date.now() - t0, model: 'grounded-attachment-read', path: 'attachment_read', referenceCount: resolvedReferences.length, finalLen: groundedText.length });
           return;
         }
         const fullConversation: ChatMessage[] = (messages as Msg[])

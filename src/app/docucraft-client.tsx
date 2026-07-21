@@ -202,6 +202,10 @@ export default function DocsStudioClient({
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
   const referenceTextCache = useRef(new Map<string, string>());
+  // Conversation context is separate from the visible composer chips. The
+  // next message sends only these ids (no file text) so the server can use its
+  // read cache without re-uploading or showing the attachment again.
+  const conversationReferences = useRef<AgentReference[]>([]);
 
   const startLatencyTimer = () => {
     requestStartedAt.current = Date.now();
@@ -243,7 +247,9 @@ export default function DocsStudioClient({
         } catch {
           /* storage is an optimization, not a prerequisite */
         }
-        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, text, loading: false, progress: 100, cached: Boolean(text) } : reference));
+        // Browser sessionStorage is only a local extraction shortcut. It does
+        // not mean the server has read this file yet; that happens on send.
+        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, text, loading: false, progress: 100, cached: false } : reference));
       } catch (error: any) {
         setAgentReferences((current) => current.filter((reference) => reference.id !== id));
         toast({ variant: 'destructive', title: 'Could not attach reference', description: error?.message });
@@ -1056,12 +1062,16 @@ export default function DocsStudioClient({
       userText: string,
       opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean; attachedImage?: string | null; hiddenUser?: boolean; briefMode?: boolean; skipFastDraft?: boolean; intent?: AgentIntent },
     ) => {
-      const text = userText.trim();
+      const text = userText.trim() || (agentReferences.length
+        ? 'Lee el archivo adjunto y trabaja únicamente con su contenido real.'
+        : '');
       if (!text) return;
 
       const liveDocumentHtml = readEditorHtml();
-      const referencesForRequest = agentReferences;
-      if (referencesForRequest.some((reference) => !reference.text.trim())) {
+      const pendingReferences = agentReferences;
+      const cachedReferences = conversationReferences.current;
+      const referencesForRequest = [...pendingReferences, ...cachedReferences.filter((cached) => !pendingReferences.some((pending) => pending.id === cached.id))];
+      if (pendingReferences.some((reference) => !reference.text.trim()) || cachedReferences.some((reference) => !reference.text.trim())) {
         toast({ variant: 'destructive', title: 'El archivo todavía se está leyendo', description: 'Espera a que termine de prepararse antes de enviar el mensaje.' });
         return;
       }
@@ -1081,7 +1091,7 @@ export default function DocsStudioClient({
         return;
       }
 
-      const sentAttachments = referencesForRequest.map(({ id, name }) => ({ id, name }));
+      const sentAttachments = pendingReferences.map(({ id, name }) => ({ id, name }));
       const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, attachments: sentAttachments };
       const nextMessages = opts?.hiddenUser ? messages : [...messages, userMsg];
       if (sentAttachments.length) {
@@ -1097,6 +1107,16 @@ export default function DocsStudioClient({
       startLatencyTimer();
       setMessages(nextMessages);
       setChatInput('');
+      // An attachment belongs to this message only. Keep its filename in the
+      // sent transcript, but remove its payload from the composer immediately
+      // so the next message cannot silently resend or re-read it.
+      if (pendingReferences.length) {
+        conversationReferences.current = [
+          ...cachedReferences,
+          ...pendingReferences.map((reference) => ({ ...reference, cached: true })),
+        ].filter((reference, index, all) => all.findIndex((candidate) => candidate.id === reference.id) === index);
+        setAgentReferences([]);
+      }
       setIsBusy(true);
       setActivity([{ id: uid(), label: 'Recogiendo información…', state: 'active' }]);
 
@@ -1425,7 +1445,7 @@ export default function DocsStudioClient({
         }
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, agentIntent, prefs.agentPermission, fontFamily, fontSize, documentBriefContext, documentBrief, undo, redo],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, agentIntent, agentReferences, prefs.agentPermission, fontFamily, fontSize, documentBriefContext, documentBrief, undo, redo],
   );
 
   useEffect(() => {
