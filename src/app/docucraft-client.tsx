@@ -575,10 +575,11 @@ export default function DocsStudioClient({
 
   useEffect(() => {
     if (!isClient || draftReady) return;
-    if (initialDocumentId) {
-      setDraftReady(true);
-      return;
-    }
+    // A URL document is hydrated by the server-load effect below. Marking it
+    // ready here starts autosave before the fetched HTML/model is mounted;
+    // the first interval can then save the initial blank state with the old
+    // revision and manufacture a false conflict immediately after import.
+    if (initialDocumentId) return;
     try {
       const raw = localStorage.getItem(draftKey);
       if (raw) {
@@ -688,7 +689,11 @@ export default function DocsStudioClient({
           lastSavedChatLen.current = data.doc.chat.length;
         }
         restoredDraft.current = true;
-        setDraftReady(true);
+        // Let React commit the fetched state and PaperCanvas finish its DOM
+        // write before the autosave effect is allowed to run.
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!cancelled) setDraftReady(true);
+        }));
       } catch {
         /* ignore */
       }
@@ -755,7 +760,7 @@ export default function DocsStudioClient({
           toast({
             variant: 'destructive',
             title: 'Hay una versión más nueva',
-            description: 'Tu copia local se conservó. Recargá antes de volver a guardar para no sobrescribir cambios externos.',
+            description: 'Tu copia local se conservó. Recarga antes de volver a guardar para no sobrescribir cambios externos.',
           });
           return;
         }
