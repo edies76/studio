@@ -169,7 +169,7 @@
 
   .studio-doc-editor mjx-container {
     max-width: 100% !important;
-    overflow-x: auto;
+    overflow-x: hidden;
     cursor: pointer;
     border: 0 !important;
     outline: 0 !important;
@@ -183,7 +183,7 @@
     min-height: 1.8em;
     padding: 0.25em 0;
     text-align: center;
-    overflow-x: auto;
+    overflow-x: hidden;
     border: 0 !important;
     outline: 0 !important;
     background: transparent !important;

@@ -233,6 +233,33 @@ export class CloudDocsStudioWorkspace {
     return edit;
   }
 
+  async proposeBlockEdit(input: {
+    documentId: string;
+    blockIndex: number;
+    title: string;
+    summary: string;
+    afterHtml: string;
+  }) {
+    const document = await this.getDocument(input.documentId);
+    const blocks = extractDocumentBlocks(document.html);
+    const block = blocks[input.blockIndex];
+    if (!block) throw new Error(`blockIndex ${input.blockIndex} is out of range (0..${Math.max(0, blocks.length - 1)})`);
+    const afterHtml = sanitizeDocumentHtml(input.afterHtml);
+    const replacement = extractDocumentBlocks(afterHtml);
+    if (replacement.length !== 1 || replacement[0].tag !== block.tag) {
+      throw new Error(`Replacement must contain exactly one <${block.tag}> block.`);
+    }
+    return this.proposeEdit({
+      documentId: input.documentId,
+      title: input.title,
+      summary: input.summary,
+      mode: 'replace_block',
+      beforeHtml: block.html,
+      afterHtml,
+      selectionHint: block.preview,
+    });
+  }
+
   async acceptEdit(documentId: string, editId: string) {
     const document = await this.getDocument(documentId);
     const edit = document.pendingEdits.find((candidate) => candidate.id === editId);

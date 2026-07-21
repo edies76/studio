@@ -21,7 +21,7 @@ import {
 } from '@/lib/math-tools';
 import { slog } from '@/lib/server-log';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
-import { buildDocumentIntelligence, buildDocsAgentSystem, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
+import { buildDocumentIntelligence, buildDocsAgentSystem, DOCS_STUDIO_IDENTITY, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 import { replaceTableCell } from '@/lib/table-tools';
 import { reviewAssignment } from '@/lib/assignment-review';
 import type { AssignmentBrief } from '@/lib/assignment-types';
@@ -31,6 +31,44 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 type Msg = { role: 'user' | 'assistant' | 'system'; content: string };
+type AttachedReference = { id?: string; name?: string; text?: string };
+type ResolvedReference = { id: string; name: string; text: string; isNew: boolean };
+
+// The browser only needs to upload extracted reference text once per editing
+// session. Keep that text on the server by document + attachment id, so later
+// messages can use the same source without re-parsing or re-sending it.
+const referenceTextCache = new Map<string, { name: string; text: string; touchedAt: number }>();
+
+function resolveAttachedReferences(documentId: string | undefined, incoming: AttachedReference[]): ResolvedReference[] {
+  const scope = documentId || 'unsaved-document';
+  const resolved: ResolvedReference[] = [];
+  for (const item of incoming.slice(0, 6)) {
+    const id = String(item?.id || '').trim();
+    if (!id) continue;
+    const name = String(item?.name || 'Reference').slice(0, 180);
+    const key = `${scope}:${id}`;
+    const uploadedText = String(item?.text || '').trim();
+    if (uploadedText) {
+      const text = uploadedText.slice(0, 30_000);
+      referenceTextCache.set(key, { name, text, touchedAt: Date.now() });
+      resolved.push({ id, name, text, isNew: true });
+      continue;
+    }
+    const cached = referenceTextCache.get(key);
+    if (cached) {
+      cached.touchedAt = Date.now();
+      resolved.push({ id, name: cached.name, text: cached.text, isNew: false });
+    }
+  }
+  // Bound memory in long-lived local/dev servers.
+  if (referenceTextCache.size > 96) {
+    [...referenceTextCache.entries()]
+      .sort((a, b) => a[1].touchedAt - b[1].touchedAt)
+      .slice(0, referenceTextCache.size - 96)
+      .forEach(([key]) => referenceTextCache.delete(key));
+  }
+  return resolved;
+}
 
 function encode(ev: object) {
   return `data: ${JSON.stringify(ev)}\n\n`;
@@ -133,6 +171,7 @@ export async function POST(req: NextRequest) {
     autoStart = false,
     assignmentContext = '',
     assignmentBrief,
+    attachedReferences = [],
     workspaceContext,
     attachedImage = null,
   } = body as {
@@ -145,6 +184,7 @@ export async function POST(req: NextRequest) {
     autoStart?: boolean;
     assignmentContext?: string;
     assignmentBrief?: AssignmentBrief;
+    attachedReferences?: AttachedReference[];
     workspaceContext?: WorkspaceAgentContext;
     /** data:image/... URL pasted by the user this turn, if any. */
     attachedImage?: string | null;
@@ -158,6 +198,11 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': 'text/event-stream' },
     });
   }
+
+  const resolvedReferences = resolveAttachedReferences(
+    workspaceContext?.documentId || undefined,
+    Array.isArray(attachedReferences) ? attachedReferences : [],
+  );
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -192,6 +237,12 @@ export async function POST(req: NextRequest) {
         htmlLen: (documentHtml || '').length,
         hasSelection: Boolean(selectedText?.trim()),
         preferredModel,
+        attachedReferenceCount: Array.isArray(attachedReferences) ? attachedReferences.length : 0,
+        resolvedReferenceCount: resolvedReferences.length,
+        newReferenceCount: resolvedReferences.filter((reference) => reference.isNew).length,
+        hasAttachedImage: Boolean(attachedImage),
+        historyMessages: Array.isArray(messages) ? messages.length : 0,
+        historyChars: Array.isArray(messages) ? messages.reduce((sum, message) => sum + String(message?.content || '').length, 0) : 0,
       });
 
       // These are initialized after the fast lane. Simple answers must not pay
@@ -207,6 +258,12 @@ export async function POST(req: NextRequest) {
           .reverse()
           .find((m) => m.role === 'user')
           ?.content || '';
+        const fullConversation: ChatMessage[] = (messages as Msg[])
+          .filter((message) => message?.content && message.role !== 'system')
+          .map((message) => ({
+            role: message.role === 'assistant' ? 'assistant' : 'user',
+            content: message.content,
+          }));
         const explicitWholeDocumentEdit = /\b(?:todo el documento|documento completo|documento entero|entire document|whole document|full document|all paragraphs|todos los p[áa]rrafos)\b/i.test(
           lastUser,
         );
@@ -214,25 +271,34 @@ export async function POST(req: NextRequest) {
         // Fast lane: no document HTML, no tool schema, no long conversation
         // history, no second completion. This is the path for greetings and
         // short informational questions where the canvas is irrelevant.
-        if (!attachedImage && isFastLaneQuestion(lastUser, selectedText)) {
+        if (!attachedImage && !resolvedReferences.length && isFastLaneQuestion(lastUser, selectedText)) {
           let quickText = '';
           let firstTokenMs: number | null = null;
-          const quickModel = process.env.DEEPSEEK_FAST_MODEL || 'deepseek-chat';
+          // The quick lane must use the same configured provider as the
+          // document lane. Keeping the old DeepSeek default here made simple
+          // questions fail even though Foundry/Grok was healthy.
+          const quickModel = resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL);
           send({ type: 'status', label: 'Respondiendo rápido…' });
           try {
+            const providerStartedAt = Date.now();
             const quickRes = await deepseekChat({
               apiKey,
               model: quickModel,
               messages: [
                 {
                   role: 'system',
-                  content: 'You are Docs Studio. Answer concisely in the user language. Maximum 3 short sentences. No tools, no document edits, no preamble.',
+                  content: `${DOCS_STUDIO_IDENTITY}\nAnswer concisely in the user language. Maximum 3 short sentences. No tools, no document edits, no preamble.`,
                 },
-                { role: 'user', content: lastUser },
+                ...fullConversation,
               ],
               stream: true,
               temperature: 0.2,
               maxTokens: 192,
+            });
+            slog.info('chat', 'fast_path.provider_headers', {
+              model: quickModel,
+              status: quickRes.status,
+              providerHeadersMs: Date.now() - providerStartedAt,
             });
             if (quickRes.ok && quickRes.body) {
               for await (const chunk of iterateOpenAiSse(quickRes.body)) {
@@ -242,6 +308,13 @@ export async function POST(req: NextRequest) {
                   send({ type: 'text', delta: chunk.content });
                 }
               }
+            } else {
+              const detail = (await quickRes.text().catch(() => '')).slice(0, 500);
+              slog.warn('chat', 'fast_path.http_error', {
+                model: quickModel,
+                status: quickRes.status,
+                detail,
+              });
             }
           } catch (e: any) {
             slog.warn('chat', 'fast_path.error', { err: e?.message || String(e) });
@@ -294,6 +367,19 @@ export async function POST(req: NextRequest) {
         });
 
         const documentIntelligence = buildDocumentIntelligence(liveHtml, selectedText);
+        if (workspaceContext?.briefMode) {
+          slog.info('chat', 'brief_mode.start', {
+            documentId: workspaceContext.documentId || null,
+            title: assignmentBrief?.title || null,
+            tasks: assignmentBrief?.tasks.length || 0,
+            rubric: assignmentBrief?.rubric.length || 0,
+            documentWords: documentIntelligence.stats.wordCount,
+          });
+        }
+        const newlyReadReferenceContext = resolvedReferences
+          .filter((reference) => reference.isNew)
+          .map((reference) => `\n--- ${reference.name} ---\n${reference.text.slice(0, 12_000)}`)
+          .join('');
         const system = buildDocsAgentSystem({
           documentTitle,
           paperSize,
@@ -302,7 +388,13 @@ export async function POST(req: NextRequest) {
           workspaceContext,
           liveHtml,
           hasAttachedImage: Boolean(attachedImage),
-        }) + `
+        }) + (newlyReadReferenceContext ? `
+
+=== ATTACHED REFERENCE CONTENT ===
+These files were successfully extracted and read for this turn. Use this actual content directly when answering. Never say that you read, saw, or summarized an uploaded file unless its content appears in this section or was returned by read_attached_references.
+${newlyReadReferenceContext}
+=== END ATTACHED REFERENCE CONTENT ===
+` : '') + `
 
 === SERVER MATH SAFETY ===
 The server protects math hosts on every free HTML rewrite. If equations exist or the task mentions formulas, call list_equations before changing one. Use edit_equation for an existing formula and insert_equation for a new one. Keep studio-math/data-tex hosts intact in prose edits. TeX arguments have no surrounding delimiters.
@@ -359,8 +451,9 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 {
                   role: 'system',
                   content:
-                    'You rewrite a single piece of selected text per the instruction. Match the original language. Return ONLY the rewritten text — no explanations, no markdown fences, no surrounding quotes, no preamble.',
+                    `${DOCS_STUDIO_IDENTITY}\nYou rewrite a single piece of selected text per the instruction. Match the original language. Return ONLY the rewritten text — no explanations, no markdown fences, no surrounding quotes, no preamble.`,
                 },
+                ...fullConversation,
                 { role: 'user', content: `${instruction}\n\nText:\n"""\n${selectedText}\n"""` },
               ],
               stream: false,
@@ -430,9 +523,9 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               messages: [
                 {
                   role: 'system',
-                  content: `Write the requested replacement document. Match the user language. Return plain text only, with paragraphs separated by blank lines; no markdown, notes, or preamble. Default to the shortest complete result. ${requestsLongForm(lastUser) ? 'The user explicitly requested a longer result; satisfy that stated scope.' : 'Unless the user specified a length, use no more than 3 short paragraphs.'}`,
+                  content: `${DOCS_STUDIO_IDENTITY}\nWrite the requested replacement document. Match the user language. Return plain text only, with paragraphs separated by blank lines; no markdown, notes, or preamble. Default to the shortest complete result. ${requestsLongForm(lastUser) ? 'The user explicitly requested a longer result; satisfy that stated scope.' : 'Unless the user specified a length, use no more than 3 short paragraphs.'}`,
                 },
-                { role: 'user', content: lastUser },
+                ...fullConversation,
               ],
               stream: false,
               temperature: 0.7,
@@ -562,9 +655,9 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
             {
               role: 'system',
               content:
-                'You are Docs Studio, a concise document assistant. Answer the user directly in their language. This is an informational question, so do not propose or claim document changes, do not call tools, and do not mention internal implementation unless asked. Use Markdown headings, lists, bold, and code when helpful.',
+                `${DOCS_STUDIO_IDENTITY}\nAnswer the user directly in their language. This is an informational question, so do not propose or claim document changes, do not call tools, and do not mention internal implementation unless asked. Use Markdown headings, lists, bold, and code when helpful.`,
             },
-            ...chatMessages.slice(1).slice(-6),
+            ...chatMessages.slice(1),
           ];
           let quickText = '';
           const quickModel = resolveModelId(preferredModel || DEFAULT_STUDIO_MODEL);
@@ -864,12 +957,70 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               continue;
             }
 
+            if (name === 'update_delivery_board') {
+              const tid = `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const allowed = new Set(['done', 'working', 'blocked']);
+              const items = Array.isArray(args.items)
+                ? args.items.slice(0, 16).flatMap((item: any, index: number) => {
+                    const label = String(item?.label || '').trim().slice(0, 220);
+                    if (!label) return [];
+                    return [{
+                      id: String(item?.id || `delivery-${index + 1}`).slice(0, 80),
+                      label,
+                      status: allowed.has(item?.status) ? item.status : 'working',
+                      note: String(item?.note || '').trim().slice(0, 360) || undefined,
+                    }];
+                  })
+                : [];
+              const update = { summary: String(args.summary || '').trim().slice(0, 480), items };
+              send({ type: 'tool_start', name, label: 'Updating Delivery…', id: tid });
+              send({ type: 'delivery_update', update });
+              send({ type: 'tool_end', name, ok: Boolean(update.summary || items.length), label: `${items.length} delivery item(s) updated`, id: tid });
+              slog.info('chat', 'tool.update_delivery_board', { items: items.length, statuses: items.map((item: { status: string }) => item.status) });
+              await reply({ ok: true, update });
+              continue;
+            }
+
             if (name === 'review_assignment') {
               const tid = `assignment_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
               send({ type: 'tool_start', name, label: 'Comparando con la consigna…', id: tid });
               const review = reviewAssignment(assignmentBrief, liveHtml);
               send({ type: 'tool_end', name, ok: Boolean(review), label: review ? `${review.covered}/${review.total} requisitos cubiertos` : 'No hay consigna adjunta', id: tid });
               await reply({ ok: Boolean(review), review, error: review ? undefined : 'No attached assignment brief. Ask the user to create the document from a brief or attach the assignment first.' });
+              continue;
+            }
+
+            if (name === 'read_assignment_brief') {
+              const tid = `brief_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: 'Reading the attached guide…', id: tid });
+              if (!assignmentBrief) {
+                send({ type: 'tool_end', name, ok: false, label: 'No guide attached', id: tid });
+                await reply({ ok: false, error: 'No assignment brief is attached.' });
+                continue;
+              }
+              slog.info('chat', 'tool.read_assignment_brief', { title: assignmentBrief.title, tasks: assignmentBrief.tasks.length, rubric: assignmentBrief.rubric.length, rawChars: assignmentBrief.rawText.length });
+              send({ type: 'tool_end', name, ok: true, label: `${assignmentBrief.tasks.length} deliverables · ${assignmentBrief.rubric.length} rubric criteria`, id: tid });
+              await reply({ ok: true, brief: assignmentBrief });
+              continue;
+            }
+
+            if (name === 'read_attached_references') {
+              const tid = `refs_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              // Bound total payload so references cannot crowd out the
+              // document and the user's actual request.
+              let remainingChars = 60_000;
+              const references = resolvedReferences
+                .filter((item) => item.text.trim())
+                .flatMap((item) => {
+                  if (remainingChars <= 0) return [];
+                  const text = item.text.trim().slice(0, Math.min(12_000, remainingChars));
+                  remainingChars -= text.length;
+                  return text ? [{ name: item.name.slice(0, 180), text }] : [];
+                });
+              send({ type: 'tool_start', name, label: 'Reading attached references…', id: tid });
+              slog.info('chat', 'tool.read_attached_references', { count: references.length, files: references.map((item) => ({ name: item.name, chars: item.text.length })) });
+              send({ type: 'tool_end', name, ok: references.length > 0, label: references.length ? `${references.length} reference file(s) read` : 'No readable references', id: tid });
+              await reply({ ok: references.length > 0, references, error: references.length ? undefined : 'No readable reference files were attached.' });
               continue;
             }
 

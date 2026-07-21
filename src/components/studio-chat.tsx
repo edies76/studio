@@ -7,7 +7,7 @@ import DraftStreamCard from '@/components/draft-stream-card';
 import ToolLog, { type ToolLogItem } from '@/components/tool-log';
 import EditDiffCard from '@/components/edit-diff-card';
 import BrandMark from '@/components/brand-mark';
-import { ArrowUp, Loader2 } from 'lucide-react';
+import { ArrowUp, FileText, Loader2 } from 'lucide-react';
 import { typesetEditor } from '@/lib/math-html';
 
 export type ChatMessage = {
@@ -20,6 +20,7 @@ export type ChatMessage = {
   isDraftStream?: boolean;
   toolLogs?: ToolLogItem[];
   elapsedMs?: number;
+  attachments?: Array<{ id: string; name: string }>;
 };
 
 export type PendingEdit = {
@@ -33,6 +34,8 @@ export type ActivityStep = {
   label: string;
   state: 'active' | 'done' | 'idle';
 };
+
+export type AgentIntent = 'normal' | 'brief' | 'review';
 
 type Props = {
   messages: ChatMessage[];
@@ -49,6 +52,11 @@ type Props = {
   onQuickAction?: (prompt: string) => void;
   topBar?: React.ReactNode;
   elapsedSeconds?: number;
+  intent?: AgentIntent;
+  onIntentChange?: (intent: AgentIntent) => void;
+  references?: Array<{ id: string; name: string; loading?: boolean }>;
+  onAttachReferences?: (files: File[]) => void;
+  onRemoveReference?: (id: string) => void;
 };
 
 const QUICK = [
@@ -70,10 +78,16 @@ export default function StudioChat({
   onQuickAction,
   topBar,
   elapsedSeconds = 0,
+  intent = 'normal',
+  onIntentChange,
+  references = [],
+  onAttachReferences,
+  onRemoveReference,
   onAcceptEditPart,
   onRejectEditPart,
 }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
+  const referenceInputRef = useRef<HTMLInputElement>(null);
   // Only show shine while actively working — never when Done/idle
   const activeStep = activity.find((a) => a.state === 'active');
   const showThinking = isBusy && Boolean(activeStep);
@@ -136,8 +150,9 @@ export default function StudioChat({
           if (m.role === 'user') {
             return (
               <div key={m.id} className="flex justify-end">
-                <div className="max-w-[92%] rounded-2xl rounded-br-md bg-studio-brown px-3.5 py-2.5 text-[13px] font-medium leading-relaxed text-[#f3f1ec]">
-                  {m.content}
+                <div className="max-w-[92%]">
+                  {m.attachments?.length ? <div className="mb-1 flex justify-end gap-1">{m.attachments.map((attachment) => <span key={attachment.id} className="inline-flex max-w-[180px] items-center gap-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-[10px] font-medium text-neutral-600 shadow-sm"><FileText className="h-3 w-3 shrink-0" /><span className="truncate">{attachment.name}</span></span>)}</div> : null}
+                  <div className="rounded-2xl rounded-br-md bg-studio-brown px-3.5 py-2.5 text-[13px] font-medium leading-relaxed text-[#f3f1ec]">{m.content}</div>
                 </div>
               </div>
             );
@@ -200,7 +215,20 @@ export default function StudioChat({
             respuesta en {elapsedSeconds.toFixed(1)} s
           </div>
         )}
-        <div className="flex items-end gap-1.5 rounded-2xl border border-neutral-200 bg-neutral-50 px-2.5 py-2">
+        <div className="rounded-2xl border border-neutral-200 bg-neutral-50 px-2.5 py-2">
+          <div className="mb-1.5 flex items-center gap-1 border-b border-neutral-200/70 pb-1.5">
+            <label className="relative">
+              <span className="sr-only">Agent mode</span>
+              <select value={intent} onChange={(event) => onIntentChange?.(event.target.value as AgentIntent)} disabled={isBusy} className="appearance-none rounded-md border border-neutral-200 bg-white py-1 pl-2 pr-6 font-mono text-[10px] font-semibold uppercase tracking-[.08em] text-neutral-600 outline-none hover:border-neutral-400">
+                <option value="normal">Normal</option><option value="brief">Brief</option><option value="review">Review</option>
+              </select>
+              <span className="pointer-events-none absolute right-2 top-1.5 text-[9px] text-neutral-400">⌄</span>
+            </label>
+            <span className="truncate text-[10px] text-neutral-400">{intent === 'normal' ? 'Edit and explore the document' : intent === 'brief' ? 'Build and verify against the guide' : 'Check delivery coverage'}</span>
+            {onAttachReferences && <><input ref={referenceInputRef} type="file" multiple accept=".docx,.txt,.md,text/plain" className="sr-only" onChange={(event) => { const files = Array.from(event.target.files || []); if (files.length) onAttachReferences(files); event.currentTarget.value = ''; }} /><button type="button" onClick={() => referenceInputRef.current?.click()} className="ml-auto flex h-6 w-6 items-center justify-center rounded border border-neutral-200 bg-white text-neutral-500 hover:border-neutral-400" title="Attach reference"><FileText className="h-3 w-3" /></button></>}
+          </div>
+          {references.length > 0 && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <span key={reference.id} className="inline-flex max-w-full items-center gap-1 rounded bg-[#f0eee9] px-1.5 py-0.5 text-[9px] font-medium text-neutral-600"><span className="max-w-[140px] truncate">{reference.name}</span>{reference.loading ? <span className="text-neutral-400">leyendo…</span> : null}<button type="button" onClick={() => onRemoveReference?.(reference.id)} className="text-neutral-400 hover:text-neutral-800">×</button></span>)}</div>}
+          <div className="flex items-end gap-1.5">
           <textarea
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
@@ -227,6 +255,7 @@ export default function StudioChat({
               <ArrowUp className="h-4 w-4" strokeWidth={2} />
             )}
           </button>
+          </div>
         </div>
       </div>
     </aside>

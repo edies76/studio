@@ -416,6 +416,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const styleOpts = useMemo(() => ({ fontFamily, fontSize }), [fontFamily, fontSize]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState(0);
   const bodyRefs = useRef<(HTMLDivElement | null)[]>([]);
   const skipInput = useRef(false);
   const rebalanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -443,6 +444,25 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const [mathTools, setMathTools] = useState<TableToolsRect | null>(null);
 
   const hasGhost = Boolean(ghostHtml && ghostHtml.trim());
+  // At 100% a fixed-width page must fit the editor column left after the
+  // chat panel opens or is resized. Otherwise the sheet gets clipped while
+  // the chat consumes the available flex width. Manual zoom-in still keeps
+  // its intended overflow behavior.
+  useLayoutEffect(() => {
+    const host = scrollRef.current;
+    if (!host) return;
+    const measure = () => setViewportWidth(host.clientWidth);
+    measure();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    observer?.observe(host);
+    return () => observer?.disconnect();
+  }, []);
+  const displayZoom = useMemo(() => {
+    if (!viewportWidth || zoom > 1) return zoom;
+    const availableWidth = Math.max(0, viewportWidth - 64); // .px-8 wrapper
+    const fit = availableWidth / spec.widthPx;
+    return Math.min(zoom, fit || zoom);
+  }, [spec.widthPx, viewportWidth, zoom]);
 
   const liveBodies = useCallback(
     () => bodyRefs.current.filter(Boolean) as HTMLElement[],
@@ -1412,8 +1432,8 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
             className="relative mx-auto origin-top transition-transform duration-150"
             style={{
               width: spec.widthPx,
-              transform: `scale(${zoom})`,
-              marginBottom: Math.max(0, stackHeight * (zoom - 1)),
+              transform: `scale(${displayZoom})`,
+              marginBottom: Math.max(0, stackHeight * (displayZoom - 1)),
             }}
           >
             {/* Real sheets: gap is empty space BETWEEN pages — text cannot occupy it */}

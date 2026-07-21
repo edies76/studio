@@ -16,6 +16,11 @@ export type ProposeEditPayload = {
   changeList?: string[];
 };
 
+export type DeliveryBoardUpdate = {
+  summary: string;
+  items: Array<{ id: string; label: string; status: 'done' | 'working' | 'blocked'; note?: string }>;
+};
+
 export type ChatStreamEvent =
   | { type: 'status'; label: string }
   | { type: 'thinking'; label: string }
@@ -23,6 +28,7 @@ export type ChatStreamEvent =
   | { type: 'tool_start'; name: string; label: string; id?: string }
   | { type: 'tool_end'; name: string; ok: boolean; label?: string; id?: string }
   | { type: 'workspace_command'; command: 'undo' | 'redo' }
+  | { type: 'delivery_update'; update: DeliveryBoardUpdate }
   | { type: 'propose_edit'; id: string; edit: ProposeEditPayload }
   | {
       type: 'done';
@@ -94,6 +100,51 @@ export const STUDIO_TOOL_DEFINITIONS = [
       properties: { focus: { type: 'STRING', description: 'Optional focus: academic, accessibility, structure, or all.' } },
       required: [],
     },
+  },
+  {
+    name: 'review_assignment',
+    description:
+      'Compare the active document against its attached university brief, tasks, rubric, source requirements, and requested images. Use when asked what is missing, whether it is ready, or how it covers the assignment. This never changes the document.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'update_delivery_board',
+    description: 'Update the Brief Delivery board after inspecting the guide and current document. This is a session workboard, not a document edit. Use only evidence from review_assignment, check_document, and the provided references. Mark an item done only when the current document demonstrably covers it.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        summary: { type: 'STRING', description: 'One concise, factual current-delivery summary.' },
+        items: {
+          type: 'ARRAY',
+          description: 'Up to 16 workboard items, each grounded in the guide or document.',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              id: { type: 'STRING' },
+              label: { type: 'STRING' },
+              status: { type: 'STRING', enum: ['done', 'working', 'blocked'] },
+              note: { type: 'STRING' },
+            },
+            required: ['id', 'label', 'status'],
+          },
+        },
+      },
+      required: ['summary', 'items'],
+    },
+  },
+  {
+    name: 'read_assignment_brief',
+    description: 'Read the attached assignment guide, tasks, constraints, rubric, and reference metadata. Use this first in Brief mode before planning or drafting. Never exposes the raw guide as a chat message.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
+    name: 'read_attached_references',
+    description: 'Read files attached to the current chat message. Use them as source/reference material before summarising, drafting, or citing their contents. Never echo an entire file into the chat.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
   },
   {
     name: 'workspace_command',

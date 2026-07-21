@@ -1,0 +1,16 @@
+{
+  "name": "docs-studio-demo-video",
+  "private": true,
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "sync:clips": "node scripts/sync-clips.mjs",
+    "audio": "node --env-file=../../.env.local scripts/generate-audio.mjs",
+    "audio:es": "set DEMO_LANGUAGE=es&& node --env-file=../../.env.local scripts/generate-audio.mjs",
+    "render:landscape": "remotion render src/index.ts DocsStudioDemo16x9 out/docs-studio-demo.mp4",
+    "render:vertical": "remotion render src/index.ts DocsStudioDemo9x16 out/docs-studio-demo-vertical.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.494",
+    "remotion": "4.0.494"
+  }
+}

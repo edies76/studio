@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { createAssignmentContext, callDocsStudioApi, readSse, stripMarkdownFences } from './core';
 import { documentPdf } from './pdf';
 import { CloudDocsStudioWorkspace, publicCloudDocument } from './cloud-workspace';
+import { reviewAssignment } from '@/lib/assignment-review';
 
 const SERVER_VERSION = '0.2.0';
 const REPO_URL = 'https://github.com/edies76/docs-studio';
@@ -50,11 +51,11 @@ export function createCloudDocsStudioMcpServer(options: {
     workspace: 'Persistent and isolated by authenticated MCP principal. Documents are stored through the Docs Studio document store.',
     editing: 'AI can inspect, search, validate, draft, propose, accept, reject, insert, format, and export. Reviewable edits remain pending until accepted.',
     tools: [
-      'get_capabilities', 'create_document', 'list_documents', 'delete_document', 'read_document', 'find_in_document', 'check_document',
+      'get_capabilities', 'create_document', 'list_documents', 'delete_document', 'read_document', 'find_in_document', 'check_document', 'review_assignment',
       'parse_brief', 'draft_document', 'chat_document', 'propose_edit', 'accept_edit', 'reject_edit', 'update_title', 'set_paper_size',
-      'insert_html', 'insert_math', 'insert_table', 'edit_table_cell', 'insert_image', 'insert_page_break', 'get_history', 'list_versions', 'restore_version', 'export_document',
+      'propose_block_edit', 'insert_html', 'insert_math', 'insert_table', 'edit_table_cell', 'insert_image', 'insert_page_break', 'get_history', 'list_versions', 'restore_version', 'export_document', 'get_document_pdf',
     ],
-    resources: ['docs://workspace', 'docs://document/{documentId}', 'docs://history/{documentId}'],
+    resources: ['docs://workspace', 'docs://document/{documentId}', 'docs://history/{documentId}', 'docs://document/{documentId}/export.pdf'],
     transports: ['streamable-http'],
   }));
 
@@ -99,6 +100,15 @@ export function createCloudDocsStudioMcpServer(options: {
     description: 'Run deterministic checks for readable content, headings, image alt text, table headers, and pending proposals.',
     inputSchema: { documentId: z.string() },
   }, async ({ documentId }) => safe(() => workspace.checkDocument(documentId)));
+
+  server.registerTool('review_assignment', {
+    title: 'Review assignment coverage',
+    description: 'Compare a document against its attached brief, tasks, rubric, source requirements, and requested images. It never changes the document.',
+    inputSchema: { documentId: z.string() },
+  }, async ({ documentId }) => safe(async () => {
+    const document = await workspace.getDocument(documentId);
+    return reviewAssignment(document.brief, document.html) || { error: 'No assignment brief is attached to this document.' };
+  }));
 
   server.registerTool('parse_brief', {
     title: 'Parse assignment brief',
@@ -198,6 +208,20 @@ export function createCloudDocsStudioMcpServer(options: {
       afterHtml, selectionHint,
     });
   }));
+
+  server.registerTool('propose_block_edit', {
+    title: 'Propose one-block edit',
+    description: 'Safely propose a replacement for exactly one numbered paragraph, heading, list item, quote, or code block. Every other block remains untouched.',
+    inputSchema: {
+      documentId: z.string(),
+      blockIndex: z.number().int().min(0),
+      title: z.string().min(1),
+      summary: z.string().min(1),
+      afterHtml: z.string().min(1),
+    },
+  }, async ({ documentId, blockIndex, title, summary, afterHtml }) => safe(() => workspace.proposeBlockEdit({
+    documentId, blockIndex, title, summary, afterHtml,
+  })));
 
   server.registerTool('accept_edit', {
     title: 'Accept edit',
@@ -313,6 +337,22 @@ export function createCloudDocsStudioMcpServer(options: {
     return { format, fileName: `${safeTitle}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', base64: buffer.toString('base64') };
   }));
 
+  server.registerTool('get_document_pdf', {
+    title: 'Get document PDF',
+    description: 'Return a URI for the document’s binary PDF MCP resource. Use this when an agent needs the actual PDF file, not base64 text.',
+    inputSchema: { documentId: z.string() },
+  }, async ({ documentId }) => safe(async () => {
+    const document = await workspace.getDocument(documentId);
+    const safeTitle = document.title.replace(/[^\w\- ]+/g, '').trim() || 'docs-studio';
+    return {
+      documentId,
+      fileName: `${safeTitle}.pdf`,
+      mimeType: 'application/pdf',
+      resourceUri: `docs://document/${encodeURIComponent(documentId)}/export.pdf`,
+      instruction: 'Read resourceUri to receive the binary PDF file.',
+    };
+  }));
+
   server.registerResource('workspace', 'docs://workspace', {
     title: 'Docs Studio workspace',
     description: 'Persistent documents for the authenticated MCP principal.',
@@ -335,6 +375,17 @@ export function createCloudDocsStudioMcpServer(options: {
   }, async (uri, variables) => {
     const documentId = String(variables.documentId || '');
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await workspace.history(documentId), null, 2) }] };
+  });
+
+  server.registerResource('document-pdf', new ResourceTemplate('docs://document/{documentId}/export.pdf', { list: undefined }), {
+    title: 'Docs Studio PDF export',
+    description: 'Binary PDF export of the current persistent document.',
+    mimeType: 'application/pdf',
+  }, async (uri, variables) => {
+    const documentId = String(variables.documentId || '');
+    const document = await workspace.getDocument(documentId);
+    const buffer = documentPdf(document.html, document.title, document.paperSize);
+    return { contents: [{ uri: uri.href, mimeType: 'application/pdf', blob: buffer.toString('base64') }] };
   });
 
   server.registerPrompt('draft_from_brief', {

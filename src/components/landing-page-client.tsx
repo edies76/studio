@@ -205,7 +205,7 @@ export default function LandingPageClient() {
                 ['01', 'University report', 'A professor’s rubric becomes the required structure, not a PDF you forget to reopen.', 'Rubric · sources · final report'],
                 ['02', 'Client proposal', 'Scope, exclusions, and brand language stay attached while the team revises the draft.', 'Brief · proposal · review'],
                 ['03', 'Technical procedure', 'Mandatory evidence and approval steps remain visible until the document is complete.', 'Requirements · procedure · audit'],
-                ['04', 'Reusable pattern', 'Start the next document from the same approved structure without rebuilding the brief.', 'Brief · structure · review · export'],
+                ['04', 'Academic starter', 'Choose a report, lab, problem set, case study, proposal, or data analysis shape before the agent begins.', 'Template · guide · agent plan · review'],
               ].map(([number, title, body, flow]) => (
                 <article key={number} className="home-landing__usecase-row">
                   <span>{number}</span>

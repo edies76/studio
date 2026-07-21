@@ -15,18 +15,19 @@ import StudioChat, {
   type ActivityStep,
   type ChatMessage,
   type PendingEdit,
+  type AgentIntent,
 } from '@/components/studio-chat';
 import ToolsDock, { type ImproveStyle, type OrbitAction } from '@/components/tools-dock';
 import type { ChatEvent } from '@/components/chat-event-card';
 import { useToast } from '@/hooks/use-toast';
-import { ArrowLeft, CircleCheck, ClipboardCheck, CloudOff, CloudUpload, Download, FileText, History, Plus, Settings2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, CircleCheck, ClipboardCheck, CloudOff, CloudUpload, Download, FileText, History, Plus, Settings2 } from 'lucide-react';
 import FloatingComposer from '@/components/floating-composer';
 import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
 import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
 import { extractHtmlBlocks } from '@/lib/doc-tools';
-import type { PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
+import type { DeliveryBoardUpdate, PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
 import {
   sanitizeDocumentHtml,
   typesetEditor,
@@ -36,12 +37,12 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
-import { importDocxToHtml } from '@/lib/import-docx';
 import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
 import HistoryDrawer, { type HistoryItem, type VersionSnapshot } from '@/components/history-drawer';
 import AssignmentReviewDrawer from '@/components/assignment-review-drawer';
+import SessionLibraryDrawer, { type SessionSource } from '@/components/session-library-drawer';
 import type { AssignmentReview } from '@/lib/assignment-review';
 import type { AssignmentBrief } from '@/lib/assignment-types';
 import OnlyOfficeEditor from '@/components/onlyoffice-editor';
@@ -67,11 +68,17 @@ function isDocEmpty(html: string) {
   return t.length < 8;
 }
 
-function plainTextFromHtml(html: string): string {
-  if (!html) return '';
-  const node = document.createElement('div');
-  node.innerHTML = html;
-  return (node.textContent || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+type AgentReference = { id: string; name: string; text: string; cached?: boolean; loading?: boolean };
+
+/** Draft streams can briefly contain a Markdown fence before the first HTML tag. */
+function normaliseDraftHtml(raw: string): string {
+  const trimmed = String(raw || '').trimStart();
+  if (!/^```(?:html)?\s*/i.test(trimmed)) return raw;
+  return trimmed.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/i, '');
+}
+
+function isRenderableDraftHtml(html: string): boolean {
+  return /^\s*<(?:h[1-6]|p|ul|ol|li|blockquote|pre|table|div)\b/i.test(html);
 }
 
 /** Only draft a full document when the user clearly asks for one — not "hola". */
@@ -131,7 +138,10 @@ export default function DocsStudioClient({
   const [insertOpen, setInsertOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [assignmentReviewOpen, setAssignmentReviewOpen] = useState(false);
+  const [sessionLibraryOpen, setSessionLibraryOpen] = useState(false);
   const [assignmentReview, setAssignmentReview] = useState<AssignmentReview | null>(null);
+  const [deliveryBoard, setDeliveryBoard] = useState<DeliveryBoardUpdate | null>(null);
+  const [sessionSources, setSessionSources] = useState<SessionSource[]>([]);
   const [changeLog, setChangeLog] = useState<HistoryItem[]>([]);
   const [versions, setVersions] = useState<VersionSnapshot[]>([]);
   const [equationEditor, setEquationEditor] = useState<{
@@ -160,6 +170,8 @@ export default function DocsStudioClient({
   /** Ephemeral agent input — not always on canvas */
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentMode, setAgentMode] = useState<'chat' | 'edit'>('chat');
+  const [agentIntent, setAgentIntent] = useState<AgentIntent>('normal');
+  const briefStarted = useRef(false);
   /** Hides the floating composer during export, regardless of agentVisibility. */
   const [isExporting, setIsExporting] = useState(false);
   const selectionRef = useRef<Range | null>(null);
@@ -173,6 +185,7 @@ export default function DocsStudioClient({
    *  vision to answer, and uses it (or explains it can't with the current
    *  model) rather than silently ignoring it. */
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  const [agentReferences, setAgentReferences] = useState<AgentReference[]>([]);
   const [activity, setActivity] = useState<ActivityStep[]>([]);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [pendingEdits, setPendingEdits] = useState<PendingEdit[]>([]);
@@ -183,16 +196,44 @@ export default function DocsStudioClient({
   const resizingChat = useRef(false);
   const canvasRef = useRef<PaperCanvasHandle>(null);
   const paperHostRef = useRef<HTMLDivElement>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const didAuto = useRef(false);
   const skipHistory = useRef(false);
   const localEditTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastLocalNotify = useRef(0);
+  const referenceTextCache = useRef(new Map<string, string>());
 
   const startLatencyTimer = () => {
     requestStartedAt.current = Date.now();
     setElapsedSeconds(0);
+  };
+
+  const attachAgentReferences = async (files: File[]) => {
+    for (const file of files.slice(0, 6)) {
+      const cacheKey = `${file.name}:${file.size}:${file.lastModified}`;
+      const id = uid();
+      try {
+        setAgentReferences((current) => [...current, { id, name: file.name, text: '', loading: true }].slice(-6));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        let text = referenceTextCache.current.get(cacheKey) || '';
+        if (!text && (/\.docx$/i.test(file.name) || file.type.includes('wordprocessingml'))) {
+          // A reference only needs text. Avoid the full Word importer, which
+          // also creates visual-fidelity HTML, images and pagination.
+          const mammoth = await import('mammoth');
+          const result = await mammoth.default.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+          text = result.value || '';
+        }
+        else if (!text && (/\.(txt|md|markdown)$/i.test(file.name) || file.type === 'text/plain')) text = await file.text();
+        else if (!text) throw new Error(`${file.name} is not a readable reference type.`);
+        if (!text.trim()) throw new Error(`${file.name} has no readable text.`);
+        text = text.slice(0, 30000);
+        referenceTextCache.current.set(cacheKey, text);
+        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, text, loading: false } : reference));
+      } catch (error: any) {
+        setAgentReferences((current) => current.filter((reference) => reference.id !== id));
+        toast({ variant: 'destructive', title: 'Could not attach reference', description: error?.message });
+      }
+    }
   };
 
   useEffect(() => {
@@ -886,12 +927,14 @@ export default function DocsStudioClient({
               );
             }
             if (ev.type === 'html_delta') {
-              // Streamed agent output is preview-only in chat; the canvas waits for the full draft (first-time reveal).
+              // A model can emit ```html before its first tag. Never render
+              // that partial transport syntax as a document preview.
               htmlAcc += ev.delta || '';
               const now = Date.now();
               if (now - lastChatPaint > 100) {
                 lastChatPaint = now;
-                const clean = sanitizeDocumentHtml(htmlAcc);
+                const draft = normaliseDraftHtml(htmlAcc);
+                const clean = isRenderableDraftHtml(draft) ? sanitizeDocumentHtml(draft) : '';
                 setMessages((ms) =>
                   ms.map((m) =>
                     m.id === assistantId
@@ -909,9 +952,11 @@ export default function DocsStudioClient({
             }
             if (ev.type === 'html_ready') {
               completed = true;
-              const finalHtml = sanitizeDocumentHtml(ev.html || htmlAcc);
-              // First document: full HTML already ready → vertical shine reveal (not fake streaming on canvas)
-              applyHtml(finalHtml, true, 'firstReveal');
+              const finalHtml = sanitizeDocumentHtml(normaliseDraftHtml(ev.html || htmlAcc));
+              // The first draft must enter through the same stable canvas path
+              // as every later edit. The old reveal mask made a valid document
+              // look blank/broken until its animation completed.
+              applyHtml(finalHtml, true);
               setMessages((ms) =>
                 ms.map((m) =>
                   m.id === assistantId
@@ -985,15 +1030,25 @@ export default function DocsStudioClient({
   const runChat = useCallback(
     async (
       userText: string,
-      opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean; attachedImage?: string | null },
+      opts?: { selectedText?: string; intensity?: number; fromComposer?: boolean; attachedImage?: string | null; hiddenUser?: boolean; briefMode?: boolean; skipFastDraft?: boolean; intent?: AgentIntent },
     ) => {
       const text = userText.trim();
       if (!text) return;
 
       const liveDocumentHtml = readEditorHtml();
+      const referencesForRequest = agentReferences;
+      if (referencesForRequest.some((reference) => !reference.text.trim())) {
+        toast({ variant: 'destructive', title: 'El archivo todavía se está leyendo', description: 'Espera a que termine de prepararse antes de enviar el mensaje.' });
+        return;
+      }
+      const referencesPayload = referencesForRequest.map(({ id, name, text, cached }) => ({ id, name, text: cached ? '' : text }));
       const empty = isDocEmpty(liveDocumentHtml);
       // Only full-draft on clear document requests — never on "hola"
-      if (empty && wantsFullDocument(text)) {
+      // A first draft may use the cheap direct draft endpoint only when the
+      // request is self-contained. Attached references must go through the
+      // agent loop so it can call read_attached_references; /api/draft does
+      // not receive those files.
+      if (!opts?.skipFastDraft && empty && wantsFullDocument(text) && !referencesForRequest.length && !opts?.attachedImage) {
         const completed = await runFastDraft(text);
         if (opts?.fromComposer && !completed) {
           setChatCollapsed(false);
@@ -1002,10 +1057,19 @@ export default function DocsStudioClient({
         return;
       }
 
-      const userMsg: ChatMessage = { id: uid(), role: 'user', content: text };
-      const nextMessages = [...messages, userMsg];
+      const sentAttachments = referencesForRequest.map(({ id, name }) => ({ id, name }));
+      const userMsg: ChatMessage = { id: uid(), role: 'user', content: text, attachments: sentAttachments };
+      const nextMessages = opts?.hiddenUser ? messages : [...messages, userMsg];
+      if (sentAttachments.length) {
+        setSessionSources((current) => {
+          const existing = new Map(current.map((source) => [source.name, source]));
+          for (const attachment of sentAttachments) existing.set(attachment.name, { ...attachment, sentAt: Date.now() });
+          return [...existing.values()].slice(-24);
+        });
+      }
       const startedAt = Date.now();
       let proposedSomethingForRequest = false;
+      let referencesDelivered = false;
       startLatencyTimer();
       setMessages(nextMessages);
       setChatInput('');
@@ -1074,8 +1138,9 @@ export default function DocsStudioClient({
             selectedText: opts?.selectedText || selectedTextRef.current || '',
             model,
             autoStart: false,
-            assignmentContext,
+            assignmentContext: documentBrief ? 'An assignment guide is attached to this document. Read it with read_assignment_brief when needed.' : assignmentContext,
             assignmentBrief: documentBrief,
+            attachedReferences: referencesPayload,
             attachedImage: opts?.attachedImage || null,
             workspaceContext: {
               documentId: docId,
@@ -1086,6 +1151,9 @@ export default function DocsStudioClient({
               canRedo: historyIndexRef.current < historyRef.current.length - 1,
               pendingEdits: pendingEdits.filter((edit) => edit.status === 'pending').length,
               agentMode,
+              agentIntent: opts?.intent || agentIntent,
+              briefMode: Boolean(opts?.briefMode),
+              referenceCount: referencesForRequest.length,
               agentPermission: prefs.agentPermission,
               fontFamily,
               fontSize,
@@ -1095,6 +1163,7 @@ export default function DocsStudioClient({
         trace('request:response-headers', { status: res.status });
 
         if (!res.ok || !res.body) throw new Error('Chat failed');
+        referencesDelivered = true;
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1168,6 +1237,10 @@ export default function DocsStudioClient({
                   }),
                 );
               }
+            }
+            if (ev.type === 'delivery_update' && ev.update) {
+              setDeliveryBoard(ev.update as DeliveryBoardUpdate);
+              trace('delivery:update', { items: Array.isArray(ev.update.items) ? ev.update.items.length : 0 });
             }
             if (ev.type === 'text') {
               acc += ev.delta || '';
@@ -1272,6 +1345,7 @@ export default function DocsStudioClient({
           );
         }
       } finally {
+        if (referencesDelivered && referencesForRequest.length) setAgentReferences((current) => current.map((reference) => referencesForRequest.some((sent) => sent.id === reference.id) ? { ...reference, cached: true } : reference));
         setIsBusy(false);
         setActivity([]);
         abortRef.current = null;
@@ -1284,8 +1358,18 @@ export default function DocsStudioClient({
         }
       }
     },
-    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, prefs.agentPermission, fontFamily, fontSize, documentBriefContext, undo, redo],
+    [messages, documentTitle, paperSize, model, toast, runFastDraft, pushEvent, queryAllBlocks, readEditorHtml, docId, pageCount, pendingEdits, agentMode, agentIntent, prefs.agentPermission, fontFamily, fontSize, documentBriefContext, documentBrief, undo, redo],
   );
+
+  useEffect(() => {
+    if (!docId || !documentBrief || briefStarted.current || isBusy) return;
+    const key = `docs-studio:brief-start:${docId}`;
+    if (sessionStorage.getItem(key) !== '1') return;
+    briefStarted.current = true;
+    sessionStorage.removeItem(key);
+    setChatCollapsed(false);
+    void runChat('Read the attached assignment guide and prepare the initial brief assessment for the student.', { hiddenUser: true, briefMode: true, skipFastDraft: true, intent: 'brief' });
+  }, [docId, documentBrief, isBusy, runChat]);
 
   useEffect(() => {
     if (!topic || didAuto.current || !isClient || !draftReady) return;
@@ -1763,14 +1847,29 @@ export default function DocsStudioClient({
       const mathJax = (window as any).MathJax;
       if (mathJax?.startup?.promise) await mathJax.startup.promise;
 
+      // Export the live, paginated sheets instead of reflowing the document
+      // from its raw HTML. This preserves the editor's exact page breaks,
+      // alignment, inline formatting, images and rendered MathJax output.
+      const livePages = canvasRef.current.getBodies();
+      const printedPages = livePages.length
+        ? livePages.map((body) => {
+            const clone = body.cloneNode(true) as HTMLElement;
+            clone.removeAttribute('contenteditable');
+            clone.removeAttribute('data-studio-editor');
+            clone.querySelectorAll('[data-studio-proposal-anchor], .studio-page-break, [data-studio-break]').forEach((node) => node.remove());
+            return `<section class="print-page">${clone.innerHTML}</section>`;
+          }).join('')
+        : `<section class="print-page">${html}</section>`;
+
       const printHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>${(documentTitle || 'documento').replace(/</g, '&lt;')}</title>
 <style>
-  @page { size: ${pageSizeMm}; margin: ${marginMm}; }
+  @page { size: ${pageSizeMm}; margin: 0; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  html, body { width: 100%; min-height: 100%; }
   body {
     margin: 0;
     font-family: ${fontFamily};
@@ -1779,6 +1878,15 @@ export default function DocsStudioClient({
     color: #111;
     background: #fff;
   }
+  .print-page {
+    width: ${pageSizeMm.split(' ')[0]};
+    height: ${pageSizeMm.split(' ')[1]};
+    overflow: hidden;
+    padding: ${marginMm};
+    break-after: page;
+    page-break-after: always;
+  }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
   p { margin: 0.5em 0; }
   h1 { font-size: 1.8em; font-weight: 700; margin: 1em 0 0.4em; }
   h2 { font-size: 1.4em; font-weight: 600; margin: 0.9em 0 0.35em; }
@@ -1793,14 +1901,15 @@ export default function DocsStudioClient({
   th, td { border: 1px solid #ccc; padding: 6px 10px; vertical-align: top; text-align: left; }
   th { background: #f7f7f7; font-weight: 600; }
   img { max-width: 100%; height: auto; display: block; page-break-inside: avoid; }
-  mjx-container { display: inline; }
+  mjx-container { display: inline; max-width: 100%; }
+  mjx-container[display="true"] { display: block; margin: .7em 0; }
   a { color: inherit; text-decoration: underline; }
   @media print {
     body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   }
 </style>
 </head>
-<body>${html}</body>
+<body>${printedPages}</body>
 </html>`;
 
       const iframe = document.createElement('iframe');
@@ -1893,64 +2002,6 @@ export default function DocsStudioClient({
       toast({ variant: 'destructive', title: 'Export falló', description: e?.message });
     } finally {
       setIsExporting(false);
-    }
-  };
-
-  const handleImportWord = async (file: File) => {
-    if (!file) return;
-    const name = file.name || '';
-    if (!/\.docx?$/i.test(name) && !file.type.includes('word')) {
-      toast({
-        variant: 'destructive',
-        title: 'Formato no soportado',
-        description: 'Importá un archivo Word .docx o .doc.',
-      });
-      return;
-    }
-    setIsBusy(true);
-    try {
-      const buf = await file.arrayBuffer();
-      const { html, fidelityHtml, titleHint, warnings, userSummary } = await importDocxToHtml(buf, name);
-      // A Word import should open as the document the user recognises. The
-      // semantic converter remains available to briefs/reference extraction,
-      // but the editor must never interrupt the flow with a browser confirm
-      // that asks the user to choose between appearance and editability.
-      const useFidelity = Boolean(fidelityHtml);
-      setDocumentTitle(titleHint.slice(0, 80));
-      applyHtml(useFidelity ? fidelityHtml! : html, true, 'cascade');
-      // Keep the original OOXML beside the editable canvas. When OnlyOffice
-      // is configured this unlocks true Word-layout editing instead of a
-      // lossy HTML reconstruction.
-      if (docId && /\.docx$/i.test(name)) {
-        const sourceForm = new FormData();
-        sourceForm.set('file', file);
-        const sourceResponse = await fetch(`/api/docs/${docId}/source`, { method: 'POST', body: sourceForm });
-        const sourceData = await sourceResponse.json().catch(() => null);
-        if (sourceResponse.ok && sourceData?.sourceDocx) setSourceDocx(sourceData.sourceDocx);
-      }
-      toast({ title: 'Word importado al lienzo', description: `${useFidelity ? 'Modo fidelidad visual. ' : 'Modo editable. '}${userSummary}`.slice(0, 240) });
-      pushEvent({ type: 'local_edit', title: 'Import Word', summary: userSummary.slice(0, 160) }, true);
-      setMessages((ms) => [
-        ...ms,
-        {
-          id: uid(),
-          role: 'assistant',
-          content:
-            warnings.length === 0
-              ? `Importé **${titleHint}** al lienzo (hojas, tablas y fórmulas editables).`
-              : `Importé **${titleHint}**.\n\n${warnings.map((w) => `• ${w}`).join('\n')}`,
-          streaming: false,
-        },
-      ]);
-    } catch (e: any) {
-      toast({
-        variant: 'destructive',
-        title: 'No se pudo importar',
-        description: e?.message || 'Error leyendo el documento Word',
-      });
-    } finally {
-      setIsBusy(false);
-      if (importInputRef.current) importInputRef.current.value = '';
     }
   };
 
@@ -2086,11 +2137,23 @@ export default function DocsStudioClient({
     }
   };
 
+  const openSessionLibrary = () => {
+    setSessionLibraryOpen(true);
+  };
+
   const chatTopBar = (
     <>
       <button
         type="button"
-        title="Revisar entrega y rúbrica"
+        title="Session library"
+        onClick={openSessionLibrary}
+        className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
+      >
+        <BookOpen className="h-3.5 w-3.5" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        title="Delivery and rubric checks"
         onClick={() => void openAssignmentReview()}
         className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 bg-white text-neutral-700 shadow-sm transition hover:bg-neutral-50"
       >
@@ -2194,16 +2257,6 @@ export default function DocsStudioClient({
               imageMaxMb={prefs.imageMaxMb}
             />}
             <input
-              ref={importInputRef}
-              type="file"
-              accept=".doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void handleImportWord(f);
-              }}
-            />
-            <input
               ref={imageInputRef}
               type="file"
               accept="image/*"
@@ -2250,7 +2303,7 @@ export default function DocsStudioClient({
                   onInsertMath={handleInsertMath}
                   onInsertTable={handleInsertTable}
                   onInsertImage={handleInsertImage}
-                  onImportWord={() => importInputRef.current?.click()}
+                  onImportWord={undefined}
                   insertOpen={insertOpen}
                   onInsertOpenChange={setInsertOpen}
                   onBeforeFormat={() => {
@@ -2384,7 +2437,7 @@ export default function DocsStudioClient({
               pendingEdits={pendingEdits}
               input={chatInput}
               onInputChange={setChatInput}
-              onSend={() => runChat(chatInput)}
+              onSend={() => runChat(chatInput, { intent: agentIntent, skipFastDraft: agentIntent === 'brief' })}
               onAcceptEdit={acceptEdit}
               onRejectEdit={rejectEdit}
               onAcceptEditPart={(id, hunkIndex) => reviewEditPart(id, hunkIndex, 'accept-one')}
@@ -2393,6 +2446,11 @@ export default function DocsStudioClient({
               onQuickAction={(p) => void runChat(p)}
               topBar={chatTopBar}
               elapsedSeconds={elapsedSeconds}
+              intent={agentIntent}
+              onIntentChange={setAgentIntent}
+              references={agentReferences}
+              onAttachReferences={(files) => void attachAgentReferences(files)}
+              onRemoveReference={(id) => setAgentReferences((items) => items.filter((item) => item.id !== id))}
             />
           )}
         </div>
@@ -2417,7 +2475,10 @@ export default function DocsStudioClient({
         open={assignmentReviewOpen}
         onClose={() => setAssignmentReviewOpen(false)}
         review={assignmentReview}
+        delivery={deliveryBoard}
+        onRefresh={() => void openAssignmentReview()}
       />
+      <SessionLibraryDrawer open={sessionLibraryOpen} onClose={() => setSessionLibraryOpen(false)} sources={sessionSources} />
     </div>
   );
 }

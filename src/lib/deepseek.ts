@@ -1,23 +1,29 @@
-/**
- * DeepSeek OpenAI-compatible API (server-only).
- * Base: https://api.deepseek.com
- * Primary model: deepseek-v4-flash
- */
+/** Azure AI Foundry / Grok OpenAI-compatible runtime (server-only). */
 
 import 'server-only';
 import { DEFAULT_STUDIO_MODEL, STUDIO_MODELS } from '@/lib/studio-models';
 
-export const DEEPSEEK_BASE =
-  (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+export const GROK_FOUNDRY_BASE =
+  (process.env.FOUNDRY_GROK_ENDPOINT || process.env.AZURE_OPENAI_ENDPOINT || 'https://bambalunar-resource.services.ai.azure.com/openai/v1').replace(/\/$/, '');
+
+function chatCompletionsUrl() {
+  return /\/openai\/v1$/i.test(GROK_FOUNDRY_BASE)
+    ? `${GROK_FOUNDRY_BASE}/chat/completions`
+    : `${GROK_FOUNDRY_BASE}/v1/chat/completions`;
+}
 
 export function deepseekApiKey(): string | null {
-  return process.env.DEEPSEEK_API_KEY || process.env.OPENAI_API_KEY || null;
+  return process.env.FOUNDRY_GROK_API_KEY || process.env.AZURE_OPENAI_API_KEY || null;
 }
 
 export function resolveModelId(raw?: string): string {
-  const m = (raw || process.env.DEEPSEEK_MODEL || DEFAULT_STUDIO_MODEL).trim();
-  // Strip leftover googleai/ prefixes if a client still sends them
-  return m.replace(/^googleai\//, '') || DEFAULT_STUDIO_MODEL;
+  const requested = (raw || '').trim();
+  // Studio no longer lets legacy client identifiers select a different
+  // provider. The Foundry deployment remains configurable server-side.
+  if (!requested || /^deepseek|^googleai\//i.test(requested)) {
+    return process.env.FOUNDRY_GROK_DEPLOYMENT || process.env.GROK_MODEL || DEFAULT_STUDIO_MODEL;
+  }
+  return requested;
 }
 
 export function modelFallbackList(preferred?: string): string[] {
@@ -91,18 +97,18 @@ export async function deepseekChat(opts: {
     model: opts.model,
     messages: opts.messages,
     temperature: opts.temperature ?? 0.55,
-    max_tokens: opts.maxTokens ?? 8192,
+    max_completion_tokens: opts.maxTokens ?? 8192,
     stream: Boolean(opts.stream),
   };
   if (opts.tools?.length) {
     body.tools = opts.tools;
     body.tool_choice = 'auto';
   }
-  return fetch(`${DEEPSEEK_BASE}/v1/chat/completions`, {
+  return fetch(chatCompletionsUrl(), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${opts.apiKey}`,
+      'api-key': opts.apiKey,
     },
     body: JSON.stringify(body),
   });
