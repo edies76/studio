@@ -7,7 +7,7 @@ import DraftStreamCard from '@/components/draft-stream-card';
 import ToolLog, { type ToolLogItem } from '@/components/tool-log';
 import EditDiffCard from '@/components/edit-diff-card';
 import BrandMark from '@/components/brand-mark';
-import { ArrowUp, FileText, Loader2 } from 'lucide-react';
+import { ArrowUp, FileText, Loader2, X } from 'lucide-react';
 import { typesetEditor } from '@/lib/math-html';
 
 export type ChatMessage = {
@@ -54,7 +54,7 @@ type Props = {
   elapsedSeconds?: number;
   intent?: AgentIntent;
   onIntentChange?: (intent: AgentIntent) => void;
-  references?: Array<{ id: string; name: string; loading?: boolean }>;
+  references?: Array<{ id: string; name: string; loading?: boolean; progress?: number; cached?: boolean }>;
   onAttachReferences?: (files: File[]) => void;
   onRemoveReference?: (id: string) => void;
 };
@@ -225,9 +225,9 @@ export default function StudioChat({
               <span className="pointer-events-none absolute right-2 top-1.5 text-[9px] text-neutral-400">⌄</span>
             </label>
             <span className="truncate text-[10px] text-neutral-400">{intent === 'normal' ? 'Edit and explore the document' : intent === 'brief' ? 'Build and verify against the guide' : 'Check delivery coverage'}</span>
-            {onAttachReferences && <><input ref={referenceInputRef} type="file" multiple accept=".docx,.txt,.md,text/plain" className="sr-only" onChange={(event) => { const files = Array.from(event.target.files || []); if (files.length) onAttachReferences(files); event.currentTarget.value = ''; }} /><button type="button" onClick={() => referenceInputRef.current?.click()} className="ml-auto flex h-6 w-6 items-center justify-center rounded border border-neutral-200 bg-white text-neutral-500 hover:border-neutral-400" title="Attach reference"><FileText className="h-3 w-3" /></button></>}
+            {onAttachReferences && <><input ref={referenceInputRef} type="file" multiple accept=".docx,.txt,.md,text/plain" className="sr-only" onChange={(event) => { const files = Array.from(event.target.files || []); if (files.length) onAttachReferences(files); event.currentTarget.value = ''; }} /><button type="button" onClick={() => referenceInputRef.current?.click()} className="ml-auto flex h-6 w-6 items-center justify-center rounded border border-neutral-200 bg-white text-neutral-500 hover:border-neutral-400" title="Adjuntar archivo"><FileText className="h-3 w-3" /></button></>}
           </div>
-          {references.length > 0 && <div className="mb-1.5 flex flex-wrap gap-1">{references.map((reference) => <span key={reference.id} className="inline-flex max-w-full items-center gap-1 rounded bg-[#f0eee9] px-1.5 py-0.5 text-[9px] font-medium text-neutral-600"><span className="max-w-[140px] truncate">{reference.name}</span>{reference.loading ? <span className="text-neutral-400">leyendo…</span> : null}<button type="button" onClick={() => onRemoveReference?.(reference.id)} className="text-neutral-400 hover:text-neutral-800">×</button></span>)}</div>}
+          {references.length > 0 && <div className="mb-1.5 flex flex-wrap gap-1.5">{references.map((reference) => { const progress = Math.max(0, Math.min(100, reference.progress ?? (reference.loading ? 35 : 100))); return <span key={reference.id} title={reference.loading ? `Leyendo ${reference.name}…` : reference.cached ? `${reference.name} leído y en caché` : `${reference.name} leído`} className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-1.5 py-1 text-[9px] font-medium text-neutral-600 shadow-sm"><span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(#5a4a3d ${progress}%, #e5e1db 0)` }}><span className="flex h-2.5 w-2.5 items-center justify-center rounded-full bg-white">{reference.loading ? <Loader2 className="h-2 w-2 animate-spin text-studio-brown" /> : <span className="h-1.5 w-1.5 rounded-full bg-studio-brown" />}</span></span><span className="max-w-[140px] truncate">{reference.name}</span>{reference.loading ? <span className="text-neutral-400">leyendo…</span> : <span className="text-neutral-400">leído</span>}<button type="button" aria-label={`Quitar ${reference.name}`} onClick={() => onRemoveReference?.(reference.id)} className="text-neutral-400 hover:text-neutral-800"><X className="h-3 w-3" /></button></span>; })}</div>}
           <div className="flex items-end gap-1.5">
           <textarea
             value={input}

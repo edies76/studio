@@ -68,7 +68,7 @@ function isDocEmpty(html: string) {
   return t.length < 8;
 }
 
-type AgentReference = { id: string; name: string; text: string; cached?: boolean; loading?: boolean };
+type AgentReference = { id: string; name: string; text: string; cached?: boolean; loading?: boolean; progress?: number };
 
 /** Draft streams can briefly contain a Markdown fence before the first HTML tag. */
 function normaliseDraftHtml(raw: string): string {
@@ -213,9 +213,19 @@ export default function DocsStudioClient({
       const cacheKey = `${file.name}:${file.size}:${file.lastModified}`;
       const id = uid();
       try {
-        setAgentReferences((current) => [...current, { id, name: file.name, text: '', loading: true }].slice(-6));
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        setAgentReferences((current) => [...current, { id, name: file.name, text: '', loading: true, progress: 8 }].slice(-6));
+        const browserCacheKey = `docs-studio:reference:${cacheKey}`;
         let text = referenceTextCache.current.get(cacheKey) || '';
+        if (!text) {
+          try {
+            text = sessionStorage.getItem(browserCacheKey) || '';
+            if (text) referenceTextCache.current.set(cacheKey, text);
+          } catch {
+            /* private browsing or storage quota — extraction still works */
+          }
+        }
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, progress: text ? 75 : 20 } : reference));
         if (!text && (/\.docx$/i.test(file.name) || file.type.includes('wordprocessingml'))) {
           // A reference only needs text. Avoid the full Word importer, which
           // also creates visual-fidelity HTML, images and pagination.
@@ -228,7 +238,12 @@ export default function DocsStudioClient({
         if (!text.trim()) throw new Error(`${file.name} has no readable text.`);
         text = text.slice(0, 30000);
         referenceTextCache.current.set(cacheKey, text);
-        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, text, loading: false } : reference));
+        try {
+          sessionStorage.setItem(browserCacheKey, text);
+        } catch {
+          /* storage is an optimization, not a prerequisite */
+        }
+        setAgentReferences((current) => current.map((reference) => reference.id === id ? { ...reference, text, loading: false, progress: 100, cached: Boolean(text) } : reference));
       } catch (error: any) {
         setAgentReferences((current) => current.filter((reference) => reference.id !== id));
         toast({ variant: 'destructive', title: 'Could not attach reference', description: error?.message });
@@ -650,6 +665,7 @@ export default function DocsStudioClient({
         setDocId(data.doc.id);
         setDocumentTitle(data.doc.title || 'Untitled');
         setSourceDocx(data.doc.sourceDocx || null);
+        setDeliveryBoard(data.doc.delivery?.lastAgentUpdate || null);
         if (data.doc.brief) {
           setDocumentBrief(data.doc.brief as AssignmentBrief);
           setDocumentBriefContext(`Persisted document brief:\n${JSON.stringify(data.doc.brief).slice(0, 9000)}`);
@@ -1125,6 +1141,7 @@ export default function DocsStudioClient({
           opts?.intensity != null
             ? `\nApply intensity ${opts.intensity}% (10=subtle, 100=strong).`
             : '';
+        const deliveryModel = modelFromHtml(liveDocumentHtml, paperSize);
 
         const res = await fetch('/api/chat', {
           method: 'POST',
@@ -1143,6 +1160,8 @@ export default function DocsStudioClient({
             autoStart: false,
             assignmentContext: documentBrief ? 'An assignment guide is attached to this document. Read it with read_assignment_brief when needed.' : assignmentContext,
             assignmentBrief: documentBrief,
+            documentModel: deliveryModel,
+            documentRevision: documentRevision.current,
             attachedReferences: referencesPayload,
             attachedImage: opts?.attachedImage || null,
             workspaceContext: {
@@ -1165,7 +1184,18 @@ export default function DocsStudioClient({
         });
         trace('request:response-headers', { status: res.status });
 
-        if (!res.ok || !res.body) throw new Error('Chat failed');
+        if (!res.ok || !res.body) {
+          const detail = await res.text().catch(() => '');
+          let message = `No se pudo conectar con el agente (${res.status}).`;
+          try {
+            const parsed = JSON.parse(detail);
+            message = parsed?.message || parsed?.error || message;
+          } catch {
+            const sseMessage = detail.match(/"message"\s*:\s*"([^"]+)/)?.[1];
+            if (sseMessage) message = sseMessage;
+          }
+          throw new Error(message);
+        }
         referencesDelivered = true;
 
         const reader = res.body.getReader();
@@ -1204,6 +1234,20 @@ export default function DocsStudioClient({
               trace('tool:start', { name: ev.name || '', label, id });
               // stash id for matching end if server reuses
               (ev as any).__tid = id;
+            }
+            if (ev.type === 'reference_read_start') {
+              const id = ev.id || `refs_${Date.now()}`;
+              const label = ev.label || 'Leyendo archivo…';
+              setActivityLabel(label, 'active');
+              pushToolLog(assistantId, { id, label, state: 'running' });
+              trace('reference:read:start', { count: ev.count || 0, id });
+            }
+            if (ev.type === 'reference_read_done') {
+              const id = ev.id || '';
+              const label = ev.label || 'Archivo leído';
+              setActivity((prev) => prev.map((step) => step.state === 'active' ? { ...step, state: 'done' as const } : step));
+              pushToolLog(assistantId, { id, label, doneLabel: label, state: ev.ok === false ? 'error' : 'done' });
+              trace('reference:read:done', { count: ev.count || 0, id });
             }
             if (ev.type === 'tool_end') {
               const id = ev.id || '';
@@ -1244,6 +1288,21 @@ export default function DocsStudioClient({
             if (ev.type === 'delivery_update' && ev.update) {
               setDeliveryBoard(ev.update as DeliveryBoardUpdate);
               trace('delivery:update', { items: Array.isArray(ev.update.items) ? ev.update.items.length : 0 });
+              void fetch(`/api/docs/${docId}/review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentUpdate: ev.update }),
+              }).then(async (response) => {
+                const data = await response.json().catch(() => null);
+                if (response.ok) {
+                  if (typeof data?.revision === 'number') documentRevision.current = data.revision;
+                  if (data?.delivery?.lastAgentUpdate) setDeliveryBoard(data.delivery.lastAgentUpdate);
+                }
+              }).catch(() => undefined);
+            }
+            if (ev.type === 'delivery_snapshot' && ev.snapshot) {
+              setDeliveryBoard(ev.snapshot.lastAgentUpdate || null);
+              trace('delivery:snapshot', { coveragePercent: ev.snapshot.coveragePercent, readiness: ev.snapshot.readiness });
             }
             if (ev.type === 'text') {
               acc += ev.delta || '';
@@ -1558,6 +1617,19 @@ export default function DocsStudioClient({
     setActivity([]);
   };
 
+  const refreshDeliveryAfterChange = () => {
+    if (!docId || !documentBrief) return;
+    void fetch(`/api/docs/${docId}/review`, { method: 'POST' })
+      .then(async (response) => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) return;
+        if (data?.review) setAssignmentReview(data.review);
+        if (data?.delivery?.lastAgentUpdate) setDeliveryBoard(data.delivery.lastAgentUpdate);
+        if (typeof data?.revision === 'number') documentRevision.current = data.revision;
+      })
+      .catch(() => undefined);
+  };
+
   const acceptEdit = async (id: string) => {
     const item = pendingEdits.find((p) => p.id === id);
     if (!item) return;
@@ -1717,6 +1789,7 @@ export default function DocsStudioClient({
       true,
     );
     requestAnimationFrame(() => typesetAll());
+    refreshDeliveryAfterChange();
   };
 
   const rejectEdit = (id: string) => {
@@ -1835,8 +1908,27 @@ export default function DocsStudioClient({
     ids.forEach((id) => rejectEdit(id));
   };
 
+  const runExportGate = async (format: 'pdf' | 'docx' = 'pdf') => {
+    if (!docId) return true;
+    try {
+      const response = await fetch(`/api/docs/${docId}/export-check?format=${encodeURIComponent(format)}`);
+      const data = await response.json();
+      if (!response.ok) return true;
+      if (data.review) setAssignmentReview(data.review);
+      if (data.status !== 'ready') {
+        const details = [...(data.blockers || []), ...(data.warnings || [])].slice(0, 2).join(' · ');
+        toast({ title: data.label || 'Export check', description: details || 'Open Delivery for the full report.' });
+      }
+      return true;
+    } catch {
+      // Export remains available if the advisory check is temporarily unavailable.
+      return true;
+    }
+  };
+
   const handleExportPdf = async () => {
     if (!canvasRef.current) return;
+    await runExportGate('pdf');
     setIsExporting(true);
     setIsBusy(true);
     try {
@@ -1961,6 +2053,7 @@ export default function DocsStudioClient({
 
   const handleExportWord = async () => {
     if (!canvasRef.current) return;
+    await runExportGate('docx');
     setIsExporting(true);
     try {
       typesetAll();
@@ -2130,10 +2223,12 @@ export default function DocsStudioClient({
   const openAssignmentReview = async () => {
     if (!docId) return;
     try {
-      const response = await fetch(`/api/docs/${docId}/review`);
+      const response = await fetch(`/api/docs/${docId}/review`, { method: 'POST' });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'review_failed');
       setAssignmentReview(data.review || null);
+      setDeliveryBoard(data.delivery?.lastAgentUpdate || data.review?.snapshot?.lastAgentUpdate || null);
+      if (typeof data.revision === 'number') documentRevision.current = data.revision;
       setAssignmentReviewOpen(true);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'No se pudo revisar la entrega', description: error?.message });
@@ -2142,6 +2237,29 @@ export default function DocsStudioClient({
 
   const openSessionLibrary = () => {
     setSessionLibraryOpen(true);
+  };
+
+  const jumpToDeliveryBlock = (blockId: string) => {
+    const target = document.querySelector(`[data-studio-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null;
+    target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target?.focus?.({ preventScroll: true });
+  };
+
+  const actOnDeliveryRequirement = (requirement: import('@/lib/assignment-types').DeliveryRequirement, action: string) => {
+    const prompts: Record<string, string> = {
+      draft_section: `Work on the Delivery requirement “${requirement.label}”. Draft the missing section as a reviewable proposal, preserving the current structure and using only verified material.`,
+      find_source: `Work on the Delivery requirement “${requirement.label}”. Identify what supporting source or evidence is missing. Do not invent a source; propose the smallest useful next step.`,
+      check_math: `Check the calculations related to the Delivery requirement “${requirement.label}”. Inspect the relevant equations and propose only targeted corrections.`,
+      add_figure: `Work on the missing visual for “${requirement.label}”. Explain what the figure must show and propose an insertion point; do not invent data.`,
+      improve_argument: `Improve the argument for the Delivery requirement “${requirement.label}”. Propose a targeted revision grounded in the current document and brief.`,
+      review_human: `Review the Delivery requirement “${requirement.label}” and explain exactly what a human still needs to verify. Update Delivery, but do not claim it is done.`,
+    };
+    setAgentIntent('brief');
+    const prompt = prompts[action] || `Review the Delivery requirement “${requirement.label}” and propose the next useful change.`;
+    setChatInput(prompt);
+    setAssignmentReviewOpen(false);
+    setChatCollapsed(false);
+    void runChat(prompt, { intent: 'brief', skipFastDraft: true });
   };
 
   const chatTopBar = (
@@ -2480,6 +2598,16 @@ export default function DocsStudioClient({
         review={assignmentReview}
         delivery={deliveryBoard}
         onRefresh={() => void openAssignmentReview()}
+        onAction={actOnDeliveryRequirement}
+        onJumpToBlock={jumpToDeliveryBlock}
+        onSimulate={() => {
+          const prompt = 'Simulate a professor review of this document against the attached brief and rubric. Use Delivery, explain strong areas, partial areas, blockers, and the next concrete actions. Do not claim a grade guarantee.';
+          setAgentIntent('brief');
+          setChatInput(prompt);
+          setAssignmentReviewOpen(false);
+          void runChat(prompt, { intent: 'brief', skipFastDraft: true });
+        }}
+        onExportCheck={() => void runExportGate('pdf')}
       />
       <SessionLibraryDrawer open={sessionLibraryOpen} onClose={() => setSessionLibraryOpen(false)} sources={sessionSources} />
     </div>

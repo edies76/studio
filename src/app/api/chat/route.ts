@@ -23,8 +23,9 @@ import { slog } from '@/lib/server-log';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
 import { buildDocumentIntelligence, buildDocsAgentSystem, DOCS_STUDIO_IDENTITY, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 import { replaceTableCell } from '@/lib/table-tools';
-import { reviewAssignment } from '@/lib/assignment-review';
-import type { AssignmentBrief } from '@/lib/assignment-types';
+import { buildDeliverySnapshot, reviewAssignment } from '@/lib/assignment-review';
+import type { AssignmentBrief, DeliverySnapshot } from '@/lib/assignment-types';
+import type { StudioDocumentModel } from '@/lib/studio-document';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 export const runtime = 'nodejs';
@@ -171,6 +172,8 @@ export async function POST(req: NextRequest) {
     autoStart = false,
     assignmentContext = '',
     assignmentBrief,
+    documentModel,
+    documentRevision = 1,
     attachedReferences = [],
     workspaceContext,
     attachedImage = null,
@@ -184,6 +187,8 @@ export async function POST(req: NextRequest) {
     autoStart?: boolean;
     assignmentContext?: string;
     assignmentBrief?: AssignmentBrief;
+    documentModel?: StudioDocumentModel;
+    documentRevision?: number;
     attachedReferences?: AttachedReference[];
     workspaceContext?: WorkspaceAgentContext;
     /** data:image/... URL pasted by the user this turn, if any. */
@@ -249,10 +254,25 @@ export async function POST(req: NextRequest) {
       // for document parsing before we even know whether the document matters.
       let liveHtml = '';
       let mathSafeMode = false;
+      let currentDelivery: DeliverySnapshot | null = null;
 
       try {
         // Immediate first paint — real thinking signal
         send({ type: 'thinking', label: 'Pensando…' });
+
+        // File context is resolved before the model is called. Expose that
+        // lifecycle explicitly so the UI and the transcript never imply that
+        // an attachment was merely selected but not actually read.
+        if (resolvedReferences.length) {
+          const readId = `refs_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+          send({ type: 'reference_read_start', id: readId, name: 'read_attached_references', label: 'Leyendo archivo…', count: resolvedReferences.length });
+          slog.info('chat', 'references.read', {
+            count: resolvedReferences.length,
+            cachedCount: resolvedReferences.filter((reference) => !reference.isNew).length,
+            files: resolvedReferences.map((reference) => ({ id: reference.id, name: reference.name, chars: reference.text.length, cached: !reference.isNew })),
+          });
+          send({ type: 'reference_read_done', id: readId, name: 'read_attached_references', ok: true, label: `${resolvedReferences.length} archivo(s) leído(s)`, count: resolvedReferences.length });
+        }
 
         const lastUser = [...(messages || [])]
           .reverse()
@@ -367,6 +387,7 @@ export async function POST(req: NextRequest) {
         });
 
         const documentIntelligence = buildDocumentIntelligence(liveHtml, selectedText);
+        currentDelivery = buildDeliverySnapshot(assignmentBrief, liveHtml, documentModel, Number(documentRevision || 1));
         if (workspaceContext?.briefMode) {
           slog.info('chat', 'brief_mode.start', {
             documentId: workspaceContext.documentId || null,
@@ -959,7 +980,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
 
             if (name === 'update_delivery_board') {
               const tid = `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-              const allowed = new Set(['done', 'working', 'blocked']);
+              const allowed = new Set(['not_started', 'in_progress', 'partial', 'done', 'blocked', 'needs_review']);
               const items = Array.isArray(args.items)
                 ? args.items.slice(0, 16).flatMap((item: any, index: number) => {
                     const label = String(item?.label || '').trim().slice(0, 220);
@@ -967,12 +988,12 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                     return [{
                       id: String(item?.id || `delivery-${index + 1}`).slice(0, 80),
                       label,
-                      status: allowed.has(item?.status) ? item.status : 'working',
+                      status: allowed.has(item?.status) ? item.status : 'needs_review',
                       note: String(item?.note || '').trim().slice(0, 360) || undefined,
                     }];
                   })
                 : [];
-              const update = { summary: String(args.summary || '').trim().slice(0, 480), items };
+              const update = { summary: String(args.summary || '').trim().slice(0, 480), items, at: Date.now() };
               send({ type: 'tool_start', name, label: 'Updating Delivery…', id: tid });
               send({ type: 'delivery_update', update });
               send({ type: 'tool_end', name, ok: Boolean(update.summary || items.length), label: `${items.length} delivery item(s) updated`, id: tid });
@@ -987,6 +1008,39 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               const review = reviewAssignment(assignmentBrief, liveHtml);
               send({ type: 'tool_end', name, ok: Boolean(review), label: review ? `${review.covered}/${review.total} requisitos cubiertos` : 'No hay consigna adjunta', id: tid });
               await reply({ ok: Boolean(review), review, error: review ? undefined : 'No attached assignment brief. Ask the user to create the document from a brief or attach the assignment first.' });
+              continue;
+            }
+
+            if (name === 'read_delivery_state' || name === 'refresh_delivery') {
+              const tid = `delivery_read_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              send({ type: 'tool_start', name, label: name === 'refresh_delivery' ? 'Refreshing Delivery…' : 'Reading Delivery…', id: tid });
+              currentDelivery = buildDeliverySnapshot(assignmentBrief, liveHtml, documentModel, Number(documentRevision || 1), currentDelivery?.lastAgentUpdate);
+              send({ type: 'delivery_snapshot', snapshot: currentDelivery });
+              send({ type: 'tool_end', name, ok: Boolean(currentDelivery), label: currentDelivery ? `${currentDelivery.covered}/${currentDelivery.total} requirements covered` : 'No brief attached', id: tid });
+              await reply({ ok: Boolean(currentDelivery), delivery: currentDelivery, error: currentDelivery ? undefined : 'No assignment brief is attached.' });
+              continue;
+            }
+
+            if (name === 'explain_requirement' || name === 'find_requirement_evidence') {
+              const tid = `delivery_req_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const requirement = currentDelivery?.requirements.find((item) => item.id === String(args.requirementId || ''));
+              send({ type: 'tool_start', name, label: name === 'find_requirement_evidence' ? 'Finding requirement evidence…' : 'Explaining requirement…', id: tid });
+              send({ type: 'tool_end', name, ok: Boolean(requirement), label: requirement ? requirement.status : 'Requirement not found', id: tid });
+              await reply({ ok: Boolean(requirement), requirement, evidence: requirement?.evidence || [], error: requirement ? undefined : 'Requirement not found. Call read_delivery_state first.' });
+              continue;
+            }
+
+            if (name === 'run_submission_check') {
+              const tid = `submission_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+              const delivery = currentDelivery;
+              const pendingEdits = Number(workspaceContext?.pendingEdits || 0);
+              const structuralWarnings = documentIntelligence.stats.wordCount === 0 ? ['The document has no readable text.'] : [];
+              const blockers = [...(delivery?.blockers || []), ...structuralWarnings, ...(pendingEdits ? [`${pendingEdits} change proposal(s) still need review.`] : [])];
+              const needsReview = delivery?.requirements.filter((item) => item.status === 'needs_review' || item.status === 'partial').map((item) => item.label) || [];
+              const readiness = !delivery ? 'not_ready' : blockers.length ? 'not_ready' : needsReview.length ? 'warnings' : 'ready';
+              send({ type: 'tool_start', name, label: 'Running submission check…', id: tid });
+              send({ type: 'tool_end', name, ok: readiness !== 'not_ready', label: readiness === 'ready' ? 'Ready to export' : readiness === 'warnings' ? 'Ready with warnings' : 'Not ready', id: tid });
+              await reply({ ok: true, readiness, coveragePercent: delivery?.coveragePercent || 0, strong: delivery?.requirements.filter((item) => item.status === 'done').map((item) => item.label) || [], needsReview, blockers, stats: documentIntelligence.stats, equations: mathSafeSnapshot(liveHtml).equationCount, references: resolvedReferences.length });
               continue;
             }
 
