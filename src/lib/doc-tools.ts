@@ -1,3 +1,5 @@
+import type { DeliveryAgentUpdate } from '@/lib/assignment-types';
+
 /** Tool schemas for Studio document chat (client + server safe names). */
 
 export type PaperSize = 'letter' | 'legal' | 'a4';
@@ -10,16 +12,23 @@ export type ProposeEditPayload = {
   mode: 'replace_document' | 'replace_selection' | 'insert_html' | 'replace_block';
   /** 0-based block index for replace_block (p, h1-h3, li, table, etc.) */
   blockIndex?: number;
-  /** Client-created stable anchor. Never use blockIndex when applying a pending edit. */
+  /** Client-created stable anchor. Prefer identity over index when applying. */
   targetAnchor?: string;
   selectionHint?: string;
   changeList?: string[];
+  /**
+   * Full document HTML at proposal time (client-filled).
+   * Required for correct ghost/diff of partial edits — never ghost only afterHtml.
+   */
+  documentHtml?: string;
+  /**
+   * Full document HTML with the partial edit already spliced in (client-filled).
+   * Used as ghost "after" so surrounding paragraphs stay visible.
+   */
+  previewAfterHtml?: string;
 };
 
-export type DeliveryBoardUpdate = {
-  summary: string;
-  items: Array<{ id: string; label: string; status: 'done' | 'working' | 'blocked'; note?: string }>;
-};
+export type DeliveryBoardUpdate = DeliveryAgentUpdate;
 
 export type ChatStreamEvent =
   | { type: 'status'; label: string }
@@ -29,6 +38,7 @@ export type ChatStreamEvent =
   | { type: 'tool_end'; name: string; ok: boolean; label?: string; id?: string }
   | { type: 'workspace_command'; command: 'undo' | 'redo' }
   | { type: 'delivery_update'; update: DeliveryBoardUpdate }
+  | { type: 'delivery_snapshot'; snapshot: import('@/lib/assignment-types').DeliverySnapshot }
   | { type: 'propose_edit'; id: string; edit: ProposeEditPayload }
   | {
       type: 'done';
@@ -126,7 +136,7 @@ export const STUDIO_TOOL_DEFINITIONS = [
             properties: {
               id: { type: 'STRING' },
               label: { type: 'STRING' },
-              status: { type: 'STRING', enum: ['done', 'working', 'blocked'] },
+              status: { type: 'STRING', enum: ['not_started', 'in_progress', 'partial', 'done', 'blocked', 'needs_review'] },
               note: { type: 'STRING' },
             },
             required: ['id', 'label', 'status'],
@@ -139,6 +149,35 @@ export const STUDIO_TOOL_DEFINITIONS = [
   {
     name: 'read_assignment_brief',
     description: 'Read the attached assignment guide, tasks, constraints, rubric, and reference metadata. Use this first in Brief mode before planning or drafting. Never exposes the raw guide as a chat message.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
+    name: 'read_delivery_state',
+    description: 'Read the current rubric-aware Delivery snapshot: requirement statuses, evidence block IDs, blockers, warnings, readiness, and the last agent update. Use before deciding what the document still needs.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
+    name: 'refresh_delivery',
+    description: 'Recompute Delivery from the current document and attached brief. This is deterministic and never changes document content.',
+    parameters: { type: 'OBJECT', properties: {}, required: [] },
+  },
+  {
+    name: 'explain_requirement',
+    description: 'Explain one requirement using its source, current status, evidence block IDs, missing evidence, and the next useful action.',
+    parameters: {
+      type: 'OBJECT', properties: { requirementId: { type: 'STRING', description: 'Stable Delivery requirement id.' } }, required: ['requirementId'],
+    },
+  },
+  {
+    name: 'find_requirement_evidence',
+    description: 'Locate evidence for one Delivery requirement in the current structured document. Return stable block IDs and explain what is still unverified.',
+    parameters: {
+      type: 'OBJECT', properties: { requirementId: { type: 'STRING', description: 'Stable Delivery requirement id.' } }, required: ['requirementId'],
+    },
+  },
+  {
+    name: 'run_submission_check',
+    description: 'Run a readiness check before export. Report requirements, rubric, references, equations, tables, images, page limits, pending edits, and blockers. Never claims a grade or guarantees acceptance.',
     parameters: { type: 'OBJECT', properties: {}, required: [] },
   },
   {
@@ -465,6 +504,105 @@ export function repositionImageAt(
     return match;
   });
   return replaced ? result : null;
+}
+
+/** Collapse whitespace / strip volatile attrs so block identity survives reflow. */
+export function normalizeBlockSignature(html: string): string {
+  return (html || '')
+    .replace(/\sdata-studio-proposal-anchor="[^"]*"/gi, '')
+    .replace(/\sdata-studio-[a-z-]+="[^"]*"/gi, '')
+    .replace(/\sclass="[^"]*"/gi, '')
+    .replace(/\sstyle="[^"]*"/gi, '')
+    .replace(/\s+/g, ' ')
+    .replace(/>\s+</g, '><')
+    .trim()
+    .toLowerCase();
+}
+
+function plainSignature(html: string): string {
+  return (html || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function plainRoughMatch(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length >= 12 && b.includes(a)) return true;
+  if (b.length >= 12 && a.includes(b)) return true;
+  // Prefix match for long paragraphs that only changed a suffix.
+  const n = Math.min(48, a.length, b.length);
+  return n >= 24 && a.slice(0, n) === b.slice(0, n);
+}
+
+/**
+ * Splice a block/selection replacement into full document HTML.
+ * Does NOT require live DOM position. Order of attempts:
+ * 1) exact beforeHtml substring
+ * 2) normalized signature match among extractHtmlBlocks
+ * 3) blockIndex when still plausible
+ * 4) plain-text / selectionHint match
+ */
+export function replaceFragmentInDocumentHtml(
+  documentHtml: string,
+  opts: {
+    afterHtml: string;
+    beforeHtml?: string;
+    blockIndex?: number;
+    selectionHint?: string;
+  },
+): string | null {
+  const doc = documentHtml || '';
+  const after = (opts.afterHtml || '').trim();
+  if (!doc.trim() || !after) return null;
+
+  const before = (opts.beforeHtml || '').trim();
+  if (before) {
+    const exact = doc.indexOf(before);
+    if (exact >= 0) {
+      return `${doc.slice(0, exact)}${after}${doc.slice(exact + before.length)}`;
+    }
+  }
+
+  const blocks = extractHtmlBlocks(doc);
+  if (!blocks.length) return null;
+
+  const beforeSig = before ? normalizeBlockSignature(before) : '';
+  const beforePlain = before ? plainSignature(before) : '';
+  const hintPlain = plainSignature(opts.selectionHint || '');
+
+  let targetIdx = -1;
+
+  if (beforeSig) {
+    targetIdx = blocks.findIndex((b) => normalizeBlockSignature(b.html) === beforeSig);
+  }
+  if (targetIdx < 0 && beforePlain) {
+    targetIdx = blocks.findIndex((b) => plainRoughMatch(plainSignature(b.html), beforePlain));
+  }
+  if (
+    targetIdx < 0 &&
+    typeof opts.blockIndex === 'number' &&
+    opts.blockIndex >= 0 &&
+    opts.blockIndex < blocks.length
+  ) {
+    const candidate = blocks[opts.blockIndex];
+    // Only trust index when we have no before, or when plain text still roughly matches.
+    if (!beforePlain || plainRoughMatch(plainSignature(candidate.html), beforePlain)) {
+      targetIdx = opts.blockIndex;
+    }
+  }
+  if (targetIdx < 0 && hintPlain) {
+    targetIdx = blocks.findIndex((b) => plainRoughMatch(plainSignature(b.html), hintPlain));
+  }
+
+  if (targetIdx < 0) return null;
+  const target = blocks[targetIdx].html;
+  const pos = doc.indexOf(target);
+  if (pos < 0) return null;
+  return `${doc.slice(0, pos)}${after}${doc.slice(pos + target.length)}`;
 }
 
 /** Extract top-level-ish content blocks from HTML for read/edit_paragraph */

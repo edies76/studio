@@ -1,4 +1,5 @@
 import type { AssignmentBrief } from '../lib/assignment-types';
+import { replaceFragmentInDocumentHtml } from '../lib/doc-tools';
 import { sanitizeDocumentHtml } from '../lib/math-html';
 
 export type DocumentPaperSize = 'letter' | 'legal' | 'a4';
@@ -208,12 +209,15 @@ export class DocsStudioWorkspace {
       }
       document.html = edit.afterHtml;
     } else {
-      const current = edit.beforeHtml || document.html;
-      const position = document.html.indexOf(current);
-      if (position < 0) {
+      const spliced = replaceFragmentInDocumentHtml(document.html, {
+        afterHtml: edit.afterHtml,
+        beforeHtml: edit.beforeHtml,
+        selectionHint: edit.selectionHint,
+      });
+      if (!spliced) {
         throw new Error('The proposed selection is no longer present in the document.');
       }
-      document.html = `${document.html.slice(0, position)}${edit.afterHtml}${document.html.slice(position + current.length)}`;
+      document.html = spliced;
     }
     edit.status = 'accepted';
     document.updatedAt = now();

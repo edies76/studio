@@ -1,4 +1,4 @@
-import type { AssignmentBrief } from '@/lib/assignment-types';
+import type { AssignmentBrief, DeliveryAgentUpdate, DeliverySnapshot } from '@/lib/assignment-types';
 import {
   createDocument as createStoredDocument,
   deleteDocument as deleteStoredDocument,
@@ -13,8 +13,10 @@ import {
   type StoredPendingEdit,
 } from '@/lib/doc-store';
 import { extractDocumentBlocks } from './core';
+import { replaceFragmentInDocumentHtml } from '@/lib/doc-tools';
 import { sanitizeDocumentHtml } from '@/lib/math-html';
 import { replaceTableCell } from '@/lib/table-tools';
+import { reviewAssignment } from '@/lib/assignment-review';
 
 export type CloudDocumentInput = {
   title?: string;
@@ -97,6 +99,7 @@ export function publicCloudDocument(document: StudioDocument) {
           rubric: doc.brief.rubric,
         }
       : undefined,
+    delivery: doc.delivery,
   };
 }
 
@@ -172,9 +175,48 @@ export class CloudDocsStudioWorkspace {
   async setBrief(id: string, brief: AssignmentBrief) {
     const document = await this.getDocument(id);
     document.brief = brief;
+    document.delivery = undefined;
     document.updatedAt = Date.now();
     this.addHistory(document, 'edited', `Attached brief: ${brief.title}`);
     return publicCloudDocument(await this.save(document));
+  }
+
+  async reviewDelivery(id: string, refresh = true) {
+    const document = await this.getDocument(id);
+    const review = reviewAssignment(document.brief, document.html, document.model, document.revision);
+    if (!review) return null;
+    if (!refresh) return review.snapshot;
+    document.delivery = review.snapshot;
+    const saved = await this.save(document);
+    return saved.delivery || review.snapshot;
+  }
+
+  async updateDelivery(id: string, update: DeliveryAgentUpdate) {
+    const document = await this.getDocument(id);
+    const review = reviewAssignment(document.brief, document.html, document.model, document.revision);
+    if (!review) throw new Error('No assignment brief is attached to this document.');
+    const valid = new Map(review.snapshot.requirements.map((item) => [item.id, item]));
+    const items = update.items.slice(0, 16).flatMap((item) => {
+      const requirement = valid.get(item.id);
+      if (!requirement) return [];
+      const status = item.status === 'done' && !requirement.covered ? 'needs_review' : item.status;
+      return [{ ...item, status }];
+    });
+    review.snapshot.lastAgentUpdate = { summary: update.summary.slice(0, 480), items, at: update.at || Date.now() };
+    document.delivery = review.snapshot;
+    const saved = await this.save(document);
+    return saved.delivery || review.snapshot;
+  }
+
+  async submissionCheck(id: string) {
+    const document = await this.getDocument(id);
+    const review = reviewAssignment(document.brief, document.html, document.model, document.revision);
+    const pendingEdits = document.pendingEdits.filter((edit) => edit.status === 'pending').length;
+    const blockers = [...(review?.blockers || [])];
+    const warnings = [...(review?.warnings || [])];
+    if (!plainText(document.html)) blockers.push('The document has no readable text.');
+    if (pendingEdits) warnings.push(`${pendingEdits} proposal(s) still need review.`);
+    return { status: blockers.length ? 'not_ready' : warnings.length || review?.readiness === 'warnings' ? 'warnings' : review ? 'ready' : 'not_ready', blockers, warnings, coveragePercent: review?.coveragePercent || 0, review };
   }
 
   async replaceContent(id: string, html: string, type: StoredHistoryEntry['type'], label: string) {
@@ -271,10 +313,13 @@ export class CloudDocsStudioWorkspace {
       }
       document.html = edit.afterHtml;
     } else {
-      const current = edit.beforeHtml || document.html;
-      const position = document.html.indexOf(current);
-      if (position < 0) throw new Error('The proposed selection is no longer present in the document.');
-      document.html = `${document.html.slice(0, position)}${edit.afterHtml}${document.html.slice(position + current.length)}`;
+      const spliced = replaceFragmentInDocumentHtml(document.html, {
+        afterHtml: edit.afterHtml,
+        beforeHtml: edit.beforeHtml,
+        selectionHint: edit.selectionHint,
+      });
+      if (!spliced) throw new Error('The proposed selection is no longer present in the document.');
+      document.html = spliced;
     }
     edit.status = 'accepted';
     document.updatedAt = Date.now();
@@ -389,6 +434,7 @@ export class CloudDocsStudioWorkspace {
       html: document.html,
       paperSize: document.paperSize,
       brief: document.brief,
+      delivery: document.delivery,
       history: document.history,
       pendingEdits: document.pendingEdits,
       chat: document.chat,

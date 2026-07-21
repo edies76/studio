@@ -26,7 +26,11 @@ import SelectionFormatBar from '@/components/selection-format-bar';
 import ZoomControl from '@/components/zoom-control';
 import { cn } from '@/lib/utils';
 import { DEFAULT_STUDIO_MODEL } from '@/lib/studio-models';
-import { extractHtmlBlocks } from '@/lib/doc-tools';
+import {
+  extractHtmlBlocks,
+  normalizeBlockSignature,
+  replaceFragmentInDocumentHtml,
+} from '@/lib/doc-tools';
 import type { DeliveryBoardUpdate, PaperSize, ProposeEditPayload } from '@/lib/doc-tools';
 import {
   sanitizeDocumentHtml,
@@ -304,8 +308,18 @@ export default function DocsStudioClient({
       const target = blocks.find((block) => block.getAttribute('data-studio-proposal-anchor') === edit.targetAnchor);
       if (target) return target;
     }
-    // Compatibility for stored proposals created before stable anchors.
-    return edit.beforeHtml ? blocks.find((block) => block.outerHTML === edit.beforeHtml) || null : null;
+    // Prefer stable identity over fragile live outerHTML / index.
+    if (edit.beforeHtml) {
+      const beforeSig = normalizeBlockSignature(edit.beforeHtml);
+      const bySig = blocks.find((block) => normalizeBlockSignature(block.outerHTML) === beforeSig);
+      if (bySig) return bySig;
+      const exact = blocks.find((block) => block.outerHTML === edit.beforeHtml);
+      if (exact) return exact;
+    }
+    if (typeof edit.blockIndex === 'number' && edit.blockIndex >= 0 && edit.blockIndex < blocks.length) {
+      return blocks[edit.blockIndex] || null;
+    }
+    return null;
   }, [queryAllBlocks]);
 
   const selectionInCanvas = useCallback((node: Node | null) => {
@@ -1335,26 +1349,53 @@ export default function DocsStudioClient({
               trace('proposal:received', { mode: ev.edit?.mode || '', title: ev.edit?.title || '' });
               proposedSomethingForRequest = true;
               const edit = ev.edit as ProposeEditPayload;
+              // Snapshot full document so ghost/diff/accept never depend on a
+              // live DOM range or a fragile outerHTML string alone.
+              edit.documentHtml = liveDocumentHtml;
               // Always anchor "before" to the live document so structural diffs
               // keep real HTML (headings, LaTeX, tables) instead of model guesses.
               if (edit.mode === 'replace_document') {
                 edit.beforeHtml = liveDocumentHtml;
+                edit.previewAfterHtml = edit.afterHtml;
               } else if (edit.mode === 'replace_selection') {
                 if (!edit.beforeHtml) {
                   edit.beforeHtml = selectedTextRef.current
                     ? `<p>${selectedTextRef.current}</p>`
                     : '';
                 }
-              } else if (
-                edit.mode === 'replace_block' &&
-                typeof edit.blockIndex === 'number'
-              ) {
-                const el = queryAllBlocks()[edit.blockIndex];
+                edit.previewAfterHtml =
+                  replaceFragmentInDocumentHtml(liveDocumentHtml, {
+                    afterHtml: edit.afterHtml,
+                    beforeHtml: edit.beforeHtml,
+                    selectionHint: edit.selectionHint || selectedTextRef.current || undefined,
+                  }) || undefined;
+              } else if (edit.mode === 'replace_block') {
+                const blocks = queryAllBlocks();
+                let el: HTMLElement | null = null;
+                if (typeof edit.blockIndex === 'number' && blocks[edit.blockIndex]) {
+                  el = blocks[edit.blockIndex];
+                } else if (edit.beforeHtml) {
+                  const beforeSig = normalizeBlockSignature(edit.beforeHtml);
+                  el = blocks.find((b) => normalizeBlockSignature(b.outerHTML) === beforeSig) || null;
+                }
                 if (el) {
                   edit.targetAnchor = `proposal_${ev.id}`;
                   el.setAttribute('data-studio-proposal-anchor', edit.targetAnchor);
                   edit.beforeHtml = el.outerHTML;
+                  if (typeof edit.blockIndex !== 'number') {
+                    edit.blockIndex = blocks.indexOf(el);
+                  }
                 }
+                edit.previewAfterHtml =
+                  replaceFragmentInDocumentHtml(liveDocumentHtml, {
+                    afterHtml: edit.afterHtml,
+                    beforeHtml: edit.beforeHtml,
+                    blockIndex: edit.blockIndex,
+                    selectionHint: edit.selectionHint,
+                  }) || undefined;
+              } else if (edit.mode === 'insert_html') {
+                // Ghost as append when we cannot resolve a caret splice.
+                edit.previewAfterHtml = `${liveDocumentHtml}${edit.afterHtml}`;
               }
               setPendingEdits((p) => [...p, { id: ev.id, edit, status: 'pending' }]);
               setActiveEditId((cur) => cur || ev.id);
@@ -1655,13 +1696,13 @@ export default function DocsStudioClient({
     const item = pendingEdits.find((p) => p.id === id);
     if (!item) return;
     const { edit } = item;
+    const currentHtml = readEditorHtml();
 
     // AI proposals are anchored to a specific document state. Never apply a
     // stale range or block to a newer document, otherwise an edit can silently
     // land in the wrong paragraph after the user keeps typing.
     if (edit.mode === 'replace_document' && edit.beforeHtml) {
-      const current = readEditorHtml();
-      if (current !== edit.beforeHtml) {
+      if (currentHtml !== edit.beforeHtml && currentHtml !== edit.documentHtml) {
         toast({
           variant: 'destructive',
           title: 'El documento cambió',
@@ -1671,89 +1712,87 @@ export default function DocsStudioClient({
       }
     }
 
-    if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-      const target = findProposalTarget(edit);
-      if (!target) {
-        toast({
-          variant: 'destructive',
-          title: 'El párrafo ya no está disponible',
-          description: 'La propuesta no se aplicó sobre otro contenido.',
-        });
-        return;
-      }
-      if (edit.beforeHtml && target.outerHTML !== edit.beforeHtml) {
-        toast({
-          variant: 'destructive',
-          title: 'El bloque cambió',
-          description: 'La propuesta quedó desactualizada. Vuelve a pedir ese cambio.',
-        });
-        return;
-      }
-    }
-
-    if (edit.mode === 'replace_selection') {
-      const range = selectionRef.current;
-      const attached = !!range && selectionInCanvas(range.commonAncestorContainer);
-      if (!attached || !range?.toString().trim()) {
-        toast({
-          variant: 'destructive',
-          title: 'La selección ya no está disponible',
-          description: 'Seleccioná el texto nuevamente y pedile al agente que lo edite.',
-        });
-        return;
-      }
-    }
-
     if (edit.mode === 'replace_document') {
       applyHtml(edit.afterHtml, true, 'cascade');
-    } else if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-      const target = findProposalTarget(edit);
-      if (target) {
+    } else if (edit.mode === 'replace_block') {
+      // Prefer HTML splice by stable identity (beforeHtml / signature / index).
+      // Live DOM anchors are a best-effort shortcut, never the only path.
+      const spliced =
+        replaceFragmentInDocumentHtml(currentHtml, {
+          afterHtml: sanitizeDocumentHtml(edit.afterHtml),
+          beforeHtml: edit.beforeHtml,
+          blockIndex: edit.blockIndex,
+          selectionHint: edit.selectionHint,
+        }) ||
+        (edit.previewAfterHtml && edit.documentHtml === currentHtml ? edit.previewAfterHtml : null);
+
+      if (spliced) {
+        applyHtml(spliced, true);
+      } else {
+        const target = findProposalTarget(edit);
+        if (!target) {
+          toast({
+            variant: 'destructive',
+            title: 'El párrafo ya no está disponible',
+            description: 'La propuesta no se aplicó sobre otro contenido. Pedile al agente que la regenere.',
+          });
+          return;
+        }
         const wrap = document.createElement('div');
         wrap.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
         const next = wrap.firstElementChild;
         if (next) target.replaceWith(next);
         else target.outerHTML = sanitizeDocumentHtml(edit.afterHtml);
-        // Re-pack pages after DOM mutation
-        const html = readEditorHtml();
-        applyHtml(html, true);
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'El párrafo ya no está disponible',
-          description: 'La propuesta no modificó el documento.',
-        });
+        applyHtml(readEditorHtml(), true);
       }
-    } else if (edit.mode === 'replace_selection' && selectionRef.current) {
-      try {
-        const range = selectionRef.current;
-        const hostBlock =
-          range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
-            ? (range.commonAncestorContainer as HTMLElement).closest('p, h1, h2, h3, li, blockquote')
-            : range.commonAncestorContainer.parentElement?.closest('p, h1, h2, h3, li, blockquote');
-        const temp = document.createElement('div');
-        temp.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
-        const frag = document.createDocumentFragment();
-        const replacementBlock = temp.children.length === 1 ? temp.firstElementChild : null;
-        // A partial selection inside one text block must stay inline. Inserting
-        // a generated <p> into that <p> splits surrounding text and makes the
-        // proposal look like a whole-paragraph replacement.
-        if (hostBlock?.tagName === 'P' && replacementBlock?.tagName === 'P') {
-          while (replacementBlock.firstChild) frag.appendChild(replacementBlock.firstChild);
-        } else {
-          while (temp.firstChild) frag.appendChild(temp.firstChild);
+    } else if (edit.mode === 'replace_selection') {
+      const range = selectionRef.current;
+      const attached = !!range && selectionInCanvas(range.commonAncestorContainer);
+      if (attached && range?.toString().trim()) {
+        try {
+          const hostBlock =
+            range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+              ? (range.commonAncestorContainer as HTMLElement).closest('p, h1, h2, h3, li, blockquote')
+              : range.commonAncestorContainer.parentElement?.closest('p, h1, h2, h3, li, blockquote');
+          const temp = document.createElement('div');
+          temp.innerHTML = sanitizeDocumentHtml(edit.afterHtml);
+          const frag = document.createDocumentFragment();
+          const replacementBlock = temp.children.length === 1 ? temp.firstElementChild : null;
+          // A partial selection inside one text block must stay inline. Inserting
+          // a generated <p> into that <p> splits surrounding text and makes the
+          // proposal look like a whole-paragraph replacement.
+          if (hostBlock?.tagName === 'P' && replacementBlock?.tagName === 'P') {
+            while (replacementBlock.firstChild) frag.appendChild(replacementBlock.firstChild);
+          } else {
+            while (temp.firstChild) frag.appendChild(temp.firstChild);
+          }
+          range.deleteContents();
+          range.insertNode(frag);
+          applyHtml(readEditorHtml(), true);
+        } catch {
+          toast({
+            variant: 'destructive',
+            title: 'No se pudo aplicar la selección',
+            description: 'La propuesta no modificó el documento. Vuelve a seleccionar el texto y pídele al agente que lo intente de nuevo.',
+          });
+          return;
         }
-        range.deleteContents();
-        range.insertNode(frag);
-        const html = readEditorHtml();
-        applyHtml(html, true);
-      } catch {
-        toast({
-          variant: 'destructive',
-          title: 'No se pudo aplicar la selección',
-          description: 'La propuesta no modificó el documento. Vuelve a seleccionar el texto y pídele al agente que lo intente de nuevo.',
+      } else {
+        // Fallback: splice by beforeHtml / selectionHint without live range.
+        const spliced = replaceFragmentInDocumentHtml(currentHtml, {
+          afterHtml: sanitizeDocumentHtml(edit.afterHtml),
+          beforeHtml: edit.beforeHtml,
+          selectionHint: edit.selectionHint,
         });
-        return;
+        if (!spliced) {
+          toast({
+            variant: 'destructive',
+            title: 'La selección ya no está disponible',
+            description: 'Seleccioná el texto nuevamente y pedile al agente que lo edite.',
+          });
+          return;
+        }
+        applyHtml(spliced, true);
       }
     } else if (edit.mode === 'insert_html') {
       const body = getActiveBody();
@@ -1853,13 +1892,18 @@ export default function DocsStudioClient({
     if (decision === 'accept-one') {
       const currentHtml = readEditorHtml();
       let nextDocument = currentHtml;
-      if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
-        const target = findProposalTarget(edit);
-        if (!target) {
+      if (edit.mode === 'replace_block') {
+        const spliced = replaceFragmentInDocumentHtml(currentHtml, {
+          afterHtml: nextFragment,
+          beforeHtml: edit.beforeHtml,
+          blockIndex: edit.blockIndex,
+          selectionHint: edit.selectionHint,
+        });
+        if (!spliced) {
           toast({ variant: 'destructive', title: 'El párrafo ya cambió', description: 'Vuelve a generar la propuesta sobre el texto actual.' });
           return;
         }
-        nextDocument = currentHtml.replace(target.outerHTML, nextFragment);
+        nextDocument = spliced;
       } else if (edit.mode === 'replace_document') {
         const currentBlocks = extractHtmlBlocks(currentHtml);
         if (currentBlocks.length !== 1) {
@@ -1869,10 +1913,27 @@ export default function DocsStudioClient({
         nextDocument = nextFragment;
       }
       applyHtml(nextDocument, true);
+      const previewAfter =
+        edit.mode === 'replace_block'
+          ? replaceFragmentInDocumentHtml(nextDocument, {
+              afterHtml: edit.afterHtml,
+              beforeHtml: nextFragment,
+              blockIndex: edit.blockIndex,
+              selectionHint: edit.selectionHint,
+            }) || undefined
+          : edit.afterHtml;
       setPendingEdits((items) =>
         items.map((candidate) =>
           candidate.id === id
-            ? { ...candidate, edit: { ...candidate.edit, beforeHtml: nextFragment } }
+            ? {
+                ...candidate,
+                edit: {
+                  ...candidate.edit,
+                  beforeHtml: nextFragment,
+                  documentHtml: nextDocument,
+                  previewAfterHtml: previewAfter,
+                },
+              }
             : candidate,
         ),
       );
@@ -1886,10 +1947,27 @@ export default function DocsStudioClient({
       rejectEdit(id);
       return;
     }
+    const baseDoc = edit.documentHtml || readEditorHtml();
+    const previewAfter =
+      edit.mode === 'replace_block'
+        ? replaceFragmentInDocumentHtml(baseDoc, {
+            afterHtml: remaining,
+            beforeHtml: edit.beforeHtml,
+            blockIndex: edit.blockIndex,
+            selectionHint: edit.selectionHint,
+          }) || undefined
+        : remaining;
     setPendingEdits((items) =>
       items.map((candidate) =>
         candidate.id === id
-          ? { ...candidate, edit: { ...candidate.edit, afterHtml: remaining } }
+          ? {
+              ...candidate,
+              edit: {
+                ...candidate.edit,
+                afterHtml: remaining,
+                previewAfterHtml: previewAfter,
+              },
+            }
           : candidate,
       ),
     );
@@ -1906,9 +1984,7 @@ export default function DocsStudioClient({
     // Block edits can be applied safely from the bottom upwards. Selection,
     // document and insertion edits depend on a live anchor, so applying them
     // in a synchronous loop could move or overwrite the next target.
-    const blockEdits = pending.every(
-      (item) => item.edit.mode === 'replace_block' && typeof item.edit.blockIndex === 'number',
-    );
+    const blockEdits = pending.every((item) => item.edit.mode === 'replace_block');
     if (!blockEdits) {
       toast({
         title: 'Aplicá las propuestas una por una',
@@ -2316,6 +2392,29 @@ export default function DocsStudioClient({
   const pending =
     pendingList.find((e) => e.id === activeEditId) || pendingList[0] || null;
 
+  // Full-document ghost only. Never pass bare afterHtml for partial edits —
+  // that used to wipe the rest of the page visually.
+  const ghostBeforeHtml =
+    pending?.edit.documentHtml ||
+    (pending?.edit.mode === 'replace_document' ? pending.edit.beforeHtml : null) ||
+    null;
+  const ghostHtml = (() => {
+    if (!pending) return null;
+    if (pending.edit.previewAfterHtml) return pending.edit.previewAfterHtml;
+    if (pending.edit.mode === 'replace_document') return pending.edit.afterHtml;
+    if (ghostBeforeHtml) {
+      return (
+        replaceFragmentInDocumentHtml(ghostBeforeHtml, {
+          afterHtml: pending.edit.afterHtml,
+          beforeHtml: pending.edit.beforeHtml,
+          blockIndex: pending.edit.blockIndex,
+          selectionHint: pending.edit.selectionHint,
+        }) || null
+      );
+    }
+    return null;
+  })();
+
   // Compact status for floating composer (latest assistant text, short)
   const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && !m.isDraftStream);
   const floatingLogs = lastAssistant?.toolLogs || [];
@@ -2389,8 +2488,8 @@ export default function DocsStudioClient({
               onEditMath={(math) => openEquationEditor(math)}
               onEditBlock={handleEditBlock}
               onPageCountChange={setPageCount}
-              ghostHtml={pending?.edit.afterHtml ?? null}
-              ghostBeforeHtml={pending?.edit.beforeHtml ?? null}
+              ghostHtml={ghostHtml}
+              ghostBeforeHtml={ghostBeforeHtml}
               ghostTitle={pending?.edit.title ?? null}
               zoom={zoom}
               marginPreset={prefs.marginPreset}
