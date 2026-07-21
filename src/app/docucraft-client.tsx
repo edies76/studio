@@ -152,12 +152,14 @@ export default function DocsStudioClient({
   const restoredDraft = useRef(false);
   // A blank editor has no server id yet. It must never share the old generic
   // "blank" localStorage bucket with another tab, user, or previous document.
-  const freshDraftScope = useRef<string | null>(null);
-  if (!freshDraftScope.current) {
-    freshDraftScope.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+  // Generate the private draft bucket after hydration. Reading a browser
+  // random source during render makes the server and client trees diverge.
+  const [freshDraftScope, setFreshDraftScope] = useState<string | null>(null);
+  useEffect(() => {
+    setFreshDraftScope(typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID()
-      : uid();
-  }
+      : uid());
+  }, []);
 
   const [hasSelection, setHasSelection] = useState(false);
   const [selBar, setSelBar] = useState<{ top: number; left: number } | null>(null);
@@ -571,10 +573,10 @@ export default function DocsStudioClient({
   // overwrite the document selected by its URL.
   const draftKey = initialDocumentId
     ? `docs-studio:draft:doc:${initialDocumentId}`
-    : `docs-studio:draft:new:${freshDraftScope.current}`;
+    : `docs-studio:draft:new:${freshDraftScope || 'pending'}`;
 
   useEffect(() => {
-    if (!isClient || draftReady) return;
+    if (!isClient || draftReady || !freshDraftScope) return;
     // A URL document is hydrated by the server-load effect below. Marking it
     // ready here starts autosave before the fetched HTML/model is mounted;
     // the first interval can then save the initial blank state with the old

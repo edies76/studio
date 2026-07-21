@@ -172,10 +172,10 @@ function restoreSelectionBookmark(bookmark: SelectionBookmark, bodies: HTMLEleme
   const range = document.createRange();
   range.setStart(start.node, start.offset);
   range.setEnd(end.node, end.offset);
+  start.body.focus({ preventScroll: true });
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
-  start.body.focus({ preventScroll: true });
   lastSelection.current = range.cloneRange();
 }
 
@@ -193,15 +193,108 @@ function selectionAtBodyEdge(body: HTMLElement, edge: 'start' | 'end'): boolean 
 }
 
 function focusBodyEdge(body: HTMLElement, edge: 'start' | 'end', lastSelection: MutableRefObject<Range | null>) {
+  body.focus({ preventScroll: true });
   const range = document.createRange();
   range.selectNodeContents(body);
   range.collapse(edge === 'start');
   const selection = window.getSelection();
   selection?.removeAllRanges();
   selection?.addRange(range);
-  body.focus({ preventScroll: true });
   lastSelection.current = range.cloneRange();
   body.closest('.studio-page-sheet')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+function editableBlockAtSelection(body: HTMLElement, range: Range): HTMLElement | null {
+  const node = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer as HTMLElement
+    : range.startContainer.parentElement;
+  const block = node?.closest(BLOCK_SEL) as HTMLElement | null;
+  if (block && body.contains(block) && block.tagName !== 'TABLE') return block;
+
+  // Chrome can represent a caret at the end of a contentEditable root as a
+  // boundary in the root itself (offset = childNodes.length), especially
+  // after repeated Enter presses. Resolve that boundary to the nearest
+  // editable block instead of letting the browser insert a raw text node in
+  // the root.
+  if (range.startContainer === body) {
+    const index = range.startOffset;
+    const blockFromNode = (candidate: Node | undefined): HTMLElement | null => {
+      if (!candidate) return null;
+      const element = candidate.nodeType === Node.ELEMENT_NODE
+        ? candidate as HTMLElement
+        : candidate.parentElement;
+      const nearest = element?.closest(BLOCK_SEL) as HTMLElement | null;
+      return nearest && body.contains(nearest) && nearest.tagName !== 'TABLE' ? nearest : null;
+    };
+    for (let distance = 1; distance <= body.childNodes.length + 1; distance += 1) {
+      const previous = blockFromNode(body.childNodes[index - distance]);
+      if (previous) return previous;
+      const next = blockFromNode(body.childNodes[index + distance - 1]);
+      if (next) return next;
+    }
+  }
+  return null;
+}
+
+function placeCaretAtStart(element: HTMLElement, lastSelection: MutableRefObject<Range | null>): void {
+  const body = element.closest('[data-page-body]') as HTMLElement | null;
+  body?.focus({ preventScroll: true });
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  range.collapse(true);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  lastSelection.current = range.cloneRange();
+}
+
+/**
+ * Split the current paragraph/list item at the caret. Relying on Chrome's
+ * native Enter inside several contentEditable roots is not stable: it can
+ * insert a line break without an input event, leaving the next typed word in
+ * the old block and allowing the caret to drift into the sheet footer.
+ */
+function splitBlockAtSelection(
+  body: HTMLElement,
+  lastSelection: MutableRefObject<Range | null>,
+): boolean {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount) return false;
+  const range = selection.getRangeAt(0);
+  if (!body.contains(range.startContainer) || !body.contains(range.endContainer)) return false;
+
+  const block = editableBlockAtSelection(body, range);
+  if (!block || !block.parentNode) return false;
+
+  if (!range.collapsed) range.deleteContents();
+  const splitPoint = range.cloneRange();
+  if (range.startContainer === body) {
+    const blockIndex = Array.from(body.childNodes).indexOf(block);
+    splitPoint.selectNodeContents(block);
+    splitPoint.collapse(blockIndex < range.startOffset);
+  }
+  const afterRange = document.createRange();
+  afterRange.selectNodeContents(block);
+  afterRange.setStart(splitPoint.startContainer, splitPoint.startOffset);
+  const after = afterRange.extractContents();
+
+  const next = document.createElement(block.tagName.toLowerCase());
+  Array.from(block.attributes).forEach((attribute) => {
+    if (!['id', 'data-studio-block-id', 'data-studio-item-id'].includes(attribute.name)) {
+      next.setAttribute(attribute.name, attribute.value);
+    }
+  });
+  next.innerHTML = after.childNodes.length ? '' : '<br>';
+  next.append(...Array.from(after.childNodes));
+  if (!block.textContent && !block.querySelector('img, br, [data-tex], .studio-math-inline, .studio-math-block')) {
+    block.innerHTML = '<br>';
+  }
+  if (!next.textContent && !next.querySelector('img, br, [data-tex], .studio-math-inline, .studio-math-block')) {
+    next.innerHTML = '<br>';
+  }
+  block.parentNode.insertBefore(next, block.nextSibling);
+  placeCaretAtStart(next, lastSelection);
+  return true;
 }
 
 type ResizeSession = {
@@ -282,6 +375,8 @@ function pageBodyHasOverflow(body: HTMLElement): boolean {
   const scale = body.offsetWidth ? rect.width / Math.max(body.offsetWidth, 1) : 1;
   const styles = window.getComputedStyle(body);
   const bottomPadding = (Number.parseFloat(styles.paddingBottom) || 0) * scale;
+  // The editor root ends before the footer reserve. The last editable pixel
+  // is still before its own bottom margin/padding, not at the sheet edge.
   const writableBottom = rect.bottom - bottomPadding;
   const children = Array.from(body.children).filter((child) => {
     const style = window.getComputedStyle(child);
@@ -442,6 +537,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
   const bodyRefs = useRef<(HTMLDivElement | null)[]>([]);
   const skipInput = useRef(false);
   const rebalanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputCommitFrame = useRef<number | null>(null);
   // Replacing a contentEditable subtree during IME composition destroys the
   // browser-owned composing range. Defer layout until it has committed.
   const isComposing = useRef(false);
@@ -1042,7 +1138,7 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     [onInput, selectedTable, updateTableTools, liveBodies, scheduleRebalance],
   );
 
-  const handlePageInput = (pageIdx: number) => {
+  const handlePageInput = (pageIdx: number, deferParentCommit = false) => {
     if (skipInput.current) return;
     rememberSelection();
     if (selectedImage && !liveBodies().some((b) => b.contains(selectedImage))) {
@@ -1059,7 +1155,24 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       // sheet leaves an already-overflowing previous sheet clipped forever.
       scheduleRebalance(firstOverflowingPage, selectionBookmark(bodies), 0);
     }
-    onInput();
+    // `onInput` updates the parent document prop. Mark this snapshot as
+    // editor-owned first, otherwise the documentHtml effect sees its own
+    // keystroke as an external replacement and rewrites the DOM, destroying
+    // the caret immediately after Enter/backspace/paste.
+    lastExternalHtml.current = getHtml();
+    if (!deferParentCommit) {
+      onInput();
+      return;
+    }
+    // Enter is a structural edit. Commit it on the next frame so a rapid
+    // series of Enter presses can finish against the live DOM before the
+    // parent model rerenders the canvas. The DOM remains the source of truth
+    // during that burst; the queued commit still persists the final state.
+    if (inputCommitFrame.current !== null) return;
+    inputCommitFrame.current = window.requestAnimationFrame(() => {
+      inputCommitFrame.current = null;
+      if (!skipInput.current) onInput();
+    });
   };
 
   const handlePageBlur = (pageIdx: number) => {
@@ -1168,7 +1281,6 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     if (
       !modifier &&
       (event.key === ' ' ||
-        event.key === 'Enter' ||
         event.key === 'Tab' ||
         event.key === 'Backspace' ||
         event.key === 'Delete' ||
@@ -1177,18 +1289,18 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       onHistoryBoundary?.();
     }
 
-    // Enter creates a new block before `input` fires. Recheck the physical
-    // writable boundary after Chrome has created that block so it can move to
-    // the next sheet instead of leaving the caret in the footer reserve.
-    if (!modifier && event.key === 'Enter') {
-      window.setTimeout(() => {
-        const body = bodyRefs.current[pageIdx];
-        const bodies = liveBodies();
-        const firstOverflowingPage = bodies.findIndex(pageBodyHasOverflow);
-        if (!skipInput.current && body && firstOverflowingPage >= 0) {
-          scheduleRebalance(firstOverflowingPage, selectionBookmark(bodies), 0);
-        }
-      }, 0);
+    // Explicitly split paragraphs. Native Enter is unreliable when each
+    // visual page is its own contentEditable root and can leave the caret in
+    // the footer reserve without creating a new logical block.
+    if (!modifier && !event.shiftKey && event.key === 'Enter') {
+      onHistoryBoundary?.();
+      const body = bodyRefs.current[pageIdx];
+      if (body && splitBlockAtSelection(body, lastSelection)) {
+        event.preventDefault();
+        event.stopPropagation();
+        handlePageInput(pageIdx, true);
+        return;
+      }
     }
 
     // Backspace at the beginning of a page joins its visual body with the
@@ -1485,11 +1597,14 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       className="studio-doc-editor studio-diff-layer pointer-events-none h-full max-w-none overflow-hidden text-neutral-900"
                       style={{
                         boxSizing: 'border-box',
-                        padding: `${margin}px ${margin}px ${margin + FOOTER_RESERVE}px ${margin}px`,
+                        // Keep the footer outside the contentEditable root.
+                        // A padding-based reserve lets Chrome create editable
+                        // line boxes below the last real line.
+                        padding: `${margin}px ${margin}px ${margin}px ${margin}px`,
                         fontFamily,
                         fontSize,
                         lineHeight: 1.65,
-                        height: spec.heightPx,
+                        height: spec.heightPx - FOOTER_RESERVE,
                       }}
                       aria-hidden
                       dangerouslySetInnerHTML={{ __html: sanitizeDocumentHtml(html) }}
@@ -1525,11 +1640,13 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
                       )}
                       style={{
                         boxSizing: 'border-box',
-                        padding: `${margin}px ${margin}px ${margin + FOOTER_RESERVE}px ${margin}px`,
+                        // The non-editable footer reserve is outside this
+                        // root, so the browser cannot place a caret there.
+                        padding: `${margin}px ${margin}px ${margin}px ${margin}px`,
                         fontFamily,
                         fontSize,
                         lineHeight: 1.65,
-                        height: spec.heightPx,
+                        height: spec.heightPx - FOOTER_RESERVE,
                         overflow: 'hidden',
                         caretColor: '#171717',
                       }}

@@ -18,12 +18,16 @@ export type StudioDocumentModel = {
   blocks: StudioBlock[];
 };
 
-const id = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+// A blank model is created during SSR and again during hydration. Its first
+// block must be stable; random IDs here make the initial render differ even
+// though the model is only an internal compatibility projection.
+const id = () => `block-${++modelId}`;
+let modelId = 0;
 const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const text = (node: Element) => Array.from(node.childNodes).map((child) => child.textContent || '').join('');
 
 export function createStudioDocument(pageSize: StudioDocumentModel['page']['size'] = 'letter'): StudioDocumentModel {
-  return { version: 1, page: { size: pageSize, margins: { top: 72, right: 72, bottom: 72, left: 72 } }, blocks: [{ id: id(), type: 'paragraph', runs: [{ text: '' }] }] };
+  return { version: 1, page: { size: pageSize, margins: { top: 72, right: 72, bottom: 72, left: 72 } }, blocks: [{ id: 'initial-paragraph', type: 'paragraph', runs: [{ text: '' }] }] };
 }
 
 export function modelFromHtml(html: string, pageSize: StudioDocumentModel['page']['size'] = 'letter'): StudioDocumentModel {

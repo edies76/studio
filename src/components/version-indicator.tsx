@@ -2,12 +2,19 @@
 
 import { PACKAGE_VERSION } from '@/lib/constants';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 /** Bottom-right version badge (same idea as Lunar). */
 export default function VersionIndicator() {
   const pathname = usePathname();
   const version = PACKAGE_VERSION;
-  if (!version || pathname?.startsWith('/studio')) return null;
+  const [mounted, setMounted] = useState(false);
+
+  // The version is build metadata. Render it only after hydration so a stale
+  // dev bundle cannot make the server and client disagree on the first render.
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted || !version || pathname?.startsWith('/studio')) return null;
 
   return (
     <div

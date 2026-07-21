@@ -143,7 +143,20 @@ export function packBlocksIntoPages(
     'line-height:1.65',
     'box-sizing:border-box',
   ].join(';');
-  measure.className = 'prose prose-neutral';
+  // This must match the real page body. Measuring with only `prose` silently
+  // under-counts paragraph/heading/table margins, then the fixed sheet clips
+  // content that the paginator believed fit.
+  measure.className = [
+    'studio-doc-editor',
+    'prose',
+    'prose-neutral',
+    'prose-p:my-2.5',
+    'prose-headings:mb-3',
+    'prose-headings:mt-5',
+    'prose-headings:font-inherit',
+    'prose-table:my-3',
+    'prose-img:my-3',
+  ].join(' ');
   document.body.appendChild(measure);
 
   const pages: string[][] = [[]];
@@ -271,8 +284,10 @@ export function packBlocksIntoPages(
     const joined = last.join('');
     const tmp = document.createElement('div');
     tmp.innerHTML = joined;
-    const empty = Array.from(tmp.children).every((c) => isVisuallyEmpty(c as HTMLElement));
-    if (empty || !joined.trim()) pages.pop();
+    const children = Array.from(tmp.children);
+    const empty = children.length > 0 && children.every((c) => isVisuallyEmpty(c as HTMLElement));
+    const onlyAutomaticFiller = empty && children.length <= 1;
+    if (onlyAutomaticFiller || !joined.trim()) pages.pop();
     else break;
   }
 
@@ -295,7 +310,12 @@ export function joinPageHtmls(pages: string[]): string {
     .filter((p) => {
       const d = document.createElement('div');
       d.innerHTML = p;
-      return !Array.from(d.children).every((c) => isVisuallyEmpty(c as HTMLElement)) || pages.length === 1;
+      const children = Array.from(d.children);
+      const empty = children.length > 0 && children.every((c) => isVisuallyEmpty(c as HTMLElement));
+      // A single empty paragraph is the editor's automatic trailing filler.
+      // Multiple empty paragraphs are intentional blank lines and must remain
+      // serializable so repeated Enter presses survive a React round-trip.
+      return !empty || pages.length === 1 || children.length > 1;
     });
   if (!parts.length) return '<p><br></p>';
 
