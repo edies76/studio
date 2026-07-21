@@ -143,6 +143,10 @@ function isFastLaneQuestion(text: string, selectedText: string) {
   return !/\b(documento|lienzo|hoja|p[áa]gina|texto|p[áa]rrafo|selecci[oó]n|ecuaci[oó]n|f[oó]rmula|tabla|imagen|estructura|esquema|outline|brief|norma|apa|ieee|mla|document|canvas|page|text|paragraph|selection|equation|formula|table|image|structure|cambia|cambiar|pon|aplica|formatea|edita|corrige|reescribe|escribe|redacta|genera|crea|inserta|elimina|borra|mueve|inspecciona|analiza|revisa|comprueba|valida|busca|encuentra|resume|deshaz|rehaz|undo|redo|format|change|apply|edit|rewrite|write|draft|generate|create|insert|delete|remove|move|fix|check|review|search|summarize)\b/i.test(text);
 }
 
+function asksAttachmentState(text: string) {
+  return /\b(?:qu[eé]\s+archivo|cu[aá]l\s+archivo|ves\s+(?:el\s+)?documento|recibiste|recibido|lleg[oó]|se\s+envi[oó]|enviaste|enviarlo|send|sent|received|did\s+you\s+see|which\s+file|what\s+file)\b/i.test(text);
+}
+
 /**
  * A selection is an explicit scope contract. Short imperative requests such
  * as "cámbialo por…" must never enter the document-agent tool loop, where a
@@ -278,6 +282,19 @@ export async function POST(req: NextRequest) {
           .reverse()
           .find((m) => m.role === 'user')
           ?.content || '';
+
+        // Attachment state is deterministic application state, not a task for
+        // the model to guess. Answering this class of question locally also
+        // prevents a provider from replaying an unrelated filename or
+        // claiming an external delivery that never happened.
+        if (resolvedReferences.length && asksAttachmentState(lastUser)) {
+          const names = resolvedReferences.map((reference) => `- ${reference.name}`).join('\n');
+          const factText = `**Archivo recibido y leído:**\n${names}\n\nEl archivo está disponible dentro de este workspace. No se ha enviado a ninguna persona ni servicio externo; para sacarlo de Docs Studio debes usar Exportar.`;
+          send({ type: 'text', delta: factText });
+          send({ type: 'done', finalText: factText, model: 'studio-attachment-state', durationMs: Date.now() - t0, outcome: 'attachment_state' });
+          slog.info('chat', 'request.done', { ms: Date.now() - t0, model: 'studio-attachment-state', path: 'attachment_state', finalLen: factText.length });
+          return;
+        }
         const fullConversation: ChatMessage[] = (messages as Msg[])
           .filter((message) => message?.content && message.role !== 'system')
           .map((message) => ({
