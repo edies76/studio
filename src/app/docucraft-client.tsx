@@ -1012,7 +1012,7 @@ export default function DocsStudioClient({
             m.id === assistantId
               ? {
                   ...m,
-                  content: 'No pude crear el documento. Abrí el chat para ver el detalle o inténtalo de nuevo.',
+                  content: 'No pude crear el documento. Abre el chat para ver el detalle o inténtalo de nuevo.',
                   streaming: false,
                   isDraftStream: false,
                   elapsedMs: Date.now() - startedAt,
