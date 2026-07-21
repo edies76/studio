@@ -32,7 +32,7 @@ export async function generateTextWithFallback(opts: {
 }): Promise<{ text: string; modelUsed: string }> {
   const apiKey = deepseekApiKey();
   if (!apiKey) {
-    throw new Error('Missing DEEPSEEK_API_KEY');
+    throw new Error('Missing AI provider credentials');
   }
 
   const ordered = modelFallbackList(opts.preferredModel || resolveModelId());

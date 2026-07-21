@@ -41,6 +41,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
       model: body.model,
       paperSize: body.paperSize,
       chat: body.chat as ChatTurn[] | undefined,
+      delivery: body.delivery,
     }, typeof body.revision === 'number' ? body.revision : undefined);
     if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 });
     return NextResponse.json({

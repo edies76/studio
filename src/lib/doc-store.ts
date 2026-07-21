@@ -8,7 +8,7 @@ import 'server-only';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import type { AssignmentBrief } from './assignment-types';
+import type { AssignmentBrief, DeliverySnapshot } from './assignment-types';
 import { modelToHtml, type StudioDocumentModel } from './studio-document';
 
 export type StoredHistoryEntry = {
@@ -59,6 +59,7 @@ export type StudioDocument = {
   /** Original OOXML source retained for the high-fidelity office editor. */
   sourceDocx?: { fileName: string; size: number; updatedAt: number };
   brief?: AssignmentBrief;
+  delivery?: DeliverySnapshot;
   history: StoredHistoryEntry[];
   pendingEdits: StoredPendingEdit[];
   preview?: string;
@@ -240,6 +241,7 @@ async function dynamoGet(userId: string, id: string): Promise<StudioDocument | n
     paperSize: it.paperSize === 'legal' || it.paperSize === 'a4' ? it.paperSize : 'letter',
     sourceDocx: it.sourceDocx as StudioDocument['sourceDocx'] | undefined,
     brief: it.brief as AssignmentBrief | undefined,
+    delivery: it.delivery as DeliverySnapshot | undefined,
     history: Array.isArray(it.history) ? (it.history as StoredHistoryEntry[]) : [],
     pendingEdits: Array.isArray(it.pendingEdits) ? (it.pendingEdits as StoredPendingEdit[]) : [],
     preview: String(it.preview || ''),
@@ -274,6 +276,7 @@ async function dynamoSave(doc: StudioDocument, expectedRevision?: number): Promi
         paperSize: doc.paperSize,
         sourceDocx: doc.sourceDocx,
         brief: doc.brief,
+        delivery: doc.delivery,
         history: doc.history || [],
         pendingEdits: doc.pendingEdits || [],
         preview: doc.preview || previewFromHtml(doc.html),
@@ -314,7 +317,7 @@ export async function getDocument(userId: string, id: string): Promise<StudioDoc
 
 export async function createDocument(
   userId: string,
-  opts?: { title?: string; html?: string; model?: StudioDocumentModel; paperSize?: 'letter' | 'legal' | 'a4'; brief?: AssignmentBrief },
+  opts?: { title?: string; html?: string; model?: StudioDocumentModel; paperSize?: 'letter' | 'legal' | 'a4'; brief?: AssignmentBrief; delivery?: DeliverySnapshot },
 ): Promise<StudioDocument> {
   const now = Date.now();
   const model = opts?.model;
@@ -327,6 +330,7 @@ export async function createDocument(
     model,
     paperSize: opts?.paperSize === 'legal' || opts?.paperSize === 'a4' ? opts.paperSize : 'letter',
     brief: opts?.brief,
+    delivery: opts?.delivery,
     history: [],
     pendingEdits: [],
     preview: previewFromHtml(html),
@@ -350,6 +354,7 @@ export async function saveDocument(
     paperSize?: 'letter' | 'legal' | 'a4';
     sourceDocx?: StudioDocument['sourceDocx'];
     brief?: AssignmentBrief;
+    delivery?: DeliverySnapshot;
     history?: StoredHistoryEntry[];
     pendingEdits?: StoredPendingEdit[];
     chat?: ChatTurn[];
@@ -375,6 +380,7 @@ export async function saveDocument(
     paperSize: patch.paperSize ?? existing.paperSize ?? 'letter',
     sourceDocx: patch.sourceDocx ?? existing.sourceDocx,
     brief: patch.brief ?? existing.brief,
+    delivery: patch.delivery ?? existing.delivery,
     history: patch.history ?? existing.history ?? [],
     pendingEdits: patch.pendingEdits ?? existing.pendingEdits ?? [],
     chat: patch.chat ?? existing.chat,

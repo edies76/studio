@@ -45,9 +45,12 @@ def load_env() -> dict[str, str]:
 def build_env_local(src: dict[str, str]) -> str:
     auth = src.get("AUTH_SECRET") or base64.b64encode(os.urandom(32)).decode()
     lines = [
-        f"DEEPSEEK_API_KEY={src.get('DEEPSEEK_API_KEY', '')}",
-        f"DEEPSEEK_MODEL={src.get('DEEPSEEK_MODEL', 'deepseek-v4-flash')}",
-        f"DEEPSEEK_BASE_URL={src.get('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')}",
+        # The app's active provider is Azure AI Foundry/Grok. Keep the old
+        # names only for backwards compatibility; deploying only DEEPSEEK_*
+        # leaves /api/draft without the credential that deepseek.ts reads.
+        f"FOUNDRY_GROK_API_KEY={src.get('FOUNDRY_GROK_API_KEY') or src.get('AZURE_OPENAI_API_KEY', '')}",
+        f"FOUNDRY_GROK_ENDPOINT={src.get('FOUNDRY_GROK_ENDPOINT') or src.get('AZURE_OPENAI_ENDPOINT', 'https://bambalunar-resource.services.ai.azure.com/openai/v1')}",
+        f"FOUNDRY_GROK_DEPLOYMENT={src.get('FOUNDRY_GROK_DEPLOYMENT') or src.get('GROK_MODEL', 'grok-4-20-non-reasoning')}",
         f"AUTH_SECRET={auth}",
         "FORCE_AUTH=0",
         "AWS_REGION=us-east-2",
@@ -171,8 +174,8 @@ def main() -> int:
     os.environ["AWS_EC2_METADATA_DISABLED"] = "true"
 
     src = load_env()
-    if not src.get("DEEPSEEK_API_KEY"):
-        print("WARN: DEEPSEEK_API_KEY missing from .env.local", file=sys.stderr)
+    if not (src.get("FOUNDRY_GROK_API_KEY") or src.get("AZURE_OPENAI_API_KEY")):
+        print("WARN: FOUNDRY_GROK_API_KEY/AZURE_OPENAI_API_KEY missing from .env.local", file=sys.stderr)
 
     env_text = build_env_local(src)
     env_b64 = base64.b64encode(env_text.encode()).decode()

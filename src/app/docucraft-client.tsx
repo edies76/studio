@@ -890,7 +890,10 @@ export default function DocsStudioClient({
           signal: ac.signal,
           body: JSON.stringify({ prompt: p, model }),
         });
-        if (!res.ok || !res.body) throw new Error('Draft failed');
+        if (!res.ok || !res.body) {
+          const detail = await res.text().catch(() => '');
+          throw new Error(detail || `No se pudo crear el documento (${res.status}).`);
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -1009,7 +1012,7 @@ export default function DocsStudioClient({
             m.id === assistantId
               ? {
                   ...m,
-                  content: 'No pude crear el documento. Abrí el chat para ver el detalle o intentá de nuevo.',
+                  content: 'No pude crear el documento. Abrí el chat para ver el detalle o inténtalo de nuevo.',
                   streaming: false,
                   isDraftStream: false,
                   elapsedMs: Date.now() - startedAt,

@@ -27,8 +27,8 @@ export async function POST(req: NextRequest) {
 
   const apiKey = deepseekApiKey();
   if (!apiKey) {
-    slog.error('draft', 'missing DEEPSEEK_API_KEY');
-    return new Response(encode({ type: 'error', message: 'Missing DEEPSEEK_API_KEY' }), {
+    slog.error('draft', 'missing AI provider credentials');
+    return new Response(encode({ type: 'error', message: 'Faltan las credenciales del proveedor de IA en producción.' }), {
       status: 500,
       headers: { 'Content-Type': 'text/event-stream' },
     });

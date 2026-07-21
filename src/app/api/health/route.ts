@@ -15,9 +15,9 @@ export async function GET(request: Request) {
   const forceAuth = process.env.FORCE_AUTH === '1';
   const checks: Record<string, unknown> = {
     ok: true,
-    hasApiKey: Boolean(process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
+    hasApiKey: Boolean(process.env.FOUNDRY_GROK_API_KEY || process.env.AZURE_OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
     // Keep provider identity out of the public health contract.
-    providerConfigured: Boolean(process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
+    providerConfigured: Boolean(process.env.FOUNDRY_GROK_API_KEY || process.env.AZURE_OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY || process.env.GOOGLE_API_KEY),
     storage: storageBackend(),
     authConfigured: isAuthConfigured(),
     /** Login is optional unless FORCE_AUTH=1 */
