@@ -136,11 +136,14 @@ export default function StudioChat({
           </div>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, index) => {
+          // Keys must stay unique even if a bad persistence race stored the
+          // same turn id twice (older builds did that on concurrent PATCH).
+          const rowKey = `${m.id || 'msg'}_${index}`;
           if (m.isDraftStream) {
             return (
               <DraftStreamCard
-                key={m.id}
+                key={rowKey}
                 html={m.draftHtml || ''}
                 status={m.draftStatus || m.content}
                 done={!m.streaming}
@@ -149,10 +152,24 @@ export default function StudioChat({
           }
           if (m.role === 'user') {
             return (
-              <div key={m.id} className="flex justify-end">
+              <div key={rowKey} className="flex justify-end">
                 <div className="max-w-[92%]">
-                  {m.attachments?.length ? <div className="mb-1 flex justify-end gap-1">{m.attachments.map((attachment) => <span key={attachment.id} className="inline-flex max-w-[180px] items-center gap-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-[10px] font-medium text-neutral-600 shadow-sm"><FileText className="h-3 w-3 shrink-0" /><span className="truncate">{attachment.name}</span></span>)}</div> : null}
-                  <div className="rounded-2xl rounded-br-md bg-studio-brown px-3.5 py-2.5 text-[13px] font-medium leading-relaxed text-[#f3f1ec]">{m.content}</div>
+                  {m.attachments?.length ? (
+                    <div className="mb-1 flex justify-end gap-1">
+                      {m.attachments.map((attachment, attachmentIndex) => (
+                        <span
+                          key={`${attachment.id || attachment.name}_${attachmentIndex}`}
+                          className="inline-flex max-w-[180px] items-center gap-1 rounded border border-neutral-200 bg-white px-1.5 py-1 text-[10px] font-medium text-neutral-600 shadow-sm"
+                        >
+                          <FileText className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{attachment.name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="rounded-2xl rounded-br-md bg-studio-brown px-3.5 py-2.5 text-[13px] font-medium leading-relaxed text-[#f3f1ec] whitespace-pre-wrap">
+                    {m.content}
+                  </div>
                 </div>
               </div>
             );
@@ -165,7 +182,7 @@ export default function StudioChat({
 
           return (
             <div
-              key={m.id}
+              key={rowKey}
               className="max-w-[95%] space-y-1.5 text-[13.5px] font-medium leading-relaxed text-neutral-800"
             >
               {/* Live thinking only while this message is streaming AND busy */}
@@ -280,8 +297,76 @@ function ChatRichText({ content }: { content: string }) {
   );
 }
 
+/** Detect stored assistant content that is already an HTML fragment. */
+function looksLikeStoredHtml(value: string): boolean {
+  const s = String(value || '').trim();
+  if (!s.startsWith('<')) return false;
+  return /<\/?(?:p|h[1-6]|ul|ol|li|div|span|table|blockquote|pre|strong|em|br)\b/i.test(s);
+}
+
+/**
+ * Soft-sanitize HTML that was already stored as a chat fragment so reload
+ * keeps the bubble layout instead of showing raw tags like `<p>…`.
+ */
+function sanitizeStoredChatHtml(value: string): string {
+  let html = String(value || '');
+  // Drop script/style completely.
+  html = html.replace(/<script\b[\s\S]*?<\/script>/gi, '');
+  html = html.replace(/<style\b[\s\S]*?<\/style>/gi, '');
+  html = html.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  html = html.replace(/\sstyle\s*=\s*("[^"]*"|'[^']*')/gi, '');
+  // Keep a narrow allowlist; unwrap everything else.
+  const allowed = new Set([
+    'p', 'br', 'strong', 'b', 'em', 'i', 'u', 'code', 'pre', 'ul', 'ol', 'li',
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'a', 'span', 'div',
+    'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub',
+  ]);
+  html = html.replace(/<\/?([a-z][\w-]*)\b[^>]*>/gi, (match, rawTag: string) => {
+    const tag = rawTag.toLowerCase();
+    if (!allowed.has(tag)) return '';
+    if (tag === 'a') {
+      const href = match.match(/\bhref\s*=\s*("([^"]*)"|'([^']*)')/i);
+      const url = (href?.[2] || href?.[3] || '').trim();
+      if (match.startsWith('</')) return '</a>';
+      if (/^https?:\/\//i.test(url)) {
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">`;
+      }
+      return '<span>';
+    }
+    if (match.startsWith('</')) return `</${tag}>`;
+    if (tag === 'br') return '<br />';
+    if (tag === 'span' || tag === 'div') {
+      if (/studio-math|studio-chat-math|data-tex/i.test(match)) {
+        // Preserve math host markup; strip other attrs below.
+        const tex = match.match(/\bdata-tex\s*=\s*("([^"]*)"|'([^']*)')/i);
+        const display = /data-display\s*=\s*["']?1/i.test(match) || /studio-math-block/i.test(match);
+        if (tex) {
+          const t = escapeHtml(tex[2] || tex[3] || '');
+          return display
+            ? `<div class="studio-chat-math studio-math-block" data-tex="${t}" data-display="1">`
+            : `<span class="studio-chat-math studio-math-inline" data-tex="${t}" data-display="0">`;
+        }
+      }
+      return tag === 'div' ? '<div>' : '<span>';
+    }
+    return `<${tag}>`;
+  });
+  // If sanitizing emptied everything, fall back to escaped plain text.
+  if (!html.replace(/<[^>]+>/g, '').trim()) {
+    return `<p>${escapeHtml(String(value || ''))}</p>`;
+  }
+  return html;
+}
+
 function chatContentToHtml(value: string): string {
-  const lines = String(value || '').replace(/\r/g, '').split('\n');
+  const raw = String(value || '').replace(/\r/g, '');
+  // After reload, some older turns were saved as HTML fragments. Render them
+  // as HTML so the bubble keeps structure instead of showing literal <p> tags.
+  if (looksLikeStoredHtml(raw)) {
+    return sanitizeStoredChatHtml(raw);
+  }
+
+  const lines = raw.split('\n');
   const out: string[] = [];
   let inCode = false;
   let codeLanguage = '';

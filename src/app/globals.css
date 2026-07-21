@@ -774,6 +774,14 @@
   .studio-chat-richtext h6 { font-size: 0.92rem; }
 
   .studio-chat-richtext p { margin: 0.18rem 0; }
+  .studio-chat-richtext > :first-child { margin-top: 0; }
+  .studio-chat-richtext > :last-child { margin-bottom: 0; }
+
+  /* Keep restored HTML fragments looking like chat bubbles, not raw tags. */
+  .studio-chat-richtext strong,
+  .studio-chat-richtext b { font-weight: 700; }
+  .studio-chat-richtext em,
+  .studio-chat-richtext i { font-style: italic; }
 
   .studio-chat-richtext ul,
   .studio-chat-richtext ol {

@@ -500,8 +500,27 @@ export async function appendChat(
 ): Promise<StudioDocument | null> {
   const existing = await getDocument(userId, id);
   if (!existing) return null;
+  const prior = existing.chat || [];
+  const seen = new Set(prior.map((turn) => turn.id).filter(Boolean));
+  const incoming: ChatTurn[] = [];
+  for (const turn of turns || []) {
+    if (!turn?.id || !turn.role) continue;
+    // Concurrent PATCH races used to append the same turn twice and broke
+    // React keys + chat history on reload.
+    if (seen.has(turn.id)) continue;
+    seen.add(turn.id);
+    incoming.push({
+      id: turn.id,
+      role: turn.role,
+      content: String(turn.content || ''),
+      at: typeof turn.at === 'number' ? turn.at : Date.now(),
+    });
+  }
+  if (!incoming.length) {
+    return existing;
+  }
   return saveDocumentMetadata(userId, id, {
-    chat: [...(existing.chat || []), ...turns].slice(-200),
+    chat: [...prior, ...incoming].slice(-200),
   });
 }
 

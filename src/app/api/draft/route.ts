@@ -54,9 +54,9 @@ export async function POST(req: NextRequest) {
         });
         send({ type: 'status', label: 'Escribiendo…' });
 
-        const system = `You write a concise, editable document in semantic HTML.
+        const system = `You write a concise, editable document in plain semantic HTML — like a normal student paper in Word/Google Docs, not a designed webpage.
 Output ONLY an HTML fragment (no markdown fences, no html/body).
-Allowed tags: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,table,thead,tbody,tr,th,td,pre,code,br.
+Allowed tags ONLY: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,table,thead,tbody,tr,th,td,pre,code,br.
 Math: ALWAYS use \\( ... \\) inline and \\[ ... \\] display (never destroy delimiters). Prefer clean LaTeX.
 For important formulas wrap as:
 <span class="studio-math-inline" data-tex="TEX" data-display="0">\\(TEX\\)</span>
@@ -64,9 +64,9 @@ or display:
 <div class="studio-math-block" data-tex="TEX" data-display="1">\\[TEX\\]</div>
 Tables: use real <table><tr><th>/<td> with headers when comparing data.
 Language: match the user's language. Spanish if the request is in Spanish; never switch to English without a reason.
-Structure: use one short factual h1 and only the sections the request needs. Keep a short request short: no more than 3 brief sections or paragraphs unless the user asks for length.
-Do not create a cover page, subtitle, drop cap, decorative divider, illustration, emoji, icon, invented quote, or visual ornament unless the user explicitly requests it.
-Do not use img, svg, hr, style, or layout hacks. The canvas controls pagination and visual style.
+Structure: one short factual h1, then normal paragraphs and simple headings. Keep a short request short: no more than 3 brief sections or paragraphs unless the user asks for length.
+FORBIDDEN unless the user explicitly asks: cover pages, subtitles under the title, drop caps, decorative dividers, illustrations, emoji, icons, invented quotes, cards, colored boxes, gradients, multi-column layouts, hero sections, badges, callout boxes, inline style=, class= (except studio-math-*), img, svg, hr, section/article/header/footer wrappers, or any visual ornament.
+The canvas owns fonts, margins, and pagination. You only supply plain content.
 NO meta commentary. Start directly with <h1>...`;
 
         const models = modelFallbackList(preferredModel || resolveModelId(DEFAULT_STUDIO_MODEL));

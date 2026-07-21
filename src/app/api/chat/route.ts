@@ -20,6 +20,7 @@ import {
   repositionMathAt,
 } from '@/lib/math-tools';
 import { slog } from '@/lib/server-log';
+import { compactDraftHtml } from '@/lib/draft-output';
 import { formatDocumentHtml, parseExplicitFormatRequest } from '@/lib/document-format';
 import { buildDocumentIntelligence, buildDocsAgentSystem, DOCS_STUDIO_IDENTITY, parseWorkspaceCommand, type WorkspaceAgentContext } from '@/lib/docs-agent';
 import { replaceTableCell } from '@/lib/table-tools';
@@ -1217,7 +1218,10 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               }
               const id = `edit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
               const beforeHtml = args.beforeHtml || block.html;
-              const guarded = protectMathInRewrite(beforeHtml, args.afterHtml || '');
+              const guarded = protectMathInRewrite(
+                beforeHtml,
+                compactDraftHtml(args.afterHtml || ''),
+              );
               if (guarded.restored > 0) {
                 mathSafeMode = true;
                 slog.warn('chat', 'math.protect.restored', {
@@ -1309,7 +1313,8 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 (mode === 'replace_document' ? liveHtml : selectedText || liveHtml);
               const guarded = protectMathInRewrite(
                 mode === 'replace_document' ? liveHtml : beforeHtml,
-                args.afterHtml || '',
+                // Strip landing-page CSS / ornaments before proposing.
+                compactDraftHtml(args.afterHtml || ''),
               );
               if (guarded.restored > 0) {
                 mathSafeMode = true;

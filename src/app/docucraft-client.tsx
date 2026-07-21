@@ -42,6 +42,7 @@ import {
   htmlForWordExport,
 } from '@/lib/math-html';
 import { compactDraftHtml } from '@/lib/draft-output';
+// compactDraftHtml also strips decorative CSS from agent proposals
 import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
@@ -64,8 +65,12 @@ const BLOCK_QUERY = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table, ul, 
 const DEFAULT_FONT = 'Inter, Segoe UI, system-ui, sans-serif';
 const EMPTY_DOCUMENT_HTML = '<p><br></p>';
 
+let uidSeq = 0;
 function uid() {
-  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // Date.now() alone collides when several messages are created in the same ms
+  // (user + assistant pair, tool logs, activity). Mix seq + random.
+  uidSeq = (uidSeq + 1) % 1_000_000;
+  return `${Date.now()}_${uidSeq.toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function isDocEmpty(html: string) {
@@ -123,6 +128,8 @@ export default function DocsStudioClient({
   const lastSavedHtml = useRef('');
   const lastSavedTitle = useRef('');
   const lastSavedChatLen = useRef(0);
+  const chatPersistInFlight = useRef(false);
+  const chatPersistedIds = useRef<Set<string>>(new Set());
   const documentRevision = useRef(1);
   const [isBusy, setIsBusy] = useState(false);
   const [paperSize, setPaperSize] = useState<PaperSize>('letter');
@@ -694,15 +701,24 @@ export default function DocsStudioClient({
         if (loadedModel) applyDocumentModel(loadedModel, false);
         else applyHtml(data.doc.html || EMPTY_DOCUMENT_HTML, false);
         if (Array.isArray(data.doc.chat) && data.doc.chat.length) {
-          setMessages(
-            data.doc.chat.map((t: { id: string; role: string; content: string }) => ({
+          // Deduplicate by turn id — older concurrent PATCH races stored the
+          // same message twice and broke React keys + bubble layout on reload.
+          const seenIds = new Set<string>();
+          const restored: ChatMessage[] = [];
+          for (const t of data.doc.chat as Array<{ id?: string; role?: string; content?: string }>) {
+            if (!t?.id || (t.role !== 'user' && t.role !== 'assistant')) continue;
+            if (seenIds.has(t.id)) continue;
+            seenIds.add(t.id);
+            restored.push({
               id: t.id,
-              role: t.role as 'user' | 'assistant',
-              content: t.content,
+              role: t.role,
+              content: String(t.content || ''),
               streaming: false,
-            })),
-          );
-          lastSavedChatLen.current = data.doc.chat.length;
+            });
+          }
+          setMessages(restored);
+          lastSavedChatLen.current = restored.length;
+          chatPersistedIds.current = new Set(restored.map((m) => m.id));
         }
         restoredDraft.current = true;
         // Let React commit the fetched state and PaperCanvas finish its DOM
@@ -794,25 +810,64 @@ export default function DocsStudioClient({
     return () => clearInterval(id);
   }, [docId, draftReady, documentContent, documentModel, documentTitle, readEditorHtml, saveConflict, toast]);
 
-  // Persist new chat turns to server
+  // Persist new chat turns to server (serialized; never double-append the same id)
+  const [chatPersistTick, setChatPersistTick] = useState(0);
   useEffect(() => {
-    if (!docId || messages.length <= lastSavedChatLen.current) return;
-    const fresh = messages.slice(lastSavedChatLen.current).filter((m) => !m.streaming);
+    if (!docId) return;
+    // Seed known ids once after load so we never re-append restored turns.
+    if (chatPersistedIds.current.size === 0 && lastSavedChatLen.current > 0) {
+      for (const m of messages.slice(0, lastSavedChatLen.current)) {
+        if (m.id) chatPersistedIds.current.add(m.id);
+      }
+    }
+    if (chatPersistInFlight.current) return;
+    const fresh = messages.filter(
+      (m) =>
+        !m.streaming &&
+        (m.role === 'user' || m.role === 'assistant') &&
+        m.id &&
+        !chatPersistedIds.current.has(m.id) &&
+        // Draft-stream cards leave empty content; skip empty assistant shells.
+        !(m.role === 'assistant' && !String(m.content || '').trim() && !m.isDraftStream),
+    );
     if (!fresh.length) return;
+
+    // Persist plain text/markdown only. Never store rendered HTML so reload
+    // does not show raw <p> tags inside the chat bubble.
     const turns = fresh.map((m) => ({
       id: m.id,
       role: m.role,
-      content: m.content,
+      content: m.isDraftStream
+        ? m.draftStatus || m.content || 'Documento en el lienzo'
+        : String(m.content || ''),
       at: Date.now(),
     }));
+
+    chatPersistInFlight.current = true;
+    // Optimistic mark — if the request fails we unmark below.
+    for (const t of turns) chatPersistedIds.current.add(t.id);
+
     void fetch(`/api/docs/${docId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chatTurns: turns }),
-    }).then((res) => {
-      if (res.ok) lastSavedChatLen.current = messages.filter((m) => !m.streaming).length;
-    });
-  }, [docId, messages]);
+    })
+      .then((res) => {
+        if (!res.ok) {
+          for (const t of turns) chatPersistedIds.current.delete(t.id);
+          return;
+        }
+        lastSavedChatLen.current = messages.filter((m) => !m.streaming).length;
+      })
+      .catch(() => {
+        for (const t of turns) chatPersistedIds.current.delete(t.id);
+      })
+      .finally(() => {
+        chatPersistInFlight.current = false;
+        // Drain anything that arrived while the previous PATCH was in flight.
+        setChatPersistTick((n) => n + 1);
+      });
+  }, [docId, messages, chatPersistTick]);
 
   const flushPendingHistory = useCallback(() => {
     if (localEditTimer.current) {
@@ -1349,6 +1404,10 @@ export default function DocsStudioClient({
               trace('proposal:received', { mode: ev.edit?.mode || '', title: ev.edit?.title || '' });
               proposedSomethingForRequest = true;
               const edit = ev.edit as ProposeEditPayload;
+              // Strip landing-page CSS the model sometimes smuggles into drafts.
+              if (edit.afterHtml) {
+                edit.afterHtml = sanitizeDocumentHtml(compactDraftHtml(edit.afterHtml));
+              }
               // Snapshot full document so ghost/diff/accept never depend on a
               // live DOM range or a fragile outerHTML string alone.
               edit.documentHtml = liveDocumentHtml;
