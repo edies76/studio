@@ -1360,7 +1360,7 @@ export default function DocsStudioClient({
                 {
                   type: 'ai_change',
                   title: edit.title || 'Cambio propuesto',
-                  summary: edit.summary || 'revisá diff en el lienzo',
+                  summary: edit.summary || 'revisa el cambio en el lienzo',
                 },
                 true,
               );
@@ -1683,7 +1683,7 @@ export default function DocsStudioClient({
         toast({
           variant: 'destructive',
           title: 'El bloque cambió',
-          description: 'La propuesta quedó desactualizada. Volvé a pedir ese cambio.',
+          description: 'La propuesta quedó desactualizada. Vuelve a pedir ese cambio.',
         });
         return;
       }
@@ -1749,7 +1749,7 @@ export default function DocsStudioClient({
         toast({
           variant: 'destructive',
           title: 'No se pudo aplicar la selección',
-          description: 'La propuesta no modificó el documento. Volvé a seleccionar el texto y pedile al agente que lo intente de nuevo.',
+          description: 'La propuesta no modificó el documento. Vuelve a seleccionar el texto y pídele al agente que lo intente de nuevo.',
         });
         return;
       }
@@ -1774,7 +1774,7 @@ export default function DocsStudioClient({
         toast({
           variant: 'destructive',
           title: 'No hay un punto de inserción',
-          description: 'Poné el cursor en el documento y aceptá la propuesta otra vez.',
+          description: 'Pon el cursor en el documento y acepta la propuesta otra vez.',
         });
         return;
       }
@@ -1854,14 +1854,14 @@ export default function DocsStudioClient({
       if (edit.mode === 'replace_block' && typeof edit.blockIndex === 'number') {
         const target = findProposalTarget(edit);
         if (!target) {
-          toast({ variant: 'destructive', title: 'El párrafo ya cambió', description: 'Volvé a generar la propuesta sobre el texto actual.' });
+          toast({ variant: 'destructive', title: 'El párrafo ya cambió', description: 'Vuelve a generar la propuesta sobre el texto actual.' });
           return;
         }
         nextDocument = currentHtml.replace(target.outerHTML, nextFragment);
       } else if (edit.mode === 'replace_document') {
         const currentBlocks = extractHtmlBlocks(currentHtml);
         if (currentBlocks.length !== 1) {
-          toast({ title: 'Revisión por palabra', description: 'Para este documento usá el botón de Aceptar todo o revisá el párrafo desde la propuesta.' });
+          toast({ title: 'Revisión por palabra', description: 'Para este documento usa el botón de Aceptar todo o revisa el párrafo desde la propuesta.' });
           return;
         }
         nextDocument = nextFragment;

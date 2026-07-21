@@ -565,7 +565,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
           }
           if (!rewritten) {
             send({ type: 'tool_end', name: 'quick_rewrite', ok: false, label: 'Sin respuesta', id: tid });
-            send({ type: 'error', message: 'No pude reescribir la selección. Probá de nuevo.' });
+            send({ type: 'error', message: 'No pude reescribir la selección. Inténtalo de nuevo.' });
             send({ type: 'done', durationMs: Date.now() - t0, outcome: 'error' });
             return;
           }
@@ -585,7 +585,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
               changeList: [`${actionLabel} · intensidad ${intensity}%`],
             },
           });
-          send({ type: 'tool_end', name: 'quick_rewrite', ok: true, label: `${actionLabel} · aceptá para aplicarlo`, id: tid });
+          send({ type: 'tool_end', name: 'quick_rewrite', ok: true, label: `${actionLabel} · acepta para aplicarlo`, id: tid });
           const finalText = `${actionLabel} listo sobre la selección.`;
           send({ type: 'text', delta: finalText });
           const durationMs = Date.now() - t0;
@@ -1474,7 +1474,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 type: 'tool_end',
                 name,
                 ok: true,
-                label: 'Formato propuesto · aceptá para aplicarlo',
+                label: 'Formato propuesto · acepta para aplicarlo',
                 id: tid,
               });
               await reply({ ok: true, id, declarations: formatted.declarations, note: 'Pending Accept/Reject.' });
@@ -1527,7 +1527,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 nextHtml,
                 changeList: [`Tabla ${rows} × ${columns}`, target ? `Después del bloque ${afterBlockIndex}` : 'Al final del documento'],
               });
-              send({ type: 'tool_end', name, ok: true, label: 'Tabla propuesta · aceptá para insertarla', id: tid });
+              send({ type: 'tool_end', name, ok: true, label: 'Tabla propuesta · acepta para insertarla', id: tid });
               await reply({ ok: true, id: proposal.id, rows, columns, note: 'Pending user Accept/Reject.' });
               continue;
             }
@@ -1551,7 +1551,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 nextHtml: changed.html,
                 changeList: [`Tabla ${tableIndex + 1}`, `Fila ${rowIndex + 1}`, `Columna ${columnIndex + 1}`],
               });
-              send({ type: 'tool_end', name, ok: true, label: 'Celda propuesta · aceptá para aplicarla', id: tid });
+              send({ type: 'tool_end', name, ok: true, label: 'Celda propuesta · acepta para aplicarla', id: tid });
               await reply({ ok: true, id: proposal.id, previous: changed.previousHtml, note: 'Pending user Accept/Reject.' });
               continue;
             }
@@ -1566,7 +1566,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 nextHtml,
                 changeList: ['Salto de página al final del documento'],
               });
-              send({ type: 'tool_end', name, ok: true, label: 'Salto propuesto · aceptá para insertarlo', id: tid });
+              send({ type: 'tool_end', name, ok: true, label: 'Salto propuesto · acepta para insertarlo', id: tid });
               await reply({ ok: true, id: proposal.id, note: 'Pending user Accept/Reject.' });
               continue;
             }
@@ -1593,7 +1593,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 nextHtml: `${liveHtml}${image}<p><br></p>`,
                 changeList: [`Ancho: ${width}px`, `Modo: ${wrap}`, `Alt: ${String(args.alt || 'Imagen insertada').slice(0, 80)}`],
               });
-              send({ type: 'tool_end', name, ok: true, label: 'Imagen propuesta · aceptá para insertarla', id: tid });
+              send({ type: 'tool_end', name, ok: true, label: 'Imagen propuesta · acepta para insertarla', id: tid });
               await reply({ ok: true, id: proposal.id, width, wrap, note: 'Pending user Accept/Reject.' });
               continue;
             }
@@ -1620,7 +1620,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 nextHtml,
                 changeList: [`Imagen #${imageIndex}`, `Modo: ${wrap}`, ...(wrap === 'behind' ? [`Posición: ${Math.max(0, Number(args.left) || 0)}px, ${Math.max(0, Number(args.top) || 0)}px`] : [])],
               });
-              send({ type: 'tool_end', name, ok: true, label: 'Movimiento propuesto · aceptá para aplicarlo', id: tid });
+              send({ type: 'tool_end', name, ok: true, label: 'Movimiento propuesto · acepta para aplicarlo', id: tid });
               await reply({ ok: true, id: proposal.id, wrap, note: 'Pending user Accept/Reject.' });
               continue;
             }
@@ -1786,7 +1786,7 @@ The server protects math hosts on every free HTML rewrite. If equations exist or
                 },
               });
               liveHtml = result.html;
-              send({ type: 'tool_end', name, ok: true, label: `Ecuación ${equationIndex} movida · aceptá para aplicarlo`, id: tid });
+              send({ type: 'tool_end', name, ok: true, label: `Ecuación ${equationIndex} movida · acepta para aplicarlo`, id: tid });
               await reply({ ok: true, id, equationIndex, note: 'Pending Accept/Reject.' });
               continue;
             }

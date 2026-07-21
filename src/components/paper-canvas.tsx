@@ -272,6 +272,28 @@ function bodyContaining(node: Node | null, bodies: (HTMLElement | null)[]): HTML
   return null;
 }
 
+/**
+ * The bottom margin/footer is visually inside the fixed sheet but is not an
+ * editable line. `scrollHeight` cannot detect content that spills into that
+ * padding, so compare the last real block with the writable rectangle.
+ */
+function pageBodyHasOverflow(body: HTMLElement): boolean {
+  const rect = body.getBoundingClientRect();
+  const scale = body.offsetWidth ? rect.width / Math.max(body.offsetWidth, 1) : 1;
+  const styles = window.getComputedStyle(body);
+  const bottomPadding = (Number.parseFloat(styles.paddingBottom) || 0) * scale;
+  const writableBottom = rect.bottom - bottomPadding;
+  const children = Array.from(body.children).filter((child) => {
+    const style = window.getComputedStyle(child);
+    return style.position !== 'absolute' && style.display !== 'none';
+  });
+  const last = children[children.length - 1] as HTMLElement | undefined;
+  if (!last) return false;
+  const lastRect = last.getBoundingClientRect();
+  const marginBottom = (Number.parseFloat(window.getComputedStyle(last).marginBottom) || 0) * scale;
+  return lastRect.bottom + marginBottom > writableBottom + 1;
+}
+
 /** Math only supports the two modes that make sense for an equation: flow
  *  with the text (inline), or take the entire line exclusively (block),
  *  optionally freed from the flow entirely so it can be dragged (behind). */
@@ -1030,8 +1052,12 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
     // even while the page had plenty of space. That was the source of the
     // disappearing/jumping caret. Only layout immediately on real overflow.
     const body = bodyRefs.current[pageIdx];
-    if (body && body.scrollHeight > body.clientHeight + 2) {
-      scheduleRebalance(pageIdx, selectionBookmark(liveBodies()), 0);
+    const bodies = liveBodies();
+    const firstOverflowingPage = bodies.findIndex(pageBodyHasOverflow);
+    if (body && firstOverflowingPage >= 0) {
+      // Reflow from the earliest overflowing sheet. Starting at the active
+      // sheet leaves an already-overflowing previous sheet clipped forever.
+      scheduleRebalance(firstOverflowingPage, selectionBookmark(bodies), 0);
     }
     onInput();
   };
@@ -1149,6 +1175,20 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         /^[.,;:!?)\]"'’”]$/.test(event.key))
     ) {
       onHistoryBoundary?.();
+    }
+
+    // Enter creates a new block before `input` fires. Recheck the physical
+    // writable boundary after Chrome has created that block so it can move to
+    // the next sheet instead of leaving the caret in the footer reserve.
+    if (!modifier && event.key === 'Enter') {
+      window.setTimeout(() => {
+        const body = bodyRefs.current[pageIdx];
+        const bodies = liveBodies();
+        const firstOverflowingPage = bodies.findIndex(pageBodyHasOverflow);
+        if (!skipInput.current && body && firstOverflowingPage >= 0) {
+          scheduleRebalance(firstOverflowingPage, selectionBookmark(bodies), 0);
+        }
+      }, 0);
     }
 
     // Backspace at the beginning of a page joins its visual body with the
@@ -1377,6 +1417,9 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         e.preventDefault();
         setActivePage(pageIdx);
         focusBodyEdge(body, 'end', lastSelection);
+        if (pageBodyHasOverflow(body)) {
+          scheduleRebalance(pageIdx, selectionBookmark(liveBodies()), 0);
+        }
         return;
       }
       // For sheet chrome inside the writable rectangle, resolve the nearest
