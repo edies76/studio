@@ -37,6 +37,7 @@ import {
   getMathSource,
   htmlForWordExport,
 } from '@/lib/math-html';
+import { compactDraftHtml } from '@/lib/draft-output';
 import { normsAgentPrompt } from '@/lib/style-norms';
 import { mergeSingleInlineHunk, htmlToPlain } from '@/lib/html-diff';
 import StudioSettings, { DEFAULT_PREFS, type StudioPrefs } from '@/components/studio-settings';
@@ -69,13 +70,6 @@ function isDocEmpty(html: string) {
 }
 
 type AgentReference = { id: string; name: string; text: string; cached?: boolean; loading?: boolean; progress?: number };
-
-/** Draft streams can briefly contain a Markdown fence before the first HTML tag. */
-function normaliseDraftHtml(raw: string): string {
-  const trimmed = String(raw || '').trimStart();
-  if (!/^```(?:html)?\s*/i.test(trimmed)) return raw;
-  return trimmed.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/i, '');
-}
 
 function isRenderableDraftHtml(html: string): boolean {
   return /^\s*<(?:h[1-6]|p|ul|ol|li|blockquote|pre|table|div)\b/i.test(html);
@@ -963,7 +957,7 @@ export default function DocsStudioClient({
               const now = Date.now();
               if (now - lastChatPaint > 100) {
                 lastChatPaint = now;
-                const draft = normaliseDraftHtml(htmlAcc);
+                const draft = compactDraftHtml(htmlAcc);
                 const clean = isRenderableDraftHtml(draft) ? sanitizeDocumentHtml(draft) : '';
                 setMessages((ms) =>
                   ms.map((m) =>
@@ -982,7 +976,7 @@ export default function DocsStudioClient({
             }
             if (ev.type === 'html_ready') {
               completed = true;
-              const finalHtml = sanitizeDocumentHtml(normaliseDraftHtml(ev.html || htmlAcc));
+              const finalHtml = sanitizeDocumentHtml(compactDraftHtml(ev.html || htmlAcc));
               // The first draft must enter through the same stable canvas path
               // as every later edit. The old reveal mask made a valid document
               // look blank/broken until its animation completed.
@@ -1423,7 +1417,7 @@ export default function DocsStudioClient({
                 m.id === assistantId
                 ? {
                     ...m,
-                    content: 'No pude completar eso. Probá de nuevo.',
+                    content: 'No pude completar eso. Inténtalo de nuevo.',
                     streaming: false,
                     elapsedMs: Date.now() - startedAt,
                   }

@@ -8,6 +8,7 @@ import {
   resolveModelId,
 } from '@/lib/deepseek';
 import { slog } from '@/lib/server-log';
+import { compactDraftHtml } from '@/lib/draft-output';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -53,17 +54,19 @@ export async function POST(req: NextRequest) {
         });
         send({ type: 'status', label: 'Escribiendo…' });
 
-        const system = `You write complete academic/professional HTML documents FAST.
+        const system = `You write a concise, editable document in semantic HTML.
 Output ONLY an HTML fragment (no markdown fences, no html/body).
-Tags: h1,h2,h3,p,ul,ol,li,strong,em,table,pre,code.
+Allowed tags: h1,h2,h3,p,ul,ol,li,strong,em,blockquote,table,thead,tbody,tr,th,td,pre,code,br.
 Math: ALWAYS use \\( ... \\) inline and \\[ ... \\] display (never destroy delimiters). Prefer clean LaTeX.
 For important formulas wrap as:
 <span class="studio-math-inline" data-tex="TEX" data-display="0">\\(TEX\\)</span>
 or display:
 <div class="studio-math-block" data-tex="TEX" data-display="1">\\[TEX\\]</div>
 Tables: use real <table><tr><th>/<td> with headers when comparing data.
-Language: match user (${language || 'auto'}). Spanish if user writes Spanish.
-Structure: clear title + sections. Be complete but concise (good for ~3–6 pages).
+Language: match the user's language. Spanish if the request is in Spanish; never switch to English without a reason.
+Structure: use one short factual h1 and only the sections the request needs. Keep a short request short: no more than 3 brief sections or paragraphs unless the user asks for length.
+Do not create a cover page, subtitle, drop cap, decorative divider, illustration, emoji, icon, invented quote, or visual ornament unless the user explicitly requests it.
+Do not use img, svg, hr, style, or layout hacks. The canvas controls pagination and visual style.
 NO meta commentary. Start directly with <h1>...`;
 
         const models = modelFallbackList(preferredModel || resolveModelId(DEFAULT_STUDIO_MODEL));
@@ -82,7 +85,7 @@ NO meta commentary. Start directly with <h1>...`;
                 { role: 'user', content: String(prompt || '') },
               ],
               stream: true,
-              temperature: 0.55,
+              temperature: 0.35,
               maxTokens: 8192,
             });
 
@@ -98,7 +101,7 @@ NO meta commentary. Start directly with <h1>...`;
                   { role: 'user', content: String(prompt || '') },
                 ],
                 stream: false,
-                temperature: 0.55,
+                temperature: 0.35,
                 maxTokens: 8192,
               });
               const data = await res2.json();
@@ -138,10 +141,7 @@ NO meta commentary. Start directly with <h1>...`;
           return;
         }
 
-        let html = text.trim();
-        if (html.startsWith('```')) {
-          html = html.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '');
-        }
+        const html = compactDraftHtml(text);
 
         slog.info('draft', 'done', { ms: Date.now() - t0, model: used, htmlLen: html.length });
         send({ type: 'html_ready', html, model: used });

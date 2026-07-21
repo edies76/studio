@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation';
 import BrandMark from '@/components/brand-mark';
 import LocaleSwitch from '@/components/locale-switch';
 import { importDocxToHtml } from '@/lib/import-docx';
+import { buildStudentScaffold } from '@/lib/brief-scaffold';
 import type { AssignmentBrief } from '@/lib/assignment-types';
+import { useLocale } from '@/lib/i18n/locale-context';
 import styles from '../home/brief/brief.module.css';
 
 type Template = { id: string; label: string; description: string; structure: string };
@@ -25,6 +27,8 @@ const templates: Template[] = [
 
 export default function BriefPage() {
   const router = useRouter();
+  const { locale } = useLocale();
+  const isEs = locale === 'es';
   const guideInputRef = useRef<HTMLInputElement>(null);
   const [selectedTemplate, setSelectedTemplate] = useState('apa-essay');
   const [prompt, setPrompt] = useState('');
@@ -49,7 +53,7 @@ export default function BriefPage() {
 
   const createDocument = async () => {
     if (!prompt.trim()) {
-      setError('Write what you need to prepare.');
+      setError(isEs ? 'Escribe qué necesitas preparar.' : 'Write what you need to prepare.');
       return;
     }
 
@@ -61,7 +65,7 @@ export default function BriefPage() {
       constraints: ['Keep the document concise until the user asks for more detail.'],
       rubric: [],
       rawText: prompt.trim(),
-      language: 'en',
+      language: isEs ? 'es' : 'en',
     };
 
     setBusy(true);
@@ -73,27 +77,29 @@ export default function BriefPage() {
       });
       const parsedData = await parsed.json();
       if (parsed.ok && parsedData.brief) {
-        brief = { ...parsedData.brief, language: 'en' };
+        brief = { ...parsedData.brief, language: parsedData.brief.language === 'en' ? 'en' : 'es' };
       }
       const created = await fetch('/api/docs', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: selected.label, brief, html: '<p><br></p>' }),
+        // The first brief must be deterministic. A blank document lets the
+        // first agent response become an uncontrolled full rewrite, which is
+        // the source of the broken cover/decorative first-open experience.
+        body: JSON.stringify({ title: brief.title || selected.label, brief, html: buildStudentScaffold(brief) }),
       });
       const data = await created.json();
       if (!created.ok) throw new Error(data.error || 'create failed');
 
-      sessionStorage.setItem(`docs-studio:brief-start:${data.doc.id}`, '1');
       router.push(`/studio/doc/${data.doc.id}`);
     } catch (cause: any) {
-      setError(cause?.message || 'Could not create the document.');
+      setError(cause?.message || (isEs ? 'No se pudo crear el documento.' : 'Could not create the document.'));
       setBusy(false);
     }
   };
 
   return <main className={`${styles.scope} brief-compact`}>
     <header className="brief-compact__header">
-      <button type="button" onClick={() => router.push('/home')} className="brief-compact__back">← Library</button>
+      <button type="button" onClick={() => router.push('/home')} className="brief-compact__back">← {isEs ? 'Biblioteca' : 'Library'}</button>
       <a href="/home" className="brief-compact__brand"><BrandMark size={24} /><span>Docs Studio</span></a>
       <LocaleSwitch />
     </header>
@@ -105,14 +111,14 @@ export default function BriefPage() {
           </button>)}
         </div>
         <label className="brief-start__prompt">
-          <span>What are you preparing?</span>
-          <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setError(''); }} placeholder="Paste the assignment, rubric, or your working goal. The agent will carry it into the document." />
+          <span>{isEs ? '¿Qué estás preparando?' : 'What are you preparing?'}</span>
+          <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setError(''); }} placeholder={isEs ? 'Pega la consigna, rúbrica o guía. Se conservará dentro del documento.' : 'Paste the assignment, rubric, or your working goal. It will stay with the document.'} />
         </label>
         <div className="brief-start__foot">
           <input ref={guideInputRef} type="file" accept=".doc,.docx,.txt,.md,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void attachGuide(file); event.currentTarget.value = ''; }} />
-          <button type="button" className="brief-start__attach" onClick={() => guideInputRef.current?.click()}>Attach guide</button>
+          <button type="button" className="brief-start__attach" onClick={() => guideInputRef.current?.click()}>{isEs ? 'Adjuntar guía' : 'Attach guide'}</button>
           <span>{selected.label} · {selected.structure}</span>
-          <button type="button" disabled={busy || !prompt.trim()} onClick={() => void createDocument()}>{busy ? 'Opening…' : 'Open workspace ↗'}</button>
+          <button type="button" disabled={busy || !prompt.trim()} onClick={() => void createDocument()}>{busy ? (isEs ? 'Preparando…' : 'Opening…') : (isEs ? 'Abrir estructura ↗' : 'Open workspace ↗')}</button>
         </div>
       </div>
       {error && <p className="brief-error" role="alert">{error}</p>}
