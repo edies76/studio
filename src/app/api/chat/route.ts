@@ -401,6 +401,9 @@ export async function POST(req: NextRequest) {
           .filter((reference) => reference.isNew)
           .map((reference) => `\n--- ${reference.name} ---\n${reference.text.slice(0, 12_000)}`)
           .join('');
+        const referenceManifest = resolvedReferences
+          .map((reference) => `- ${reference.name} (id: ${reference.id}, ${reference.isNew ? 'uploaded this turn' : 'server cache'})`)
+          .join('\n');
         const system = buildDocsAgentSystem({
           documentTitle,
           paperSize,
@@ -416,6 +419,12 @@ These files were successfully extracted and read for this turn. Use this actual 
 ${newlyReadReferenceContext}
 === END ATTACHED REFERENCE CONTENT ===
 ` : '') + `
+
+=== AUTHORITATIVE ATTACHMENT MANIFEST ===
+The only attachment(s) received in this request are exactly:
+${referenceManifest || '- none'}
+Never invent, substitute, or repeat a filename that is not in this manifest. If the user asks about “the file”, refer to the exact name above. If the manifest says none, state that no file was received.
+=== END AUTHORITATIVE ATTACHMENT MANIFEST ===
 
 === SERVER MATH SAFETY ===
 The server protects math hosts on every free HTML rewrite. If equations exist or the task mentions formulas, call list_equations before changing one. Use edit_equation for an existing formula and insert_equation for a new one. Keep studio-math/data-tex hosts intact in prose edits. TeX arguments have no surrounding delimiters.
