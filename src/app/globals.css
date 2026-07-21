@@ -285,6 +285,16 @@
     height: auto !important;
   }
 
+  /* The document title is an inline control, not a white hover card. Keep
+     the editor header visually transparent while it is idle or focused. */
+  [aria-label='Document title'] {
+    background-color: transparent !important;
+  }
+  [aria-label='Document title']:hover,
+  [aria-label='Document title']:focus {
+    background-color: transparent !important;
+  }
+
   /* A fixed sheet must never crop one oversized imported object. Keep the
      object editable and in flow, then the paginator can move its block to a
      fresh sheet instead of leaving its lower half behind overflow:hidden. */

@@ -70,7 +70,18 @@ export function htmlToBlockHtmls(html: string): string[] {
     if (node.nodeType !== Node.ELEMENT_NODE) return;
     const el = node as HTMLElement;
     const tag = el.tagName.toLowerCase();
+    // Chrome represents an empty paragraph created with Enter as
+    // <div><br></div>. Keep its line box or pagination under-counts blank
+    // lines and lets the caret continue below the sheet.
+    if (tag === 'br') {
+      blocks.push('<p><br></p>');
+      return;
+    }
     if (tag === 'div' && !el.className && !el.getAttribute('style') && el.attributes.length === 0) {
+      if (el.children.length === 1 && el.firstElementChild?.tagName.toLowerCase() === 'br' && !(el.textContent || '').trim()) {
+        blocks.push('<p><br></p>');
+        return;
+      }
       // flatten simple wrappers
       if (el.children.length) {
         Array.from(el.children).forEach((c) => blocks.push((c as HTMLElement).outerHTML));

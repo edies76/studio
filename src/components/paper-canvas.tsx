@@ -555,6 +555,10 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
           });
           if (bookmark) {
             restoreSelectionBookmark(bookmark, bodyRefs.current.filter(Boolean) as HTMLElement[], lastSelection);
+            if (grew) {
+              const active = bodyContaining(window.getSelection()?.anchorNode ?? null, bodyRefs.current);
+              active?.closest('.studio-page-sheet')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
           } else if (grew) {
             const last = bodyRefs.current[next.length - 1];
             if (last) placeCaretAtEnd(last);
@@ -1116,9 +1120,18 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       const body = bodyRefs.current[pageIdx];
       const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
       const target = backward ? bodyRefs.current[pageIdx - 1] : bodyRefs.current[pageIdx + 1];
-      if (body && target && selectionAtBodyEdge(body, backward ? 'start' : 'end')) {
+      if (body && selectionAtBodyEdge(body, backward ? 'start' : 'end') && target) {
         event.preventDefault();
         focusBodyEdge(target, backward ? 'end' : 'start', lastSelection);
+        return;
+      }
+      // At the outer document edge, keep the caret anchored to the last
+      // writable position. Letting the browser handle ArrowDown/ArrowRight
+      // from a contentEditable root can move the visual caret into the sheet
+      // padding or out of the editor entirely.
+      if (body && selectionAtBodyEdge(body, backward ? 'start' : 'end') && !target) {
+        event.preventDefault();
+        focusBodyEdge(body, backward ? 'start' : 'end', lastSelection);
         return;
       }
     }
@@ -1136,55 +1149,6 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
         /^[.,;:!?)\]"'’”]$/.test(event.key))
     ) {
       onHistoryBoundary?.();
-    }
-
-    // Enter near page bottom → flush rebalance immediately so the browser
-    // never gets a chance to scroll the overflow:hidden body before the new
-    // page exists. We post a rAF so the browser first inserts the new <p>,
-    // then we check overflow and rebalance with 0-delay if needed.
-    if (event.key === 'Enter' && !modifier) {
-      const body = bodyRefs.current[pageIdx];
-      if (body) {
-        requestAnimationFrame(() => {
-          const bookmark = selectionBookmark(liveBodies());
-          if (body.scrollHeight > body.clientHeight + 2) {
-            body.scrollTop = 0;
-            if (rebalanceTimer.current) {
-              clearTimeout(rebalanceTimer.current);
-              rebalanceTimer.current = null;
-            }
-            const liveCount = Math.max(bodyRefs.current.filter(Boolean).length, 1);
-            const live = Array.from({ length: liveCount }, (_, i) =>
-              bodyRefs.current[i]?.innerHTML ?? '<p><br></p>',
-            );
-            const next = rebalanceFromPage(live, pageIdx, metrics, styleOpts);
-            lastExternalHtml.current = joinPageHtmls(next);
-            skipInput.current = true;
-            setPages(next);
-            requestAnimationFrame(() => {
-              const grew = next.length > live.length;
-              next.forEach((pageHtml, i) => {
-                const el = bodyRefs.current[i];
-                if (!el) return;
-                if (el.innerHTML === pageHtml) return;
-                el.innerHTML = pageHtml;
-                typesetEditor(el);
-              });
-              if (bookmark) {
-                restoreSelectionBookmark(bookmark, bodyRefs.current.filter(Boolean) as HTMLElement[], lastSelection);
-              } else if (grew) {
-                const last = bodyRefs.current[next.length - 1];
-                if (last) {
-                  placeCaretAtEnd(last);
-                  last.closest('.studio-page-sheet')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-                }
-              }
-              skipInput.current = false;
-              onInput();
-            });
-          }
-        });
-      }
     }
 
     // Backspace at the beginning of a page joins its visual body with the
@@ -1393,9 +1357,31 @@ const PaperCanvas = forwardRef<PaperCanvasHandle, Props>(function PaperCanvas(
       e.preventDefault();
       setActivePage(pageIdx);
       // Native editing already places the caret correctly when the click lands
-      // on text. For sheet chrome/padding, resolve the nearest caret from the
-      // actual pointer coordinates instead of always jumping to the document
-      // end (which made blank-page clicks feel broken).
+      // on text. The sheet's bottom padding is reserved for the page footer and
+      // is not editable space. Never resolve a point inside that padding to the
+      // body end, otherwise Chrome paints a caret below the last writable line.
+      const bodyRect = body.getBoundingClientRect();
+      const computed = window.getComputedStyle(body);
+      const visualScale = body.offsetWidth ? bodyRect.width / body.offsetWidth : 1;
+      const topPadding = (Number.parseFloat(computed.paddingTop) || 0) * visualScale;
+      const bottomPadding = (Number.parseFloat(computed.paddingBottom) || 0) * visualScale;
+      const editableTop = bodyRect.top + topPadding;
+      const editableBottom = bodyRect.bottom - bottomPadding;
+      if (e.clientY <= editableTop) {
+        e.preventDefault();
+        setActivePage(pageIdx);
+        focusBodyEdge(body, 'start', lastSelection);
+        return;
+      }
+      if (e.clientY >= editableBottom) {
+        e.preventDefault();
+        setActivePage(pageIdx);
+        focusBodyEdge(body, 'end', lastSelection);
+        return;
+      }
+      // For sheet chrome inside the writable rectangle, resolve the nearest
+      // caret from the actual pointer coordinates instead of using a stale
+      // selection or an arbitrary page end.
       const doc = body.ownerDocument;
       const range = doc.caretRangeFromPoint?.(e.clientX, e.clientY) ?? (() => {
         const position = doc.caretPositionFromPoint?.(e.clientX, e.clientY);
